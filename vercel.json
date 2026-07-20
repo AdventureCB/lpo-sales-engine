@@ -1,6 +1,6 @@
 {
   "crons": [
-    { "path": "/api/cron/hot-list", "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/hot-list", "schedule": "0 16 * * *" },
     { "path": "/api/cron/reconcile-calls", "schedule": "30 8 * * *" }
   ]
 }
