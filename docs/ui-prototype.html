@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LPO Sales Engine</title>
+<style>
+  :root{
+    color-scheme: dark;
+    --surface-0:#141210;
+    --surface-1:#1c1a18;
+    --surface-2:#252220;
+    --surface-3:#2e2a27;
+    --border:#3a3530;
+    --border-soft:#2b2724;
+    --text-1:#f2efe9;
+    --text-2:#b5aca0;
+    --text-3:#7d766c;
+    --accent:#c9502e;
+    --accent-hover:#d95926;
+    --accent-soft:rgba(201,80,46,.14);
+    --series-parker:#c9502e;
+    --series-jackson:#3987e5;
+    --good:#0ca30c;
+    --warn:#fab219;
+    --crit:#d03b3b;
+    --radius:10px;
+    font-size:15px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--surface-0);
+    color:var(--text-1);
+    font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    min-height:100vh;
+  }
+  /* ---------- shell ---------- */
+  header.app{
+    display:flex;align-items:center;gap:24px;
+    padding:14px 28px;border-bottom:1px solid var(--border-soft);
+    background:var(--surface-1);position:sticky;top:0;z-index:50;
+  }
+  .logo{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.06em;font-size:15px}
+  .logo .mark{width:26px;height:26px;border-radius:6px;background:var(--accent);display:grid;place-items:center;font-size:14px;color:#fff}
+  .logo small{display:block;font-weight:500;color:var(--text-3);letter-spacing:.02em;font-size:11px}
+  nav.tabs{display:flex;gap:4px;margin-left:12px}
+  nav.tabs button{
+    background:none;border:none;color:var(--text-2);font-size:14px;font-weight:600;
+    padding:8px 14px;border-radius:8px;cursor:pointer;
+  }
+  nav.tabs button:hover{color:var(--text-1);background:var(--surface-2)}
+  nav.tabs button.active{color:var(--text-1);background:var(--accent-soft);box-shadow:inset 0 0 0 1px rgba(201,80,46,.4)}
+  .userchip{margin-left:auto;display:flex;align-items:center;gap:10px;color:var(--text-2);font-size:13px}
+  .avatar{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;color:#fff}
+  main{max-width:1180px;margin:0 auto;padding:26px 28px 60px}
+  section.view{display:none}
+  section.view.active{display:block}
+  h2.viewtitle{font-size:20px;font-weight:750;margin-bottom:4px}
+  .viewsub{color:var(--text-3);font-size:13px;margin-bottom:22px}
+  /* ---------- shared bits ---------- */
+  .card{background:var(--surface-1);border:1px solid var(--border-soft);border-radius:var(--radius);padding:18px}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:650;padding:3px 9px;border-radius:999px;letter-spacing:.02em}
+  .chip.stage{background:var(--surface-3);color:var(--text-2)}
+  .chip.parker{background:rgba(201,80,46,.16);color:#e88a6b}
+  .chip.jackson{background:rgba(57,135,229,.16);color:#7db4f0}
+  .chip.state-confirmed{background:rgba(12,163,12,.14);color:#5ecf5e}
+  .chip.state-deposit{background:rgba(250,178,25,.13);color:#f6c85f}
+  .chip.state-walkin{background:rgba(57,135,229,.14);color:#7db4f0}
+  .chip.state-conflict{background:rgba(208,59,59,.15);color:#ec8080}
+  .chip.state-clawed{background:rgba(208,59,59,.15);color:#ec8080}
+  .chip.state-expired{background:var(--surface-3);color:var(--text-3)}
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;border:none;cursor:pointer;
+    font-size:14px;font-weight:650;border-radius:9px;padding:10px 18px;
+    background:var(--surface-2);color:var(--text-1);
+  }
+  .btn:hover{background:var(--surface-3)}
+  .btn.primary{background:var(--accent);color:#fff}
+  .btn.primary:hover{background:var(--accent-hover)}
+  .btn.ghost{background:none;box-shadow:inset 0 0 0 1px var(--border);color:var(--text-2)}
+  .btn.ghost:hover{color:var(--text-1)}
+  .btn.big{font-size:16px;padding:14px 26px;border-radius:11px}
+  kbd{font-family:inherit;font-size:10.5px;background:rgba(255,255,255,.08);border-radius:4px;padding:2px 6px;color:var(--text-2);font-weight:600}
+  /* ---------- dialer ---------- */
+  .dialer-grid{display:grid;grid-template-columns:230px 1fr 260px;gap:18px;align-items:start}
+  .queue-list{display:flex;flex-direction:column;gap:6px}
+  .queue-item{
+    display:flex;justify-content:space-between;align-items:center;gap:8px;
+    padding:10px 12px;border-radius:9px;cursor:pointer;font-size:13.5px;font-weight:600;color:var(--text-2);
+  }
+  .queue-item:hover{background:var(--surface-2)}
+  .queue-item.active{background:var(--accent-soft);color:var(--text-1);box-shadow:inset 0 0 0 1px rgba(201,80,46,.4)}
+  .queue-item .count{font-size:11.5px;font-weight:700;background:var(--surface-3);border-radius:999px;padding:2px 8px;color:var(--text-2)}
+  .queue-item.active .count{background:rgba(201,80,46,.35);color:#fff}
+  .queue-item .prim{font-size:9.5px;letter-spacing:.08em;color:var(--accent-hover);font-weight:800}
+  .lead-card{padding:26px}
+  .lead-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px}
+  .lead-name{font-size:24px;font-weight:800}
+  .lead-phone{color:var(--text-2);font-size:14px;margin-top:3px}
+  .lead-meta{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 18px}
+  .lead-facts{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:18px}
+  .fact{background:var(--surface-2);border-radius:9px;padding:10px 12px}
+  .fact .k{font-size:10.5px;letter-spacing:.06em;color:var(--text-3);font-weight:700;text-transform:uppercase}
+  .fact .v{font-size:14px;font-weight:650;margin-top:3px}
+  .lead-notes{background:var(--surface-2);border-left:3px solid var(--accent);border-radius:0 9px 9px 0;padding:12px 14px;font-size:13.5px;color:var(--text-2);line-height:1.5;margin-bottom:22px}
+  .dial-controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .callstate{display:none;align-items:center;gap:10px;font-size:14px;font-weight:650;color:var(--good)}
+  .callstate .dot{width:9px;height:9px;border-radius:50%;background:var(--good);animation:pulse 1.2s infinite}
+  @keyframes pulse{50%{opacity:.35}}
+  .dispo-row{display:none;gap:8px;margin-top:16px;flex-wrap:wrap}
+  .dispo-row .btn{font-size:13px;padding:8px 13px}
+  .side-panel{display:flex;flex-direction:column;gap:16px}
+  .session-stats{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .sstat{background:var(--surface-2);border-radius:9px;padding:10px 12px;text-align:center}
+  .sstat .n{font-size:21px;font-weight:800;font-variant-numeric:tabular-nums}
+  .sstat .l{font-size:10.5px;color:var(--text-3);font-weight:700;letter-spacing:.05em;text-transform:uppercase;margin-top:2px}
+  .upnext .row{display:flex;justify-content:space-between;padding:9px 4px;border-bottom:1px solid var(--border-soft);font-size:13px}
+  .upnext .row:last-child{border-bottom:none}
+  .upnext .who{font-weight:650}
+  .upnext .why{color:var(--text-3);font-size:11.5px}
+  .toggle{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--text-2);cursor:pointer}
+  .toggle .tk{width:34px;height:19px;border-radius:999px;background:var(--surface-3);position:relative;transition:.15s}
+  .toggle .tk::after{content:'';position:absolute;top:2.5px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--text-2);transition:.15s}
+  .toggle.on .tk{background:var(--accent)}
+  .toggle.on .tk::after{left:17px;background:#fff}
+  select.vmsel{background:var(--surface-2);color:var(--text-1);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;width:100%}
+  .panel-h{font-size:12px;font-weight:750;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);margin-bottom:10px}
+  /* ---------- scoreboard ---------- */
+  .range-toggle{display:inline-flex;background:var(--surface-2);border-radius:9px;padding:3px;gap:2px;margin-bottom:20px}
+  .range-toggle button{border:none;background:none;color:var(--text-2);font-size:13px;font-weight:650;padding:7px 16px;border-radius:7px;cursor:pointer}
+  .range-toggle button.active{background:var(--surface-3);color:var(--text-1)}
+  .repline{display:grid;grid-template-columns:170px repeat(6,1fr);gap:10px;align-items:center;margin-bottom:12px}
+  .repline .who{display:flex;align-items:center;gap:10px;font-weight:700;font-size:14.5px}
+  .stat-tile{background:var(--surface-1);border:1px solid var(--border-soft);border-radius:9px;padding:12px 14px}
+  .stat-tile .n{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums}
+  .stat-tile .l{font-size:10.5px;color:var(--text-3);font-weight:700;letter-spacing:.05em;text-transform:uppercase;margin-top:2px}
+  .stat-tile .d{font-size:11px;margin-top:4px;font-weight:650}
+  .d.up{color:var(--good)} .d.down{color:var(--crit)}
+  .charts{display:grid;grid-template-columns:1.55fr 1fr;gap:18px;margin-top:24px}
+  .chart-card h3{font-size:14.5px;font-weight:700}
+  .chart-card .sub{font-size:12px;color:var(--text-3);margin:2px 0 14px}
+  .legend{display:flex;gap:16px;font-size:12.5px;color:var(--text-2);margin-bottom:10px}
+  .legend .sw{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:6px;vertical-align:-1px}
+  svg text{font-family:inherit}
+  .tooltip{
+    position:fixed;pointer-events:none;background:var(--surface-3);border:1px solid var(--border);
+    border-radius:8px;padding:8px 11px;font-size:12.5px;z-index:99;display:none;line-height:1.5;
+    box-shadow:0 6px 18px rgba(0,0,0,.4);
+  }
+  .tooltip b{font-variant-numeric:tabular-nums}
+  /* ---------- commissions ---------- */
+  .comm-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}
+  table.data{width:100%;border-collapse:collapse;font-size:13.5px}
+  table.data th{
+    text-align:left;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);
+    font-weight:750;padding:8px 10px;border-bottom:1px solid var(--border);
+  }
+  table.data td{padding:11px 10px;border-bottom:1px solid var(--border-soft);vertical-align:middle}
+  table.data tr:hover td{background:var(--surface-2)}
+  .money{font-variant-numeric:tabular-nums;font-weight:650}
+  .conflict-strip{
+    display:flex;align-items:center;gap:12px;background:rgba(208,59,59,.09);
+    border:1px solid rgba(208,59,59,.35);border-radius:10px;padding:13px 16px;margin-bottom:18px;font-size:13.5px;
+  }
+  .conflict-strip .ic{font-size:16px}
+  .split{display:grid;grid-template-columns:1.6fr 1fr;gap:18px;margin-top:22px;align-items:start}
+  .stmt-row{display:flex;justify-content:space-between;align-items:center;padding:11px 4px;border-bottom:1px solid var(--border-soft);font-size:13.5px}
+  .stmt-row:last-child{border-bottom:none}
+  #view-hotlist table.data td:first-child{min-width:170px}
+  #view-hotlist .split{grid-template-columns:2fr 1fr}
+  /* ---------- modal ---------- */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;place-items:center;z-index:100}
+  .overlay.open{display:grid}
+  .modal{background:var(--surface-1);border:1px solid var(--border);border-radius:14px;width:520px;max-width:94vw;padding:24px}
+  .modal h3{font-size:17px;margin-bottom:4px}
+  .modal .sub{font-size:12.5px;color:var(--text-3);margin-bottom:16px}
+  .search-row{display:flex;gap:8px;margin-bottom:14px}
+  .search-row input{
+    flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;
+    padding:10px 13px;color:var(--text-1);font-size:14px;
+  }
+  .order-hit{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:14px;display:none}
+  .order-hit .row1{display:flex;justify-content:space-between;font-weight:700;font-size:14.5px}
+  .order-hit .row2{color:var(--text-2);font-size:12.5px;margin-top:4px}
+  .order-hit .tagline{margin-top:8px}
+  .field{margin-bottom:12px}
+  .field label{display:block;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);font-weight:750;margin-bottom:5px}
+  .field select,.field input{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:9px 12px;color:var(--text-1);font-size:13.5px}
+  .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}
+  .proto-note{margin-top:34px;color:var(--text-3);font-size:11.5px;text-align:center}
+  @media (max-width:900px){
+    .dialer-grid{grid-template-columns:1fr}
+    .charts,.split,.comm-tiles{grid-template-columns:1fr}
+    .repline{grid-template-columns:1fr 1fr 1fr;row-gap:8px}
+  }
+</style>
+</head>
+<body>
+
+<header class="app">
+  <div class="logo">
+    <div class="mark">▲</div>
+    <div>LPO SALES ENGINE<small>Lone Peak Overland</small></div>
+  </div>
+  <nav class="tabs">
+    <button class="active" data-view="dialer">Dialer</button>
+    <button data-view="hotlist">🔥 Hot List</button>
+    <button data-view="scoreboard">Scoreboard</button>
+    <button data-view="commissions">Commissions</button>
+  </nav>
+  <div class="userchip">
+    <span id="viewing-as">Parker Kiesz · Rep</span>
+    <div class="avatar" style="background:var(--series-parker)">PK</div>
+  </div>
+</header>
+
+<main>
+
+<!-- ============ DIALER ============ -->
+<section class="view active" id="view-dialer">
+  <h2 class="viewtitle">Dial session</h2>
+  <div class="viewsub">Queue: <b id="q-label" style="color:var(--text-1)">Intake / First touch</b> · calls place through your Quo line (509) 661-6948 · auto-logged to Pipedrive</div>
+  <div class="dialer-grid">
+
+    <div class="card">
+      <div class="panel-h">Queues</div>
+      <div class="queue-list" id="queue-list"></div>
+      <div class="panel-h" style="margin-top:20px">Queue filter</div>
+      <div class="field"><label>Pipeline</label>
+        <select id="qf-pipeline">
+          <option value="all">All pipelines</option>
+          <option value="6" selected>Intake</option>
+          <option value="7">Sales / Nurture</option>
+          <option value="8">Order</option>
+        </select>
+      </div>
+      <div class="field"><label>Stage</label>
+        <select id="qf-stage"></select>
+      </div>
+      <div class="field"><label>Owner</label>
+        <select id="qf-owner">
+          <option>Owned by me</option>
+          <option>No owner assigned</option>
+          <option>Owned by me + unassigned</option>
+          <option>Anyone</option>
+        </select>
+      </div>
+      <div class="field"><label>Deal name includes</label>
+        <input id="qf-name" placeholder="e.g. Tacoma, V2…">
+      </div>
+      <button class="btn primary" style="width:100%;justify-content:center" id="qf-apply">Apply filter</button>
+      <div id="qf-note" style="font-size:11.5px;color:var(--text-3);margin-top:8px;display:none"></div>
+    </div>
+
+    <div class="card lead-card">
+      <div class="lead-top">
+        <div>
+          <div class="lead-name" id="ld-name">—</div>
+          <div class="lead-phone" id="ld-phone">—</div>
+        </div>
+        <span class="chip stage" id="ld-stage">—</span>
+      </div>
+      <div class="lead-meta" id="ld-meta"></div>
+      <div class="lead-facts">
+        <div class="fact"><div class="k">Vehicle</div><div class="v" id="ld-vehicle">—</div></div>
+        <div class="fact"><div class="k">Source</div><div class="v" id="ld-source">—</div></div>
+        <div class="fact"><div class="k">Last activity</div><div class="v" id="ld-last">—</div></div>
+      </div>
+      <div class="lead-notes" id="ld-notes">—</div>
+
+      <div class="dial-controls">
+        <button class="btn primary big" id="btn-dial">📞 Dial <kbd>⏎</kbd></button>
+        <button class="btn big" id="btn-vm" disabled>🎙 Drop VM <kbd>V</kbd></button>
+        <button class="btn big" id="btn-end" style="display:none;background:var(--crit);color:#fff">⏹ End call <kbd>E</kbd></button>
+        <button class="btn ghost" id="btn-skip">Skip <kbd>S</kbd></button>
+        <div class="callstate" id="callstate"><span class="dot"></span><span id="call-timer">00:00</span> — in call via Quo</div>
+      </div>
+
+      <div class="dispo-row" id="dispo-row">
+        <span style="align-self:center;font-size:12px;color:var(--text-3);font-weight:700;letter-spacing:.05em">LOG OUTCOME:</span>
+        <button class="btn" data-dispo="Connected">✅ Connected <kbd>1</kbd></button>
+        <button class="btn" data-dispo="VM dropped">📼 VM dropped <kbd>2</kbd></button>
+        <button class="btn" data-dispo="Bad number">🚫 Bad number <kbd>3</kbd></button>
+        <button class="btn" data-dispo="Callback set">📅 Callback set <kbd>4</kbd></button>
+      </div>
+    </div>
+
+    <div class="side-panel">
+      <div class="card">
+        <div class="panel-h">Session</div>
+        <div class="session-stats">
+          <div class="sstat"><div class="n" id="ss-dials">0</div><div class="l">Dials</div></div>
+          <div class="sstat"><div class="n" id="ss-conn">0</div><div class="l">Connected</div></div>
+          <div class="sstat"><div class="n" id="ss-vm">0</div><div class="l">VM drops</div></div>
+          <div class="sstat"><div class="n" id="ss-talk">0m</div><div class="l">Talk time</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="panel-h">Voicemail drop</div>
+        <select class="vmsel" id="vm-select">
+          <option>Parker — Quiz follow-up (32s)</option>
+          <option>Parker — Saved build follow-up (28s)</option>
+          <option>Parker — Deposit → confirmation (25s)</option>
+        </select>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn ghost" style="flex:1;justify-content:center;font-size:12.5px;padding:8px" id="vm-preview">▶ Preview</button>
+          <button class="btn ghost" style="flex:1;justify-content:center;font-size:12.5px;padding:8px" id="vm-record">⏺ Record new</button>
+        </div>
+        <div id="vm-recording" style="display:none;margin-top:10px;background:var(--surface-2);border:1px solid rgba(208,59,59,.45);border-radius:9px;padding:10px 12px">
+          <div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:650">
+            <span class="dot" style="width:9px;height:9px;border-radius:50%;background:var(--crit);animation:pulse 1.2s infinite"></span>
+            Recording… <span id="vm-rec-timer" style="font-variant-numeric:tabular-nums">00:00</span>
+          </div>
+          <input id="vm-rec-name" placeholder="Name this drop…" style="width:100%;margin-top:10px;background:var(--surface-1);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text-1);font-size:12.5px">
+          <button class="btn primary" style="width:100%;justify-content:center;font-size:12.5px;padding:8px 12px;margin-top:8px;white-space:nowrap" id="vm-rec-save">⏹ Stop &amp; save</button>
+        </div>
+        <div style="margin-top:12px">
+          <div class="toggle on" id="auto-adv"><span class="tk"></span> Auto-advance after call</div>
+        </div>
+      </div>
+      <div class="card upnext">
+        <div class="panel-h">Up next</div>
+        <div id="upnext-rows"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ HOT LIST ============ -->
+<section class="view" id="view-hotlist">
+  <h2 class="viewtitle">🔥 Hot list</h2>
+  <div class="viewsub">Deals with recent buying signals — Klaviyo + Pipedrive email opens/clicks, site &amp; builder activity from Shopify · flagged deals get a "🔥 Hot" label + due-today task in Pipedrive and jump the dial queue</div>
+
+  <div class="comm-tiles">
+    <div class="stat-tile"><div class="n" style="color:var(--accent-hover)">6</div><div class="l">Flagged now</div></div>
+    <div class="stat-tile"><div class="n">3</div><div class="l">New today</div></div>
+    <div class="stat-tile"><div class="n">241</div><div class="l">Signals · 24h</div></div>
+    <div class="stat-tile"><div class="n">1.8h</div><div class="l">Avg flag → first touch</div></div>
+  </div>
+
+  <div class="split" style="margin-top:0">
+    <div>
+      <div class="card" style="padding:6px 12px">
+        <table class="data">
+          <thead><tr>
+            <th>Deal</th><th>Owner</th><th>Why it's hot</th><th>Flagged</th><th>Status</th><th></th>
+          </tr></thead>
+          <tbody id="hot-rows"></tbody>
+        </table>
+      </div>
+      <div class="card" style="margin-top:18px">
+        <div class="panel-h">Flag rules (config, not code)</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+          <div class="field" style="margin:0"><label>Email opens ≥</label><input value="3 in 7 days"></div>
+          <div class="field" style="margin:0"><label>Any click within</label><input value="72 hours"></div>
+          <div class="field" style="margin:0"><label>Distinct signal types ≥</label><input value="2 in 72 hours"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:12px">
+          <div class="field" style="margin:0"><label>Re-flag cooldown</label><input value="7 days"></div>
+          <div class="field" style="margin:0"><label>Auto-clear after quiet</label><input value="7 days"></div>
+          <div class="field" style="margin:0;display:flex;align-items:flex-end"><button class="btn primary" style="width:100%;justify-content:center" onclick="alert('Prototype: saves rule config; engine re-evaluates on next 15-min sweep.')">Save rules</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="panel-h">Live signal feed</div>
+      <div id="signal-feed"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SCOREBOARD ============ -->
+<section class="view" id="view-scoreboard">
+  <h2 class="viewtitle">Team scoreboard</h2>
+  <div class="viewsub">Outbound activity from Quo · conversions from Pipedrive + Shopify journeys</div>
+  <div class="range-toggle" id="range-toggle">
+    <button data-range="day">Today</button>
+    <button class="active" data-range="week">This week</button>
+    <button data-range="month">Month</button>
+  </div>
+
+  <div id="replines"></div>
+
+  <div class="charts">
+    <div class="card chart-card">
+      <h3>Dials by day</h3>
+      <div class="sub" id="chart1-sub">Mon Jul 13 – Sun Jul 19</div>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--series-parker)"></span>Parker</span>
+        <span><span class="sw" style="background:var(--series-jackson)"></span>Jackson</span>
+      </div>
+      <svg id="chart-dials" width="100%" height="240" viewBox="0 0 620 240" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+    <div class="card chart-card">
+      <h3>Conversations by day</h3>
+      <div class="sub">Live two-way calls (voicemails excluded)</div>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--series-parker)"></span>Parker</span>
+        <span><span class="sw" style="background:var(--series-jackson)"></span>Jackson</span>
+      </div>
+      <svg id="chart-conv" width="100%" height="240" viewBox="0 0 400 240" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+  </div>
+</section>
+
+<!-- ============ COMMISSIONS ============ -->
+<section class="view" id="view-commissions">
+  <h2 class="viewtitle">Commissions</h2>
+  <div class="viewsub">$100 per confirmed journey · attribution: rep discount code (primary) + Pipedrive owner (cross-check) · paid via payroll</div>
+
+  <div class="comm-tiles">
+    <div class="stat-tile"><div class="n">7</div><div class="l">Confirmed · July</div></div>
+    <div class="stat-tile"><div class="n">11</div><div class="l">Open deposits</div></div>
+    <div class="stat-tile"><div class="n" style="color:#ec8080">1</div><div class="l">Conflicts</div></div>
+    <div class="stat-tile"><div class="n" style="color:#f6c85f">2</div><div class="l">Unattributed</div></div>
+  </div>
+
+  <div class="conflict-strip">
+    <span class="ic">⚠️</span>
+    <div><b>Attribution conflict:</b> Journey <b>J-1082</b> (M. Herrera) — deposit used <b>PARKER10</b>, confirmation used <b>JACKSON5</b>. $100 held.</div>
+    <button class="btn ghost" style="margin-left:auto" onclick="alert('Prototype: opens conflict resolution — pick earning rep, reason required, audit-logged.')">Resolve</button>
+  </div>
+
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <div class="panel-h" style="margin:0">Journeys</div>
+    <button class="btn primary" id="btn-logsale">＋ Log a sale</button>
+  </div>
+
+  <div class="card" style="padding:6px 12px">
+    <table class="data">
+      <thead><tr>
+        <th>Journey</th><th>Customer</th><th>Shopify orders</th><th>Rep</th><th>State</th>
+        <th style="text-align:right">Eligible total</th><th style="text-align:right">Commission</th><th>Confirmed</th>
+      </tr></thead>
+      <tbody id="journey-rows"></tbody>
+    </table>
+  </div>
+
+  <div class="split">
+    <div class="card">
+      <div class="panel-h">Payroll statements</div>
+      <div class="stmt-row"><div><b>Parker Kiesz</b> · Jul 1–15</div><div><span class="money">$300</span> · <span class="chip state-confirmed">approved</span> <button class="btn ghost" style="padding:5px 10px;font-size:12px" onclick="alert('Prototype: exports CSV statement for payroll.')">Export</button></div></div>
+      <div class="stmt-row"><div><b>Jackson Faerber</b> · Jul 1–15</div><div><span class="money">$200</span> · <span class="chip state-confirmed">approved</span> <button class="btn ghost" style="padding:5px 10px;font-size:12px" onclick="alert('Prototype: exports CSV statement for payroll.')">Export</button></div></div>
+      <div class="stmt-row"><div><b>Parker Kiesz</b> · Jul 16–31</div><div><span class="money">$200</span> · <span class="chip state-deposit">accruing</span></div></div>
+      <div class="stmt-row"><div><b>Jackson Faerber</b> · Jul 16–31</div><div><span class="money">$100 <span style="color:#ec8080">−$100</span></span> · <span class="chip state-deposit">accruing</span></div></div>
+    </div>
+    <div class="card">
+      <div class="panel-h">Unattributed orders</div>
+      <div class="stmt-row"><div>#LP-2381 · $9,840<div class="why" style="color:var(--text-3);font-size:11.5px">walk-in, no code, no deal match</div></div><button class="btn ghost" style="padding:5px 10px;font-size:12px" onclick="alert('Prototype: assign to rep with reason (audit-logged).')">Assign</button></div>
+      <div class="stmt-row"><div>#LP-2374 · $512 <div class="why" style="color:var(--text-3);font-size:11.5px">deposit-ish subtotal, no match</div></div><button class="btn ghost" style="padding:5px 10px;font-size:12px" onclick="alert('Prototype: assign to rep with reason (audit-logged).')">Assign</button></div>
+    </div>
+  </div>
+</section>
+
+<div class="proto-note">Clickable prototype · sample data · LPO Sales Engine v0.1 — design source for the Next.js build</div>
+</main>
+
+<!-- Log a sale modal -->
+<div class="overlay" id="modal-overlay">
+  <div class="modal">
+    <h3>Log a sale</h3>
+    <div class="sub">Look up the real Shopify order — amounts are never hand-typed.</div>
+    <div class="search-row">
+      <input id="order-search" placeholder="Order #, customer email, or name…">
+      <button class="btn primary" id="btn-order-search">Search</button>
+    </div>
+    <div class="order-hit" id="order-hit">
+      <div class="row1"><span>#LP-2402 — Daniel Reyes</span><span class="money">$13,758.00</span></div>
+      <div class="row2">Paid Jul 18, 2026 · dan.reyes@…com · V2 camper + accessories · subtotal eligible $13,610 (merch excluded)</div>
+      <div class="tagline"><span class="chip stage">code: PARKER10</span> <span class="chip parker">Pipedrive owner: Parker</span> <span class="chip state-confirmed">✓ attribution agrees</span></div>
+    </div>
+    <div class="field"><label>Attach as</label>
+      <select><option>Confirmation for existing journey (deposit Jun 29 — D. Reyes)</option><option>New walk-in journey</option></select>
+    </div>
+    <div class="field"><label>Reason (required, audit-logged)</label><input placeholder="e.g. webhook missed during outage / phone order"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="btn-modal-cancel">Cancel</button>
+      <button class="btn primary" onclick="alert('Prototype: creates manual order (is_manual=true) + audit row.')">Log sale</button>
+    </div>
+  </div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+/* ================= sample data ================= */
+const QUEUES = [
+  {name:'Intake / First touch', primary:true, count:34},
+  {name:'Deposit → paid push', count:6},
+  {name:'Hot follow-up', count:9},
+  {name:'Warm follow-up', count:21},
+  {name:'Cold / nurture', count:48},
+  {name:'Recovery', count:17},
+];
+const LEADS = [
+  {name:'Mike Delaney', phone:'(970) 213-5759', stage:'Intake- Needs Qualification', vehicle:'F-150 5.5\' box', source:'Camper quiz · 2d ago', last:'No touches yet', deal:'$8,400 est.', hot:false,
+   notes:'Quiz: weekend trips, 2 dogs, wants heater. Opened welcome email twice yesterday.'},
+  {name:'Sarah Whitfield', phone:'(406) 555-0182', stage:'Intake- Needs Qualification', vehicle:'Tacoma 5\' bed', source:'3D builder save · 1d ago', last:'No touches yet', deal:'$11,950 build', hot:true,
+   notes:'Saved a loaded V2 build (side windows both sides, juice box). 🔥 4 email opens in 3 days.'},
+  {name:'Tom Okafor', phone:'(509) 555-0147', stage:'Intake- Needs Qualification', vehicle:'Gladiator', source:'Camper quiz · 3d ago', last:'VM left Jul 17', deal:'$7,900 est.', hot:false,
+   notes:'Attempt 2 of 3. Rock crawler background — lead with weight + lift-away platform.'},
+];
+const UPNEXT = [
+  {who:'Sarah Whitfield', why:'🔥 hot — 4 opens'},
+  {who:'Tom Okafor', why:'attempt 2 · VM Jul 17'},
+  {who:'Luis Cardona', why:'new · quiz yesterday'},
+  {who:'Amy Brandt', why:'new · builder save'},
+];
+const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const DATA = {
+  week: {
+    dials:{parker:[18,22,15,24,31,0,0], jackson:[26,14,12,19,28,3,0]},
+    conv:{parker:[6,5,4,7,9,0,0], jackson:[5,4,3,6,7,1,0]},
+    tiles:{
+      parker:{dials:110, conv:31, vm:52, talk:'7.2h', rate:'28%', comm:'$400'},
+      jackson:{dials:102, conv:26, vm:47, talk:'5.9h', rate:'25%', comm:'$300'},
+    }
+  },
+  day: {
+    dials:{parker:[0,0,0,0,0,0,14], jackson:[0,0,0,0,0,0,11]},
+    conv:{parker:[0,0,0,0,0,0,4], jackson:[0,0,0,0,0,0,3]},
+    tiles:{
+      parker:{dials:14, conv:4, vm:7, talk:'58m', rate:'29%', comm:'$0'},
+      jackson:{dials:11, conv:3, vm:5, talk:'41m', rate:'27%', comm:'$100'},
+    }
+  },
+  month: {
+    dials:{parker:[64,71,58,80,96,4,0], jackson:[70,52,49,66,84,9,0]},
+    conv:{parker:[19,17,15,22,26,1,0], jackson:[16,13,12,18,21,2,0]},
+    tiles:{
+      parker:{dials:373, conv:100, vm:171, talk:'22.4h', rate:'27%', comm:'$400'},
+      jackson:{dials:330, conv:82, vm:150, talk:'18.7h', rate:'25%', comm:'$300'},
+    }
+  }
+};
+DATA.month.sub = 'Jul 1 – Jul 19 · summed by weekday';
+DATA.week.sub = 'Mon Jul 13 – Sun Jul 19';
+DATA.day.sub = 'Today · Mon Jul 20';
+const JOURNEYS = [
+  {id:'J-1097', cust:'Brian Steel', dep:'#LP-2311', conf:'#LP-2402', rep:'parker', state:'confirmed', total:'$14,258', comm:'$100', date:'Jul 14'},
+  {id:'J-1095', cust:'Louie Vasquez', dep:'#LP-2419', conf:null, rep:'parker', state:'deposit_only', total:'$500', comm:'—', date:'—'},
+  {id:'J-1092', cust:'Mike Tanner', dep:null, conf:'#LP-2367', walkin:true, rep:'jackson', state:'walk_in', total:'$9,120', comm:'$100', date:'Jul 12'},
+  {id:'J-1082', cust:'M. Herrera', dep:'#LP-2298', conf:'#LP-2371', rep:'conflict', state:'conflict', total:'$12,730', comm:'$100 held', date:'Jul 11'},
+  {id:'J-1079', cust:'Dana Okafor', dep:'#LP-2255', conf:'#LP-2301', rep:'jackson', state:'clawed_back', total:'$3,900 after refund', comm:'−$100', date:'Jul 8'},
+  {id:'J-1064', cust:'Chris Ahn', dep:'#LP-2101', conf:null, rep:'parker', state:'expired', total:'$500', comm:'—', date:'—'},
+];
+function orderCell(j){
+  const tag=(lbl,num)=>`<span style="display:inline-flex;align-items:center;gap:5px;margin-right:8px;white-space:nowrap">
+    <span style="font-size:9px;font-weight:800;letter-spacing:.06em;color:var(--text-3)">${lbl}</span>
+    <span style="font-variant-numeric:tabular-nums;font-size:12.5px;color:var(--text-2)">${num}</span></span>`;
+  if(j.walkin) return tag('WALK-IN',j.conf);
+  let h='';
+  if(j.dep) h+=tag('DEP',j.dep);
+  if(j.conf) h+=tag('CONF',j.conf);
+  return h||'<span style="color:var(--text-3)">—</span>';
+}
+/* ================= shell nav ================= */
+const tabs = document.querySelectorAll('nav.tabs button');
+tabs.forEach(b=>b.addEventListener('click',()=>{
+  tabs.forEach(x=>x.classList.remove('active')); b.classList.add('active');
+  document.querySelectorAll('section.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('view-'+b.dataset.view).classList.add('active');
+  const chip = document.querySelector('.userchip .avatar'), lbl = document.getElementById('viewing-as');
+  if(b.dataset.view==='commissions'){ lbl.textContent='Kyle · Admin'; chip.textContent='KY'; chip.style.background='var(--surface-3)'; }
+  else { lbl.textContent='Parker Kiesz · Rep'; chip.textContent='PK'; chip.style.background='var(--series-parker)'; }
+}));
+/* ================= dialer ================= */
+const qList = document.getElementById('queue-list');
+QUEUES.forEach((q,i)=>{
+  const d=document.createElement('div'); d.className='queue-item'+(i===0?' active':'');
+  d.innerHTML=`<span>${q.name}${q.primary?' <span class="prim">PRIMARY</span>':''}</span><span class="count">${q.count}</span>`;
+  d.onclick=()=>{document.querySelectorAll('.queue-item').forEach(x=>x.classList.remove('active'));d.classList.add('active');
+    document.getElementById('q-label').textContent=q.name;};
+  qList.appendChild(d);
+});
+document.getElementById('upnext-rows').innerHTML = UPNEXT.map(u=>`<div class="row"><span class="who">${u.who}</span><span class="why">${u.why}</span></div>`).join('');
+let leadIdx=0, inCall=false, callSec=0, callTimer=null;
+let sess={dials:0,conn:0,vm:0,talk:0};
+function showLead(i){
+  const L=LEADS[i%LEADS.length];
+  ld('ld-name',L.name); ld('ld-phone',L.phone+' · '+L.deal); ld('ld-stage',L.stage);
+  ld('ld-vehicle',L.vehicle); ld('ld-source',L.source); ld('ld-last',L.last); ld('ld-notes',L.notes);
+  document.getElementById('ld-meta').innerHTML =
+    (L.hot?'<span class="chip state-conflict" style="background:rgba(201,80,46,.16);color:#e88a6b">🔥 Hot — engagement</span>':'')+
+    '<span class="chip stage">Pipedrive ▸ deal open</span>';
+}
+function ld(id,t){document.getElementById(id).textContent=t}
+showLead(0);
+const btnDial=document.getElementById('btn-dial'), btnVM=document.getElementById('btn-vm'),
+      btnEnd=document.getElementById('btn-end'),
+      dispoRow=document.getElementById('dispo-row'), callstate=document.getElementById('callstate');
+let awaitingDispo=false;
+btnDial.addEventListener('click',()=>{
+  if(inCall||awaitingDispo) return;
+  inCall=true; callSec=0; sess.dials++; refreshSess();
+  btnDial.style.opacity=.4; btnVM.disabled=false; btnEnd.style.display='inline-flex';
+  callstate.style.display='flex';
+  callTimer=setInterval(()=>{callSec++;document.getElementById('call-timer').textContent=
+    String(Math.floor(callSec/60)).padStart(2,'0')+':'+String(callSec%60).padStart(2,'0');},1000);
+});
+btnEnd.addEventListener('click',()=>{ if(inCall) hangUp(); });
+btnVM.addEventListener('click',()=>{ if(!inCall) return; hangUp(); finalize('VM dropped'); });
+document.getElementById('btn-skip').addEventListener('click',()=>{ if(!inCall&&!awaitingDispo){ leadIdx++; showLead(leadIdx);} });
+dispoRow.querySelectorAll('button[data-dispo]').forEach(b=>b.addEventListener('click',()=>{
+  if(inCall) hangUp();
+  if(awaitingDispo) finalize(b.dataset.dispo);
+}));
+function hangUp(){ /* call ends; outcome still required */
+  clearInterval(callTimer); inCall=false; awaitingDispo=true;
+  btnVM.disabled=true; btnEnd.style.display='none';
+  callstate.style.display='none'; dispoRow.style.display='flex';
+}
+function finalize(dispo){
+  awaitingDispo=false;
+  if(dispo==='Connected'){sess.conn++; sess.talk+=callSec;}
+  if(dispo==='VM dropped'){sess.vm++;}
+  refreshSess();
+  btnDial.style.opacity=1; dispoRow.style.display='none';
+  document.getElementById('call-timer').textContent='00:00';
+  if(document.getElementById('auto-adv').classList.contains('on')){ leadIdx++; showLead(leadIdx); }
+}
+function refreshSess(){
+  ld('ss-dials',sess.dials); ld('ss-conn',sess.conn); ld('ss-vm',sess.vm);
+  ld('ss-talk',Math.round(sess.talk/60)+'m');
+}
+document.getElementById('auto-adv').addEventListener('click',function(){this.classList.toggle('on')});
+document.addEventListener('keydown',e=>{
+  if(document.getElementById('modal-overlay').classList.contains('open'))return;
+  if(!document.getElementById('view-dialer').classList.contains('active'))return;
+  if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName))return;
+  if(e.key==='Enter'&&!inCall&&!awaitingDispo) btnDial.click();
+  if((e.key==='v'||e.key==='V')&&inCall) btnVM.click();
+  if((e.key==='e'||e.key==='E')&&inCall) btnEnd.click();
+  if((e.key==='s'||e.key==='S')&&!inCall&&!awaitingDispo) document.getElementById('btn-skip').click();
+  if((inCall||awaitingDispo)&&['1','2','3','4'].includes(e.key)) dispoRow.querySelectorAll('button[data-dispo]')[+e.key-1].click();
+});
+/* ---- queue filter ---- */
+const STAGES_BY_PIPE={
+  all:['Any stage'],
+  6:['Any stage','Recovery','Intake- Needs Qualification','Qualified','Waiting on Timing'],
+  7:['Any stage','Qualified','Cold','Warm','Hot','Deposit Placed'],
+  8:['Any stage','Deposit Placed','Confirmation Scheduled','Confirmed (Won)'],
+};
+const qfPipe=document.getElementById('qf-pipeline'), qfStage=document.getElementById('qf-stage');
+function fillStages(){
+  qfStage.innerHTML=STAGES_BY_PIPE[qfPipe.value].map(s=>`<option>${s}</option>`).join('');
+  if(qfPipe.value==='6') qfStage.value='Intake- Needs Qualification';
+}
+qfPipe.addEventListener('change',fillStages); fillStages();
+document.getElementById('qf-apply').addEventListener('click',()=>{
+  const parts=[];
+  if(qfPipe.value!=='all') parts.push(qfPipe.options[qfPipe.selectedIndex].text);
+  if(qfStage.value!=='Any stage') parts.push(qfStage.value);
+  parts.push(document.getElementById('qf-owner').value);
+  const name=document.getElementById('qf-name').value.trim();
+  if(name) parts.push(`name ~ “${name}”`);
+  const n=document.getElementById('qf-note');
+  const matches = name? 11 : (qfStage.value==='Any stage'? 52 : 34);
+  n.style.display='block';
+  n.innerHTML=`Filter applied — <b style="color:var(--text-1)">${matches} deals</b> match: ${parts.join(' · ')}`;
+  document.querySelector('.queue-item.active .count').textContent=matches;
+  document.getElementById('q-label').textContent=(qfStage.value!=='Any stage'?qfStage.value:'Filtered queue');
+});
+/* ---- voicemail recording ---- */
+let vmRecTimer=null,vmRecSec=0;
+document.getElementById('vm-preview').addEventListener('click',function(){
+  this.textContent='… playing'; setTimeout(()=>this.textContent='▶ Preview',1500);
+});
+document.getElementById('vm-record').addEventListener('click',()=>{
+  const box=document.getElementById('vm-recording');
+  box.style.display='block'; vmRecSec=0;
+  document.getElementById('vm-rec-timer').textContent='00:00';
+  vmRecTimer=setInterval(()=>{vmRecSec++;document.getElementById('vm-rec-timer').textContent=
+    String(Math.floor(vmRecSec/60)).padStart(2,'0')+':'+String(vmRecSec%60).padStart(2,'0');},1000);
+});
+document.getElementById('vm-rec-save').addEventListener('click',()=>{
+  clearInterval(vmRecTimer);
+  const name=document.getElementById('vm-rec-name').value.trim()||'Untitled drop';
+  const opt=document.createElement('option');
+  opt.textContent=`Parker — ${name} (${vmRecSec}s)`; opt.selected=true;
+  document.getElementById('vm-select').appendChild(opt);
+  document.getElementById('vm-recording').style.display='none';
+  document.getElementById('vm-rec-name').value='';
+});
+/* ================= scoreboard ================= */
+const tooltip=document.getElementById('tooltip');
+function drawGrouped(svgId,data,vbW){
+  const svg=document.getElementById(svgId); svg.innerHTML='';
+  const H=240,W=vbW,padL=34,padB=26,padT=10;
+  const plotW=W-padL-8, plotH=H-padB-padT;
+  const maxV=Math.max(4,...data.parker,...data.jackson);
+  const yMax=Math.ceil(maxV/10)*10||4;
+  const groups=DAYS.length, groupW=plotW/groups;
+  const barW=Math.min(14,(groupW-14)/2);
+  const ns='http://www.w3.org/2000/svg';
+  /* gridlines + y labels */
+  for(let g=0;g<=2;g++){
+    const val=Math.round(yMax*g/2), y=padT+plotH-(plotH*g/2);
+    const ln=document.createElementNS(ns,'line');
+    ln.setAttribute('x1',padL);ln.setAttribute('x2',W-8);ln.setAttribute('y1',y);ln.setAttribute('y2',y);
+    ln.setAttribute('stroke', g===0 ? '#3a3530' : '#2b2724'); ln.setAttribute('stroke-width','1');
+    svg.appendChild(ln);
+    const tx=document.createElementNS(ns,'text');
+    tx.setAttribute('x',padL-8);tx.setAttribute('y',y+4);tx.setAttribute('text-anchor','end');
+    tx.setAttribute('font-size','10.5');tx.setAttribute('fill','#7d766c');tx.textContent=val;
+    svg.appendChild(tx);
+  }
+  DAYS.forEach((d,i)=>{
+    const gx=padL+i*groupW+groupW/2;
+    [['parker','var(--series-parker)','Parker'],['jackson','var(--series-jackson)','Jackson']].forEach(([key,color,label],s)=>{
+      const v=data[key][i];
+      const h=v/yMax*plotH;
+      const x=gx-(barW+1)+s*(barW+2); /* 2px surface gap between pair */
+      const y=padT+plotH-h;
+      const r=Math.min(4,h/2);
+      const p=document.createElementNS(ns,'path');
+      p.setAttribute('d',`M${x},${padT+plotH} L${x},${y+r} Q${x},${y} ${x+r},${y} L${x+barW-r},${y} Q${x+barW},${y} ${x+barW},${y+r} L${x+barW},${padT+plotH} Z`);
+      p.setAttribute('fill',color);
+      p.style.cursor='default';
+      p.addEventListener('mousemove',e=>{
+        tooltip.style.display='block';
+        tooltip.innerHTML=`${label} · ${d}<br><b>${v}</b> ${svgId==='chart-dials'?'dials':'conversations'}`;
+        tooltip.style.left=(e.clientX+14)+'px'; tooltip.style.top=(e.clientY-10)+'px';
+      });
+      p.addEventListener('mouseleave',()=>tooltip.style.display='none');
+      svg.appendChild(p);
+    });
+    const tx=document.createElementNS(ns,'text');
+    tx.setAttribute('x',gx);tx.setAttribute('y',H-8);tx.setAttribute('text-anchor','middle');
+    tx.setAttribute('font-size','10.5');tx.setAttribute('fill','#7d766c');tx.textContent=d;
+    svg.appendChild(tx);
+  });
+}
+function renderScoreboard(range){
+  const D=DATA[range];
+  document.getElementById('chart1-sub').textContent=D.sub;
+  const rl=document.getElementById('replines');
+  rl.innerHTML='';
+  [['parker','Parker Kiesz','PK','var(--series-parker)'],['jackson','Jackson Faerber','JF','var(--series-jackson)']].forEach(([key,name,ini,color])=>{
+    const t=D.tiles[key];
+    rl.innerHTML+=`<div class="repline">
+      <div class="who"><div class="avatar" style="background:${color}">${ini}</div>${name}</div>
+      <div class="stat-tile"><div class="n">${t.dials}</div><div class="l">Dials</div></div>
+      <div class="stat-tile"><div class="n">${t.conv}</div><div class="l">Conversations</div></div>
+      <div class="stat-tile"><div class="n">${t.vm}</div><div class="l">VMs left</div></div>
+      <div class="stat-tile"><div class="n">${t.talk}</div><div class="l">Talk time</div></div>
+      <div class="stat-tile"><div class="n">${t.rate}</div><div class="l">Connect rate</div></div>
+      <div class="stat-tile"><div class="n">${t.comm}</div><div class="l">Commission MTD</div></div>
+    </div>`;
+  });
+  drawGrouped('chart-dials',D.dials,620);
+  drawGrouped('chart-conv',D.conv,400);
+}
+document.querySelectorAll('#range-toggle button').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('#range-toggle button').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active'); renderScoreboard(b.dataset.range);
+}));
+renderScoreboard('week');
+/* ================= hot list ================= */
+const HOT = [
+  {deal:'Sarah Whitfield — Tacoma V2', owner:'parker', why:[['klaviyo','4 opens · 7d'],['shopify','saved build · 1d']], flagged:'Today 8:12a', status:'task', statusTxt:'📋 Task due today'},
+  {deal:'Greg Muniz — F-250 build', owner:'jackson', why:[['klaviyo','click: promo link · 3h'],['pipedrive','2 opens · 48h']], flagged:'Today 9:40a', status:'task', statusTxt:'📋 Task due today'},
+  {deal:'Aly Chen — Gladiator', owner:'parker', why:[['shopify','abandoned checkout · 5h'],['klaviyo','open · 6h']], flagged:'Today 10:02a', status:'new', statusTxt:'🆕 Not touched'},
+  {deal:'R. Fontaine — Ram 2500', owner:'jackson', why:[['pipedrive','5 opens · 6d']], flagged:'Yesterday', status:'called', statusTxt:'✅ Called Jul 19'},
+  {deal:'Dee Walker — F-150', owner:'parker', why:[['klaviyo','3 opens · 5d'],['shopify','builder session · 2d']], flagged:'Yesterday', status:'called', statusTxt:'✅ VM + text sent'},
+  {deal:'M. Osei — Tundra', owner:'jackson', why:[['klaviyo','click: financing pg · 2d']], flagged:'Jul 17', status:'cool', statusTxt:'⏳ Cooldown to Jul 24'},
+];
+const srcChip = s=>({klaviyo:'<span class="chip stage" style="background:rgba(201,80,46,.13);color:#e88a6b">Klaviyo</span>',
+  pipedrive:'<span class="chip stage" style="background:rgba(57,135,229,.13);color:#7db4f0">Pipedrive</span>',
+  shopify:'<span class="chip stage" style="background:rgba(12,163,12,.12);color:#5ecf5e">Shopify</span>'}[s]);
+document.getElementById('hot-rows').innerHTML = HOT.map(h=>`<tr>
+  <td><b>${h.deal}</b></td>
+  <td>${repChipHot(h.owner)}</td>
+  <td>${h.why.map(([s,t])=>`<div style="display:flex;align-items:center;gap:6px;margin:2px 0;white-space:nowrap">${srcChip(s)}<span style="font-size:12.5px;color:var(--text-2)">${t}</span></div>`).join('')}</td>
+  <td style="color:var(--text-3);white-space:nowrap">${h.flagged}</td>
+  <td style="white-space:nowrap;font-size:12.5px">${h.statusTxt}</td>
+  <td style="text-align:right;white-space:nowrap">
+    <button class="btn primary" style="padding:6px 11px;font-size:12px" onclick="jumpToDialer()">📞 Call</button>
+    <button class="btn ghost" style="padding:6px 10px;font-size:12px" onclick="alert('Prototype: clears flag, starts cooldown (audit-logged).')">Dismiss</button>
+  </td></tr>`).join('');
+function repChipHot(r){return r==='parker'?'<span class="chip parker">Parker</span>':'<span class="chip jackson">Jackson</span>'}
+function jumpToDialer(){
+  document.querySelector('nav.tabs button[data-view="dialer"]').click();
+  document.querySelectorAll('.queue-item').forEach((q,i)=>{if(i===2){q.click();}});
+}
+const FEED = [
+  ['10:02a','Aly Chen','abandoned checkout — V2 + juice box','shopify'],
+  ['9:57a','Greg Muniz','opened “Summer promo” (3rd)','klaviyo'],
+  ['9:40a','Greg Muniz','clicked promo link','klaviyo'],
+  ['9:31a','Sarah Whitfield','builder session · 11 min','shopify'],
+  ['9:14a','Dee Walker','opened rep email','pipedrive'],
+  ['8:12a','Sarah Whitfield','opened “Build ready” (4th)','klaviyo'],
+  ['7:58a','R. Fontaine','opened rep email (5th)','pipedrive'],
+];
+document.getElementById('signal-feed').innerHTML = FEED.map(([t,who,what,src])=>
+  `<div class="stmt-row" style="align-items:flex-start">
+    <div><b style="font-size:13px">${who}</b><div style="font-size:12px;color:var(--text-3)">${what}</div></div>
+    <div style="text-align:right;flex-shrink:0;margin-left:10px">${srcChip(src)}<div style="font-size:11px;color:var(--text-3);margin-top:3px">${t}</div></div>
+  </div>`).join('');
+/* ================= commissions ================= */
+const stateChip={confirmed:'<span class="chip state-confirmed">confirmed</span>',
+  deposit_only:'<span class="chip state-deposit">deposit only</span>',
+  walk_in:'<span class="chip state-walkin">walk-in</span>',
+  conflict:'<span class="chip state-conflict">⚠ conflict</span>',
+  clawed_back:'<span class="chip state-clawed">clawed back</span>',
+  expired:'<span class="chip state-expired">expired</span>'};
+const repChip={parker:'<span class="chip parker">Parker</span>',jackson:'<span class="chip jackson">Jackson</span>',
+  conflict:'<span class="chip state-conflict">P ↔ J</span>'};
+document.getElementById('journey-rows').innerHTML = JOURNEYS.map(j=>`<tr>
+  <td style="color:var(--text-3)">${j.id}</td><td><b>${j.cust}</b></td>
+  <td>${orderCell(j)}</td>
+  <td>${repChip[j.rep]}</td><td>${stateChip[j.state]}</td>
+  <td style="text-align:right" class="money">${j.total}</td>
+  <td style="text-align:right" class="money">${j.comm}</td>
+  <td style="color:var(--text-3)">${j.date}</td></tr>`).join('');
+/* modal */
+const overlay=document.getElementById('modal-overlay');
+document.getElementById('btn-logsale').onclick=()=>overlay.classList.add('open');
+document.getElementById('btn-modal-cancel').onclick=()=>overlay.classList.remove('open');
+overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.classList.remove('open')});
+document.getElementById('btn-order-search').onclick=()=>document.getElementById('order-hit').style.display='block';
+document.getElementById('order-search').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('order-hit').style.display='block'});
+</script>
+</body>
+</html>
