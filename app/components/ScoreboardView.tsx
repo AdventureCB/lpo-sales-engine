@@ -126,7 +126,9 @@ export function ScoreboardView() {
                 <div className="n">{t?.[field] ?? "—"}</div>
                 <div className="l">{label}</div>
                 {field === "conv" && (t?.convIn ?? 0) > 0 && (
-                  <div className="d">+{t.convIn} inbound answered</div>
+                  <div className="d">
+                    +{t.convIn} inbound · {t.conv + t.convIn} total
+                  </div>
                 )}
               </div>
             ))}
