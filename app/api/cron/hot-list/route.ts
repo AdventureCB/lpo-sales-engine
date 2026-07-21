@@ -10,6 +10,7 @@ import {
   getDeal,
   setDealLabels,
   createDueTodayActivity,
+  PipedriveRateLimitError,
 } from "@/lib/pipedrive";
 import { evaluateDeal, DEFAULT_RULES, type HotRules } from "@/lib/hotlist";
 
@@ -85,32 +86,59 @@ export async function GET(req: Request) {
     now.getTime() - rules.opens_window_days * 24 * 3600_000
   ).toISOString();
   try {
+    // Skip emails we already tried recently — most marketing recipients have
+    // no Pipedrive person, and re-searching them every sweep trips the limit.
+    const retryBefore = new Date(now.getTime() - 24 * 3600_000).toISOString();
     const { data: unmatched } = await db
       .from("engagement_events")
-      .select("id, person_email")
+      .select("id, person_email, match_attempted_at")
       .is("pipedrive_deal_id", null)
       .not("person_email", "is", null)
       .gte("occurred_at", scoringWindowStart)
+      .or(`match_attempted_at.is.null,match_attempted_at.lt.${retryBefore}`)
       .limit(500);
     const byEmail = new Map<string, number[]>();
     for (const ev of unmatched ?? []) {
       byEmail.set(ev.person_email, [...(byEmail.get(ev.person_email) ?? []), ev.id]);
     }
+    const MAX_EMAILS_PER_SWEEP = 120; // backlog drains across 15-min sweeps
     let matched = 0;
+    let processedEmails = 0;
+    let rateLimited = false;
     for (const [email, ids] of byEmail) {
-      const personId = await findPersonIdByEmail(email);
-      if (!personId) continue;
-      const deals = await getOpenDealsForPerson(personId);
-      if (deals.length === 0) continue;
-      // Multiple open deals is rare; attach the signal to the first.
-      const { error } = await db
-        .from("engagement_events")
-        .update({ pipedrive_deal_id: deals[0].id })
-        .in("id", ids);
-      if (error) throw new Error(error.message);
-      matched += ids.length;
+      if (processedEmails >= MAX_EMAILS_PER_SWEEP) break;
+      try {
+        const personId = await findPersonIdByEmail(email);
+        const deals = personId ? await getOpenDealsForPerson(personId) : [];
+        if (deals.length > 0) {
+          // Multiple open deals is rare; attach the signal to the first.
+          const { error } = await db
+            .from("engagement_events")
+            .update({ pipedrive_deal_id: deals[0].id })
+            .in("id", ids);
+          if (error) throw new Error(error.message);
+          matched += ids.length;
+        }
+        await db
+          .from("engagement_events")
+          .update({ match_attempted_at: now.toISOString() })
+          .in("id", ids);
+        processedEmails++;
+        await new Promise((r) => setTimeout(r, 250)); // ~4 req/s, under the bucket
+      } catch (e) {
+        if (e instanceof PipedriveRateLimitError) {
+          rateLimited = true;
+          break; // resume next sweep
+        }
+        throw e;
+      }
     }
-    summary.matching = { candidates: unmatched?.length ?? 0, matched };
+    summary.matching = {
+      candidateEmails: byEmail.size,
+      processedEmails,
+      matched,
+      ...(rateLimited ? { rateLimited: true } : {}),
+    };
   } catch (e) {
     console.error("deal matching failed", e);
     summary.matching = { error: e instanceof Error ? e.message : String(e) };

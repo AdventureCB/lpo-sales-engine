@@ -11,20 +11,33 @@ import { env } from "./env";
 const V1 = "https://api.pipedrive.com/v1";
 const V2 = "https://api.pipedrive.com/api/v2";
 
+export class PipedriveRateLimitError extends Error {}
+
 async function pd(base: string, path: string, init?: RequestInit & { params?: Record<string, string> }): Promise<any> {
   const url = new URL(`${base}${path}`);
   url.searchParams.set("api_token", env("PIPEDRIVE_API_TOKEN"));
   for (const [k, v] of Object.entries(init?.params ?? {})) url.searchParams.set(k, v);
-  const res = await fetch(url, {
-    method: init?.method ?? "GET",
-    headers: init?.body ? { "Content-Type": "application/json" } : undefined,
-    body: init?.body,
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || json.success === false) {
-    throw new Error(`Pipedrive ${path} ${res.status}: ${JSON.stringify(json.error ?? json).slice(0, 300)}`);
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, {
+      method: init?.method ?? "GET",
+      headers: init?.body ? { "Content-Type": "application/json" } : undefined,
+      body: init?.body,
+    });
+    if (res.status === 429) {
+      // Token-bucket limit: back off once, then surface a typed error so
+      // batch jobs can stop cleanly and resume next sweep.
+      if (attempt === 0) {
+        await new Promise((r) => setTimeout(r, 2500));
+        continue;
+      }
+      throw new PipedriveRateLimitError(`Pipedrive ${path} 429 after retry`);
+    }
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json.success === false) {
+      throw new Error(`Pipedrive ${path} ${res.status}: ${JSON.stringify(json.error ?? json).slice(0, 300)}`);
+    }
+    return json.data;
   }
-  return json.data;
 }
 
 export async function findPersonIdByEmail(email: string): Promise<number | null> {
