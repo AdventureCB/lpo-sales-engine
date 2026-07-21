@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 
 const SRC_CHIP: Record<string, { bg: string; color: string; label: string }> = {
   klaviyo: { bg: "rgba(201,80,46,.13)", color: "#e88a6b", label: "Klaviyo" },
@@ -34,7 +34,27 @@ interface FeedItem {
   type: string;
   person_email: string | null;
   occurred_at: string;
+  meta?: Record<string, unknown> | null;
 }
+
+/** "opened 'Your build is ready' · Summer promo" from the stored meta. */
+function eventDetail(e: FeedItem): string {
+  const m = e.meta ?? {};
+  const parts: string[] = [];
+  if (m["Subject"]) parts.push(`“${m["Subject"]}”`);
+  if (m["Campaign Name"] && m["Campaign Name"] !== m["Subject"]) parts.push(String(m["Campaign Name"]));
+  if (m["URL"]) parts.push(String(m["URL"]).replace(/^https?:\/\//, "").slice(0, 60));
+  if (m["$value"]) parts.push(`$${m["$value"]}`);
+  if (m["subject"]) parts.push(`“${m["subject"]}”`); // pipedrive threads
+  return parts.join(" · ");
+}
+
+const TYPE_LABEL: Record<string, string> = {
+  email_open: "opened email",
+  email_click: "clicked email",
+  builder_save: "saved a build",
+  checkout_started: "started checkout",
+};
 
 interface HotData {
   tiles: { flaggedNow: number; newToday: number; signals24h: number };
@@ -67,6 +87,21 @@ export function HotListView() {
   const [error, setError] = useState<string | null>(null);
   const [rules, setRules] = useState<Record<string, number>>({});
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const [dealEvents, setDealEvents] = useState<Record<number, FeedItem[]>>({});
+
+  const toggleExpand = (dealId: number) => {
+    if (expanded === dealId) {
+      setExpanded(null);
+      return;
+    }
+    setExpanded(dealId);
+    if (!dealEvents[dealId]) {
+      fetch(`/api/hotlist/events?dealId=${dealId}`)
+        .then((r) => r.json())
+        .then((d) => setDealEvents((prev) => ({ ...prev, [dealId]: d.events ?? [] })));
+    }
+  };
 
   const load = useCallback(() => {
     fetch("/api/hotlist")
@@ -154,25 +189,60 @@ export function HotListView() {
                   </tr>
                 )}
                 {active.map((f) => (
-                  <tr key={f.id}>
-                    <td>
-                      <b>{f.deal_title ?? `Deal #${f.deal_id}`}</b>
-                    </td>
-                    <td style={{ whiteSpace: "nowrap" }}>{f.owner_name ?? "—"}</td>
-                    <td style={{ fontSize: 12.5, color: "var(--text-2)" }}>{f.reason}</td>
-                    <td style={{ color: "var(--text-3)", whiteSpace: "nowrap" }}>
-                      {fmtWhen(f.flagged_at)}
-                    </td>
-                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      <button
-                        className="btn ghost"
-                        style={{ padding: "6px 10px", fontSize: 12 }}
-                        onClick={() => dismiss(f.id)}
-                      >
-                        Dismiss
-                      </button>
-                    </td>
-                  </tr>
+                  <React.Fragment key={f.id}>
+                    <tr onClick={() => toggleExpand(f.deal_id)} style={{ cursor: "pointer" }}>
+                      <td>
+                        <span style={{ color: "var(--text-3)", marginRight: 6 }}>
+                          {expanded === f.deal_id ? "▾" : "▸"}
+                        </span>
+                        <b>{f.deal_title ?? `Deal #${f.deal_id}`}</b>
+                      </td>
+                      <td style={{ whiteSpace: "nowrap" }}>{f.owner_name ?? "—"}</td>
+                      <td style={{ fontSize: 12.5, color: "var(--text-2)" }}>{f.reason}</td>
+                      <td style={{ color: "var(--text-3)", whiteSpace: "nowrap" }}>
+                        {fmtWhen(f.flagged_at)}
+                      </td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        <button
+                          className="btn ghost"
+                          style={{ padding: "6px 10px", fontSize: 12 }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            dismiss(f.id);
+                          }}
+                        >
+                          Dismiss
+                        </button>
+                      </td>
+                    </tr>
+                    {expanded === f.deal_id && (
+                      <tr>
+                        <td colSpan={5} style={{ background: "var(--surface-2)", padding: "10px 14px" }}>
+                          {!dealEvents[f.deal_id] && (
+                            <span style={{ color: "var(--text-3)", fontSize: 12.5 }}>Loading…</span>
+                          )}
+                          {dealEvents[f.deal_id]?.length === 0 && (
+                            <span style={{ color: "var(--text-3)", fontSize: 12.5 }}>
+                              No stored events for this deal.
+                            </span>
+                          )}
+                          {dealEvents[f.deal_id]?.map((e, i) => (
+                            <div
+                              key={i}
+                              style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "3px 0", fontSize: 12.5 }}
+                            >
+                              <span style={{ color: "var(--text-3)", whiteSpace: "nowrap", minWidth: 110 }}>
+                                {fmtWhen(e.occurred_at)}
+                              </span>
+                              <SourceChip source={e.source} />
+                              <span style={{ color: "var(--text-1)" }}>{TYPE_LABEL[e.type] ?? e.type}</span>
+                              <span style={{ color: "var(--text-2)" }}>{eventDetail(e)}</span>
+                            </div>
+                          ))}
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
@@ -213,7 +283,10 @@ export function HotListView() {
               <div>
                 <b style={{ fontSize: 13 }}>{s.person_email ?? "unknown"}</b>
                 <div style={{ fontSize: 12, color: "var(--text-3)" }}>
-                  {s.type.replace("_", " ")}
+                  {TYPE_LABEL[s.type] ?? s.type.replace("_", " ")}
+                  {eventDetail(s) && (
+                    <span style={{ color: "var(--text-2)" }}> — {eventDetail(s)}</span>
+                  )}
                 </div>
               </div>
               <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 10 }}>

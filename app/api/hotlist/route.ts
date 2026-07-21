@@ -23,7 +23,7 @@ export async function GET() {
       .gte("occurred_at", dayAgo),
     db
       .from("engagement_events")
-      .select("source, type, person_email, pipedrive_deal_id, occurred_at")
+      .select("source, type, person_email, pipedrive_deal_id, occurred_at, meta")
       .order("occurred_at", { ascending: false })
       .limit(25),
     db.from("app_config").select("hot_rules").single(),

@@ -62,10 +62,20 @@ export async function getEventsForMetric(metricId: string, sinceIso: string): Pr
       const profileId = ev.relationships?.profile?.data?.id;
       const email = profileId ? profileEmails.get(profileId) : null;
       if (!email) continue;
+      // Keep the human-useful detail (what they engaged with) small: subject,
+      // campaign, click URL, order value — not the whole property bag.
+      const props = ev.attributes?.event_properties ?? {};
+      const detail: Record<string, unknown> = {};
+      for (const key of ["Subject", "Campaign Name", "URL", "$value", "Name", "Items"]) {
+        const v = props[key];
+        if (v !== undefined && v !== null && v !== "") {
+          detail[key] = typeof v === "object" ? JSON.stringify(v).slice(0, 200) : v;
+        }
+      }
       events.push({
         email,
         occurredAt: ev.attributes?.datetime,
-        meta: { klaviyo_event_id: ev.id },
+        meta: { klaviyo_event_id: ev.id, ...detail },
       });
     }
     url = page.links?.next ?? null;

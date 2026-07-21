@@ -19,9 +19,14 @@ import { evaluateDeal, DEFAULT_RULES, type HotRules } from "@/lib/hotlist";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const KLAVIYO_METRICS: Array<[string, string]> = [
-  ["Opened Email", "email_open"],
-  ["Clicked Email", "email_click"],
+// [Klaviyo metric name, stored source, stored type]. Shopify-originated
+// events reach us through Klaviyo's integration, but keep their true source
+// so the "distinct signal types" rule sees e.g. email_open + builder_save.
+const KLAVIYO_METRICS: Array<[string, string, string]> = [
+  ["Opened Email", "klaviyo", "email_open"],
+  ["Clicked Email", "klaviyo", "email_click"],
+  ["3D Builder - Save Build", "shopify", "builder_save"],
+  ["Checkout Started", "shopify", "checkout_started"],
 ];
 
 /**
@@ -50,13 +55,13 @@ export async function GET(req: Request) {
       const since = new Date(now.getTime() - 24 * 3600_000).toISOString();
       const metricIds = await getMetricIds();
       let ingested = 0;
-      for (const [metricName, type] of KLAVIYO_METRICS) {
+      for (const [metricName, source, type] of KLAVIYO_METRICS) {
         const metricId = metricIds.get(metricName);
         if (!metricId) continue;
         const events = await getEventsForMetric(metricId, since);
         if (events.length === 0) continue;
         const rows = events.map((e) => ({
-          source: "klaviyo",
+          source,
           type,
           person_email: e.email,
           occurred_at: e.occurredAt,
