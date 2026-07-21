@@ -28,13 +28,18 @@ fn open_tel(url: String) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("open failed: {e}"))?;
     std::thread::spawn(|| {
-        std::thread::sleep(std::time::Duration::from_millis(900));
-        let _ = std::process::Command::new("osascript")
-            .args([
-                "-e",
-                "tell application \"System Events\" to tell process \"Quo\" to keystroke return",
-            ])
-            .output();
+        // Give Quo time to open its start-call prompt (slower machines need
+        // more), force it frontmost so the Return lands in the prompt, then
+        // hand focus back to the dialer.
+        std::thread::sleep(std::time::Duration::from_millis(1400));
+        let script = r#"
+tell application "Quo" to activate
+delay 0.4
+tell application "System Events" to keystroke return
+delay 0.2
+tell application "LPO Queue Runner" to activate
+"#;
+        let _ = std::process::Command::new("osascript").args(["-e", script]).output();
     });
     Ok(())
 }
