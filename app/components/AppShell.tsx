@@ -1,13 +1,22 @@
 import Link from "next/link";
+import { UserChip } from "./UserChip";
 
 const TABS = [
-  { label: "Dialer", href: "/dialer", live: false },
+  { label: "Dialer", href: "/dialer", live: true },
   { label: "🔥 Hot List", href: "/hot-list", live: true },
   { label: "Scoreboard", href: "/scoreboard", live: true },
   { label: "Commissions", href: "/commissions", live: false },
 ];
 
-export function AppShell({ active, children }: { active: string; children: React.ReactNode }) {
+export function AppShell({
+  active,
+  user,
+  children,
+}: {
+  active: string;
+  user?: { name: string; role: string } | null;
+  children: React.ReactNode;
+}) {
   return (
     <>
       <header className="app">
@@ -31,9 +40,13 @@ export function AppShell({ active, children }: { active: string; children: React
             )
           )}
         </nav>
-        <div className="userchip">
-          <span>Team view</span>
-        </div>
+        {user ? (
+          <UserChip name={user.name} role={user.role} />
+        ) : (
+          <div className="userchip">
+            <span>Team view</span>
+          </div>
+        )}
       </header>
       <main>{children}</main>
     </>

@@ -224,6 +224,7 @@ export async function GET(req: Request) {
         signals: verdict.signals,
         deal_title: deal.title,
         owner_name: deal.owner_name ?? null,
+        owner_pipedrive_id: deal.owner_id ?? null,
         cooldown_until: new Date(
           now.getTime() + rules.cooldown_days * 24 * 3600_000
         ).toISOString(),

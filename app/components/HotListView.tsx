@@ -82,7 +82,7 @@ function fmtWhen(iso: string) {
   });
 }
 
-export function HotListView() {
+export function HotListView({ isAdmin = false }: { isAdmin?: boolean }) {
   const [data, setData] = useState<HotData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rules, setRules] = useState<Record<string, number>>({});
@@ -248,6 +248,7 @@ export function HotListView() {
             </table>
           </div>
 
+          {isAdmin && (
           <div className="card" style={{ marginTop: 18 }}>
             <div className="panel-h">Flag rules (config, not code)</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
@@ -271,6 +272,7 @@ export function HotListView() {
               {saveState === "saved" ? "✓ Saved — applies next sweep" : "Save rules"}
             </button>
           </div>
+          )}
         </div>
 
         <div className="card">

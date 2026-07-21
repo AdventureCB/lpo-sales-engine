@@ -2,11 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { envOptional } from "@/lib/env";
 import { getHotLabelId, getDeal, setDealLabels } from "@/lib/pipedrive";
+import { getSessionUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
-/** Dismiss a hot flag: clear it, start cooldown, remove the label. Audited. */
+/**
+ * Dismiss a hot flag: clear it, start cooldown, remove the label. Audited.
+ * Sales users can only dismiss flags on deals they own.
+ */
 export async function POST(req: NextRequest) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
   let body: { flagId?: string };
   try {
     body = await req.json();
@@ -18,19 +25,22 @@ export async function POST(req: NextRequest) {
   const db = supabaseAdmin();
   const { data: flag } = await db
     .from("hot_flags")
-    .select("id, deal_id, deal_title")
+    .select("id, deal_id, deal_title, owner_pipedrive_id")
     .eq("id", body.flagId)
     .maybeSingle();
   if (!flag) return NextResponse.json({ error: "not found" }, { status: 404 });
+  if (user.role === "sales" && flag.owner_pipedrive_id !== user.pipedriveUserId) {
+    return NextResponse.json({ error: "not your deal" }, { status: 403 });
+  }
 
   const { error } = await db
     .from("hot_flags")
-    .update({ cleared_at: new Date().toISOString(), dismissed_by: "dashboard" })
+    .update({ cleared_at: new Date().toISOString(), dismissed_by: user.email })
     .eq("id", flag.id);
   if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
 
   await db.from("admin_corrections").insert({
-    actor: "dashboard",
+    actor: user.email,
     action: "dismiss_hot_flag",
     target: `deal ${flag.deal_id} (${flag.deal_title ?? "?"})`,
     reason: "manual dismiss from hot list",

@@ -100,6 +100,94 @@ export async function setDealLabels(dealId: number, labelIds: number[]): Promise
   });
 }
 
+export interface DealListItem {
+  id: number;
+  title: string;
+  stage_id: number;
+  owner_id: number;
+  person_id: number | null;
+  update_time: string | null;
+}
+
+/** Open deals in a stage (v2 cursor pagination), capped. */
+export async function listOpenDealsByStage(stageId: number, cap = 300): Promise<DealListItem[]> {
+  const deals: DealListItem[] = [];
+  let cursor: string | null = null;
+  while (deals.length < cap) {
+    const params: Record<string, string> = {
+      stage_id: String(stageId),
+      status: "open",
+      limit: "100",
+    };
+    if (cursor) params.cursor = cursor;
+    const url = new URL(`${V2}/deals`);
+    url.searchParams.set("api_token", env("PIPEDRIVE_API_TOKEN"));
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+    const res = await fetch(url);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json.success === false) {
+      throw new Error(`Pipedrive v2 deals ${res.status}: ${JSON.stringify(json).slice(0, 200)}`);
+    }
+    for (const d of json.data ?? []) {
+      deals.push({
+        id: d.id,
+        title: d.title,
+        stage_id: d.stage_id,
+        owner_id: d.owner_id,
+        person_id: d.person_id ?? null,
+        update_time: d.update_time ?? null,
+      });
+    }
+    cursor = json.additional_data?.next_cursor ?? null;
+    if (!cursor) break;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return deals;
+}
+
+export interface PersonPhone {
+  id: number;
+  name: string;
+  phone: string | null; // raw primary phone
+  email: string | null;
+}
+
+/** Persons by id (v2, batches of 100) — name + primary phone/email. */
+export async function getPersonsByIds(ids: number[]): Promise<Map<number, PersonPhone>> {
+  const out = new Map<number, PersonPhone>();
+  for (let i = 0; i < ids.length; i += 100) {
+    const batch = ids.slice(i, i + 100);
+    const data = await pd(V2, "/persons", { params: { ids: batch.join(","), limit: "100" } });
+    for (const p of data ?? []) {
+      const phones = p.phones ?? [];
+      const primary = phones.find((x: any) => x.primary) ?? phones[0];
+      const emails = p.emails ?? [];
+      const primaryEmail = emails.find((x: any) => x.primary) ?? emails[0];
+      out.set(p.id, {
+        id: p.id,
+        name: p.name,
+        phone: primary?.value ?? null,
+        email: primaryEmail?.value ?? null,
+      });
+    }
+    if (i + 100 < ids.length) await new Promise((r) => setTimeout(r, 200));
+  }
+  return out;
+}
+
+/** Latest notes on a deal (for the lead card). */
+export async function getDealNotes(dealId: number, limit = 2): Promise<string[]> {
+  const data = await pd(V1, "/notes", {
+    params: { deal_id: String(dealId), limit: String(limit), sort: "add_time DESC" },
+  });
+  return (data ?? []).map((n: any) =>
+    String(n.content ?? "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
+}
+
 export interface SentThread {
   id: number;
   subject: string | null;

@@ -1,17 +1,17 @@
 import { AppShell } from "../components/AppShell";
-import { HotListView } from "../components/HotListView";
+import { DialerView } from "../components/DialerView";
 import { getSessionUser } from "@/lib/auth";
 
-export const metadata = { title: "Hot List · LPO Sales Engine" };
+export const metadata = { title: "Dialer · LPO Sales Engine" };
 
-export default async function HotListPage() {
+export default async function DialerPage() {
   const user = await getSessionUser();
   return (
     <AppShell
-      active="/hot-list"
+      active="/dialer"
       user={user ? { name: user.repName ?? user.email, role: user.role } : null}
     >
-      <HotListView isAdmin={user?.role === "admin"} />
+      <DialerView isAdmin={user?.role === "admin"} />
     </AppShell>
   );
 }

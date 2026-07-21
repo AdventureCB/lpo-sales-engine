@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { DEFAULT_RULES, type HotRules } from "@/lib/hotlist";
+import { getSessionUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
 const NUMERIC_KEYS = Object.keys(DEFAULT_RULES) as Array<keyof HotRules>;
 
-/** Update hot-list flag rules (thresholds are config, not code). */
+/** Update hot-list flag rules (thresholds are config, not code). Admin only. */
 export async function PUT(req: NextRequest) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
   let body: Partial<HotRules>;
   try {
     body = await req.json();
@@ -31,7 +35,7 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "db error" }, { status: 500 });
   }
   await db.from("admin_corrections").insert({
-    actor: "dashboard",
+    actor: user.email,
     action: "update_hot_rules",
     target: "app_config.hot_rules",
     reason: `set to ${JSON.stringify(rules)}`,
