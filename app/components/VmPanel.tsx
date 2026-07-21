@@ -220,17 +220,19 @@ function AudioSetup() {
         BlackHole {state.blackhole ? "✓" : "✗ not installed"} · Mic+VM device{" "}
         {state.aggregate ? "✓" : "✗ missing"}
       </div>
-      {(!state.aggregate || !state.blackhole) && (
-        <button
-          className="btn ghost"
-          style={{ width: "100%", justifyContent: "center", fontSize: 12.5, padding: 8, marginTop: 8 }}
-          onClick={runSetup}
-          disabled={!state.blackhole}
-          title={state.blackhole ? undefined : "Install BlackHole first (see SETUP.md)"}
-        >
-          ⚙️ Create Mic + VM device
-        </button>
-      )}
+      <button
+        className="btn ghost"
+        style={{ width: "100%", justifyContent: "center", fontSize: 12.5, padding: 8, marginTop: 8 }}
+        onClick={runSetup}
+        disabled={!state.blackhole}
+        title={
+          state.blackhole
+            ? "Rebuilds the device around your current default microphone — use after switching headsets"
+            : "Install BlackHole first (see SETUP.md)"
+        }
+      >
+        {state.aggregate ? "⚙️ Recreate Mic + VM device (new headset?)" : "⚙️ Create Mic + VM device"}
+      </button>
       {msg && <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 6 }}>{msg}</div>}
     </div>
   );
