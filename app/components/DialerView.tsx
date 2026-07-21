@@ -191,19 +191,13 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setAwaitingDispo(true);
   };
 
-  const [endCallDiag, setEndCallDiag] = useState<string | null>(null);
-
-  /** End-call button: try to click Quo's own hang-up via the companion. */
+  /**
+   * Quo exposes no automatable hang-up (no API/shortcut/AX tree) — the rep
+   * hangs up in Quo; this button syncs our UI. The webhook does the same
+   * automatically when the call ends.
+   */
   const endCall = async () => {
     if (!inCall) return;
-    if (window.__TAURI__) {
-      try {
-        const result = String(await window.__TAURI__.core.invoke("end_call"));
-        setEndCallDiag(result.startsWith("clicked") ? null : result);
-      } catch (e) {
-        setEndCallDiag(String(e));
-      }
-    }
     hangUp();
   };
 
@@ -544,8 +538,13 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                   {vmPlaying ? "🎙 Dropping…" : <>🎙 Drop VM <kbd>V</kbd></>}
                 </button>
                 {inCall && (
-                  <button className="btn big" style={{ background: "var(--crit)", color: "#fff" }} onClick={endCall}>
-                    ⏹ End call <kbd>E</kbd>
+                  <button
+                    className="btn big"
+                    style={{ background: "var(--crit)", color: "#fff" }}
+                    onClick={endCall}
+                    title="Hang up in Quo — this records the call as ended here"
+                  >
+                    ⏹ Call ended <kbd>E</kbd>
                   </button>
                 )}
                 <button className="btn ghost" onClick={skip} disabled={inCall || awaitingDispo}>
@@ -557,14 +556,6 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                   </div>
                 )}
               </div>
-              {endCallDiag && (
-                <pre
-                  style={{ marginTop: 12, fontSize: 10.5, color: "var(--text-3)", whiteSpace: "pre-wrap", maxHeight: 140, overflow: "auto", background: "var(--surface-2)", borderRadius: 8, padding: 10 }}
-                  onClick={() => setEndCallDiag(null)}
-                >
-                  hang-up automation: {endCallDiag}
-                </pre>
-              )}
               {awaitingDispo && (
                 <div className="dispo-row" style={{ display: "flex" }}>
                   {DISPOSITIONS.map(([key, num, label]) => (
