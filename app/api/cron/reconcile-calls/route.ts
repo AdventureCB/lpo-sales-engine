@@ -1,24 +1,32 @@
 import { NextResponse } from "next/server";
 import { isAuthorizedCron } from "@/lib/cron";
 import { supabaseAdmin } from "@/lib/supabase";
-import { listCalls } from "@/lib/quo-api";
+import { listCallsForNumber } from "@/lib/quo-api";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const LOOKBACK_HOURS = 48;
+const DEFAULT_LOOKBACK_HOURS = 48;
 
 /**
- * Nightly call reconciliation (Module 3): pull GET /v1/calls per rep phone
- * number — real timestamps/direction/duration — and upsert anything webhooks
- * missed. Classification and disposition columns are deliberately NOT in the
- * upsert payload so webhook/transcript-derived values survive. Runs 08:30 UTC
- * ≈ 00:30/01:30 America/Los_Angeles.
+ * Call reconciliation (Module 3): pull calls per rep phone number — real
+ * timestamps/direction/duration — and upsert anything webhooks missed.
+ * Classification and disposition columns are deliberately NOT in the upsert
+ * payload so webhook/transcript-derived values survive.
+ *
+ * ?hours=N bounds the window: Supabase pg_cron sweeps hourly with a short
+ * window; Vercel's nightly cron does the 48h deep pass.
  */
 export async function GET(req: Request) {
   if (!isAuthorizedCron(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+
+  const hoursParam = Number(new URL(req.url).searchParams.get("hours"));
+  const lookbackHours =
+    Number.isFinite(hoursParam) && hoursParam >= 1 && hoursParam <= 168
+      ? hoursParam
+      : DEFAULT_LOOKBACK_HOURS;
 
   const db = supabaseAdmin();
   const { data: reps, error: repsError } = await db
@@ -30,16 +38,16 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: repsError.message }, { status: 500 });
   }
 
-  const createdAfter = new Date(Date.now() - LOOKBACK_HOURS * 3600 * 1000).toISOString();
+  const createdAfter = new Date(Date.now() - lookbackHours * 3600 * 1000).toISOString();
   const results: Array<Record<string, unknown>> = [];
 
-  // Sequential per rep to stay far under Quo's 10 req/s; one rep failing
-  // (e.g. API shape change) must not sink the others.
+  // Sequential per rep to stay under Quo's 10 req/s; one rep failing
+  // (e.g. API shape change) must not sink the others. No userId scoping —
+  // reconciliation is per NUMBER; the number's owner is the rep.
   for (const rep of reps ?? []) {
     try {
-      const calls = await listCalls({
+      const calls = await listCallsForNumber({
         phoneNumberId: rep.quo_phone_number_id!,
-        userId: rep.quo_user_id ?? undefined,
         createdAfter,
       });
       const rows = calls.map((c) => ({
@@ -65,5 +73,5 @@ export async function GET(req: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true, lookbackHours: LOOKBACK_HOURS, results });
+  return NextResponse.json({ ok: true, lookbackHours, results });
 }
