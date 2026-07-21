@@ -109,28 +109,43 @@ function tallyCall(t: Tally, c: CallRow) {
   if (isConvOut || isConvIn) t.talkS += c.duration_s ?? 0;
 }
 
+/** Weekday index (0 = Mon) of a calendar date string — timezone-free. */
+function weekdayIdx(date: string): number {
+  return (new Date(`${date}T12:00:00Z`).getUTCDay() + 6) % 7;
+}
+
+/** Inclusive list of date strings from start to end. */
+function dateSpan(start: string, end: string): string[] {
+  const out: string[] = [];
+  let t = Date.parse(`${start}T12:00:00Z`);
+  const endT = Date.parse(`${end}T12:00:00Z`);
+  while (t <= endT && out.length <= 400) {
+    out.push(new Date(t).toISOString().slice(0, 10));
+    t += 86400_000;
+  }
+  return out;
+}
+
 export function buildScoreboard(
   reps: RepRow[],
   calls: CallRow[],
   messages: MessageRow[],
   journeys: JourneyRow[],
   timeZone: string,
-  now: Date
+  now: Date,
+  custom?: { start: string; end: string }
 ) {
-  // Map every instant we might see to an app-tz calendar day.
-  const dayByDate = new Map<string, DayInfo>();
-  for (let k = -45; k <= 7; k++) {
-    const info = dayInfo(new Date(now.getTime() + k * 86400_000), timeZone);
-    dayByDate.set(info.date, info);
-  }
-
   const today = dayInfo(now, timeZone);
   const monthPrefix = today.date.slice(0, 7);
 
-  // The week containing today, Monday-first.
+  // The week containing today, Monday-first — and the one before it.
   const weekDates: string[] = [];
   for (let k = -today.weekdayIdx; k <= 6 - today.weekdayIdx; k++) {
     weekDates.push(dayInfo(new Date(now.getTime() + k * 86400_000), timeZone).date);
+  }
+  const lastWeekDates: string[] = [];
+  for (let k = -today.weekdayIdx - 7; k <= 6 - today.weekdayIdx - 7; k++) {
+    lastWeekDates.push(dayInfo(new Date(now.getTime() + k * 86400_000), timeZone).date);
   }
 
   // rep -> date -> tally
@@ -181,7 +196,7 @@ export function buildScoreboard(
       for (const date of datesFor(days)) {
         const t = days.get(date);
         if (!t) continue;
-        const wi = dayByDate.get(date)?.weekdayIdx ?? -1;
+        const wi = weekdayIdx(date);
         if (wi >= 0) {
           series.dials[wi] += t.dials;
           series.conv[wi] += t.convOut + t.convIn;
@@ -215,16 +230,30 @@ export function buildScoreboard(
   const monthDatesFor = (days: Map<string, Tally>) =>
     [...days.keys()].filter((d) => d.startsWith(monthPrefix) && d <= today.date);
 
+  const repsOut = reps.map((r) => ({
+    key: repKey(r),
+    name: r.name,
+    initials: r.name
+      .split(" ")
+      .map((w) => w[0])
+      .join("")
+      .toUpperCase(),
+  }));
+
+  if (custom) {
+    const dates = dateSpan(custom.start, custom.end);
+    const sub =
+      `${prettyDate(custom.start, false)} – ${prettyDate(custom.end, false)}` +
+      (dates.length > 7 ? " · summed by weekday" : "");
+    return {
+      reps: repsOut,
+      days: DAY_LABELS,
+      ranges: { custom: buildRange(() => dates, sub) },
+    };
+  }
+
   return {
-    reps: reps.map((r) => ({
-      key: repKey(r),
-      name: r.name,
-      initials: r.name
-        .split(" ")
-        .map((w) => w[0])
-        .join("")
-        .toUpperCase(),
-    })),
+    reps: repsOut,
     days: DAY_LABELS,
     ranges: {
       day: buildRange(
@@ -234,6 +263,10 @@ export function buildScoreboard(
       week: buildRange(
         () => weekDates,
         `${prettyDate(weekDates[0], true)} – ${prettyDate(weekDates[6], true)}`
+      ),
+      lastweek: buildRange(
+        () => lastWeekDates,
+        `${prettyDate(lastWeekDates[0], true)} – ${prettyDate(lastWeekDates[6], true)}`
       ),
       month: buildRange(
         monthDatesFor,

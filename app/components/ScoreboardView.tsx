@@ -41,6 +41,7 @@ interface ScoreboardData {
 const RANGE_LABELS: [string, string][] = [
   ["day", "Today"],
   ["week", "This week"],
+  ["lastweek", "Last week"],
   ["month", "Month"],
 ];
 
@@ -62,6 +63,26 @@ export function ScoreboardView() {
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState("week");
   const [tip, setTip] = useState<{ x: number; y: number; html: string } | null>(null);
+  const [showCustom, setShowCustom] = useState(false);
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
+  const [customData, setCustomData] = useState<ScoreboardData | null>(null);
+  const [customLoading, setCustomLoading] = useState(false);
+
+  const applyCustom = async () => {
+    if (!customStart || !customEnd || customStart > customEnd) return;
+    setCustomLoading(true);
+    try {
+      const r = await fetch(`/api/scoreboard?start=${customStart}&end=${customEnd}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setCustomData(await r.json());
+      setRange("custom");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setCustomLoading(false);
+    }
+  };
 
   useEffect(() => {
     const load = () =>
@@ -77,7 +98,8 @@ export function ScoreboardView() {
   if (error) return <div className="viewsub">Couldn’t load scoreboard: {error}</div>;
   if (!data) return <div className="viewsub">Loading…</div>;
 
-  const D = data.ranges[range];
+  const D = range === "custom" && customData ? customData.ranges.custom : data.ranges[range];
+  if (!D) return <div className="viewsub">Loading…</div>;
   const colorFor = (key: string, i: number) =>
     SERIES_COLORS[key] ?? FALLBACK_COLORS[i % FALLBACK_COLORS.length];
   const mkSeries = (metric: Record<string, number[]>): Series[] =>
@@ -103,13 +125,49 @@ export function ScoreboardView() {
     <>
       <h2 className="viewtitle">Team scoreboard</h2>
       <div className="viewsub">Outbound activity from Quo · conversions from Pipedrive + Shopify journeys</div>
-      <div className="range-toggle">
-        {RANGE_LABELS.map(([key, label]) => (
-          <button key={key} className={range === key ? "active" : ""} onClick={() => setRange(key)}>
-            {label}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div className="range-toggle" style={{ marginBottom: 0 }}>
+          {RANGE_LABELS.map(([key, label]) => (
+            <button key={key} className={range === key ? "active" : ""} onClick={() => setRange(key)}>
+              {label}
+            </button>
+          ))}
+          <button
+            className={range === "custom" ? "active" : ""}
+            onClick={() => setShowCustom((v) => !v)}
+          >
+            Custom{range === "custom" && customData ? ` ✓` : "…"}
           </button>
-        ))}
+        </div>
+        {showCustom && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="date"
+              className="vmsel"
+              style={{ width: "auto" }}
+              value={customStart}
+              onChange={(e) => setCustomStart(e.target.value)}
+            />
+            <span style={{ color: "var(--text-3)" }}>–</span>
+            <input
+              type="date"
+              className="vmsel"
+              style={{ width: "auto" }}
+              value={customEnd}
+              onChange={(e) => setCustomEnd(e.target.value)}
+            />
+            <button
+              className="btn primary"
+              style={{ padding: "8px 14px", fontSize: 13 }}
+              onClick={applyCustom}
+              disabled={customLoading || !customStart || !customEnd}
+            >
+              {customLoading ? "…" : "Apply"}
+            </button>
+          </div>
+        )}
       </div>
+      <div style={{ height: 20 }} />
 
       {data.reps.map((r, i) => {
         const t = D.tiles[r.key];
