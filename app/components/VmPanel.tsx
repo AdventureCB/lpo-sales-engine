@@ -170,19 +170,38 @@ export function VmPanel({
 function AudioSetup() {
   const [state, setState] = useState<{ blackhole: boolean; aggregate: boolean } | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [bridgeError, setBridgeError] = useState<string | null>(null);
+  const [inTauri, setInTauri] = useState(false);
 
   const refresh = () => {
     window.__TAURI__?.core
       .invoke("audio_status")
       .then((s) => setState(s as { blackhole: boolean; aggregate: boolean }))
-      .catch(() => {});
+      .catch((e) => setBridgeError(String(e)));
   };
 
   useEffect(() => {
-    if (window.__TAURI__) refresh();
+    if (window.__TAURI__) {
+      setInTauri(true);
+      refresh();
+    }
   }, []);
 
-  if (!state) return null; // browser, or status unavailable
+  if (!inTauri) return null; // browser — audio setup is companion-only
+  if (bridgeError) {
+    return (
+      <div style={{ marginTop: 12, borderTop: "1px solid var(--border-soft)", paddingTop: 10, fontSize: 12, color: "var(--crit)" }}>
+        Companion bridge error: {bridgeError}
+      </div>
+    );
+  }
+  if (!state) {
+    return (
+      <div style={{ marginTop: 12, borderTop: "1px solid var(--border-soft)", paddingTop: 10, fontSize: 12, color: "var(--text-3)" }}>
+        Checking audio devices…
+      </div>
+    );
+  }
 
   const runSetup = async () => {
     setMsg("Setting up…");

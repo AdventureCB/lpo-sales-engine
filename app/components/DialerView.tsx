@@ -595,8 +595,10 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
 
       <div className="viewsub" style={{ marginTop: 18 }}>
         Keyboard: <kbd>⏎</kbd> dial · <kbd>E</kbd> call ended · <kbd>V</kbd> VM left ·{" "}
-        <kbd>1–4</kbd> disposition · <kbd>S</kbd> skip. One-click VM audio drop arrives with the
-        desktop companion.
+        <kbd>1–4</kbd> disposition · <kbd>S</kbd> skip ·{" "}
+        {typeof window !== "undefined" && window.__TAURI__
+          ? "🖥 companion mode — VM drops play into the call"
+          : "🌐 browser mode — VM drops log only (use the desktop app for audio)"}
       </div>
     </>
   );
