@@ -77,7 +77,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  if (!type.startsWith("call.")) {
+  // Only lifecycle events carry a call object; recording/summary events
+  // (dashboard webhook sends those too) have different payload shapes.
+  const CALL_LIFECYCLE = ["call.ringing", "call.answered", "call.completed"];
+  if (!CALL_LIFECYCLE.includes(type)) {
     return NextResponse.json({ ok: true, ignored: type });
   }
 
