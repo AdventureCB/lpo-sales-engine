@@ -27,7 +27,7 @@ let metricIdCache: Map<string, string> | null = null;
 export async function getMetricIds(): Promise<Map<string, string>> {
   if (metricIdCache) return metricIdCache;
   const ids = new Map<string, string>();
-  let url: string | null = `${BASE}/metrics/?page[size]=100`;
+  let url: string | null = `${BASE}/metrics/`;
   while (url) {
     const page = await kGet(url);
     for (const m of page.data ?? []) ids.set(m.attributes?.name, m.id);
@@ -49,10 +49,9 @@ export async function getEventsForMetric(metricId: string, sinceIso: string): Pr
   const filter = encodeURIComponent(
     `and(equals(metric_id,"${metricId}"),greater-or-equal(datetime,${sinceIso}))`
   );
-  let url: string | null =
-    `${BASE}/events/?filter=${filter}&include=profile&sort=datetime&page[size]=200`;
+  let url: string | null = `${BASE}/events/?filter=${filter}&include=profile&sort=datetime`;
   let pages = 0;
-  while (url && pages < 25) {
+  while (url && pages < 40) {
     const page = await kGet(url);
     const profileEmails = new Map<string, string>();
     for (const inc of page.included ?? []) {
