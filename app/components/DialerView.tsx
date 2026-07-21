@@ -160,8 +160,15 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     callSecRef.current = 0;
     setSess((s) => ({ ...s, dials: s.dials + 1 }));
     // Quo desktop registers as the tel: handler (same handoff the Pipedrive
-    // integration uses).
-    window.location.href = `tel:${lead.phone}`;
+    // integration uses). The companion webview blocks tel: navigation, so
+    // hand it to the OS natively there.
+    if (window.__TAURI__) {
+      void window.__TAURI__.core
+        .invoke("open_tel", { url: `tel:${lead.phone}` })
+        .catch((e) => console.error("open_tel failed", e));
+    } else {
+      window.location.href = `tel:${lead.phone}`;
+    }
     timerRef.current = setInterval(() => {
       callSecRef.current += 1;
       setCallSec(callSecRef.current);

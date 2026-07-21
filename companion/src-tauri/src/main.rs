@@ -13,6 +13,20 @@ mod audio_setup;
 
 const VM_DEVICE_NAME: &str = "BlackHole 2ch";
 
+/// The webview blocks tel: navigation — hand it to the OS so the default
+/// calling app (Quo desktop) picks it up.
+#[tauri::command]
+fn open_tel(url: String) -> Result<(), String> {
+    if !url.starts_with("tel:") {
+        return Err("only tel: urls".into());
+    }
+    std::process::Command::new("open")
+        .arg(&url)
+        .spawn()
+        .map_err(|e| format!("open failed: {e}"))?;
+    Ok(())
+}
+
 /// One-click creation of the "Mic + VM" aggregate device.
 #[tauri::command]
 fn setup_audio() -> Result<String, String> {
@@ -89,7 +103,8 @@ fn main() {
             play_vm,
             list_output_devices,
             setup_audio,
-            audio_status
+            audio_status,
+            open_tel
         ])
         .run(tauri::generate_context!())
         .expect("error while running application");
