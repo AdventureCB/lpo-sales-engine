@@ -14,7 +14,10 @@ mod audio_setup;
 const VM_DEVICE_NAME: &str = "BlackHole 2ch";
 
 /// The webview blocks tel: navigation — hand it to the OS so the default
-/// calling app (Quo desktop) picks it up.
+/// calling app (Quo desktop) picks it up. Quo then shows a "start call"
+/// confirmation whose call button is the default action — auto-confirm by
+/// pressing Return in Quo (requires the one-time Accessibility/Automation
+/// grant; if denied, the rep just clicks like before).
 #[tauri::command]
 fn open_tel(url: String) -> Result<(), String> {
     if !url.starts_with("tel:") {
@@ -24,6 +27,15 @@ fn open_tel(url: String) -> Result<(), String> {
         .arg(&url)
         .spawn()
         .map_err(|e| format!("open failed: {e}"))?;
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_millis(900));
+        let _ = std::process::Command::new("osascript")
+            .args([
+                "-e",
+                "tell application \"System Events\" to tell process \"Quo\" to keystroke return",
+            ])
+            .output();
+    });
     Ok(())
 }
 
