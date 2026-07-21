@@ -20,7 +20,19 @@ interface ScoreboardData {
       sub: string;
       dials: Record<string, number[]>;
       conv: Record<string, number[]>;
-      tiles: Record<string, { dials: number; conv: number; vm: number; talk: string; rate: string; comm: string }>;
+      tiles: Record<
+        string,
+        {
+          dials: number;
+          conv: number;
+          convIn: number;
+          vm: number;
+          texts: number;
+          talk: string;
+          rate: string;
+          comm: string;
+        }
+      >;
     }
   >;
 }
@@ -31,10 +43,13 @@ const RANGE_LABELS: [string, string][] = [
   ["month", "Month"],
 ];
 
+// Connect rate = conv ÷ dials — both shown, same numerator, no surprises.
+// Inbound answered calls are annotated on the Conversations tile, not mixed in.
 const TILE_LABELS: [keyof ScoreboardData["ranges"][string]["tiles"][string], string][] = [
   ["dials", "Dials"],
   ["conv", "Conversations"],
   ["vm", "VMs left"],
+  ["texts", "Texts sent"],
   ["talk", "Talk time"],
   ["rate", "Connect rate"],
   ["comm", "Commission MTD"],
@@ -104,6 +119,9 @@ export function ScoreboardView() {
               <div className="stat-tile" key={label}>
                 <div className="n">{t?.[field] ?? "—"}</div>
                 <div className="l">{label}</div>
+                {field === "conv" && (t?.convIn ?? 0) > 0 && (
+                  <div className="d">+{t.convIn} inbound answered</div>
+                )}
               </div>
             ))}
           </div>

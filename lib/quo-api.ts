@@ -27,10 +27,17 @@ export interface QuoCall {
   participants: string[];
 }
 
-async function quoGet(path: string, params: Record<string, string>): Promise<any> {
+type QuoParams = Record<string, string | string[]>;
+
+async function quoGet(path: string, params: QuoParams): Promise<any> {
   const url = new URL(`${BASE()}${path}`);
-  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  const res = await fetch(url, { headers: { Authorization: env("QUO_API_KEY") } });
+  for (const [k, v] of Object.entries(params)) {
+    for (const item of Array.isArray(v) ? v : [v]) url.searchParams.append(k, item);
+  }
+  const res = await fetch(url, {
+    // Quo's WAF rejects default/absent library user agents
+    headers: { Authorization: env("QUO_API_KEY"), "User-Agent": "lpo-sales-engine/0.1" },
+  });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Quo ${path} ${res.status}: ${body.slice(0, 300)}`);
@@ -38,7 +45,7 @@ async function quoGet(path: string, params: Record<string, string>): Promise<any
   return res.json();
 }
 
-async function paginate(path: string, baseParams: Record<string, string>): Promise<any[]> {
+async function paginate(path: string, baseParams: QuoParams): Promise<any[]> {
   const items: any[] = [];
   let pageToken: string | null = null;
   do {
@@ -115,33 +122,60 @@ export async function quoPool<T, R>(
   return out;
 }
 
+export interface QuoMessage {
+  id: string;
+  direction: "incoming" | "outgoing";
+  userId: string | null;
+  status: string;
+  createdAt: string;
+}
+
 /**
  * All calls on a number in the window: conversations → participants → calls
- * per participant, CONCURRENCY at a time (≤8 req/s vs Quo's 10 limit).
+ * per participant (the API allows exactly one per query), CONCURRENCY at a
+ * time (≤8 req/s vs Quo's 10 limit).
  */
 export async function listCallsForNumber(opts: {
   phoneNumberId: string;
-  userId?: string;
   createdAfter: string;
 }): Promise<QuoCall[]> {
-  const CONCURRENCY = 4;
   const participants = await listConversationParticipants({
     phoneNumberId: opts.phoneNumberId,
     updatedAfter: opts.createdAfter,
   });
   const byId = new Map<string, QuoCall>();
-  for (let i = 0; i < participants.length; i += CONCURRENCY) {
-    const chunk = participants.slice(i, i + CONCURRENCY);
-    const results = await Promise.all(
-      chunk.map((participant) =>
-        listCallsWithParticipant({ ...opts, participant }).catch((e) => {
-          console.error(`quo calls fetch failed for participant`, e);
-          return [] as QuoCall[];
-        })
-      )
-    );
-    for (const calls of results) for (const c of calls) byId.set(c.id, c);
-    if (i + CONCURRENCY < participants.length) await new Promise((r) => setTimeout(r, 500));
-  }
+  const results = await quoPool(participants, (participant) =>
+    listCallsWithParticipant({ ...opts, participant }).catch((e) => {
+      console.error(`quo calls fetch failed for participant`, e);
+      return [] as QuoCall[];
+    })
+  );
+  for (const calls of results) for (const c of calls) byId.set(c.id, c);
+  return [...byId.values()];
+}
+
+/** All messages on a number in the window; /v1/messages takes up to 10 participants per query. */
+export async function listMessagesForNumber(opts: {
+  phoneNumberId: string;
+  createdAfter: string;
+}): Promise<QuoMessage[]> {
+  const participants = await listConversationParticipants({
+    phoneNumberId: opts.phoneNumberId,
+    updatedAfter: opts.createdAfter,
+  });
+  const batches: string[][] = [];
+  for (let i = 0; i < participants.length; i += 10) batches.push(participants.slice(i, i + 10));
+  const byId = new Map<string, QuoMessage>();
+  const results = await quoPool(batches, (batch) =>
+    paginate("/messages", {
+      phoneNumberId: opts.phoneNumberId,
+      "participants[]": batch,
+      createdAfter: opts.createdAfter,
+    }).catch((e) => {
+      console.error(`quo messages fetch failed for batch`, e);
+      return [] as QuoMessage[];
+    })
+  );
+  for (const msgs of results) for (const m of msgs) byId.set(m.id, m);
   return [...byId.values()];
 }

@@ -22,6 +22,12 @@ export interface CallRow {
   disposition: string | null;
 }
 
+export interface MessageRow {
+  rep_id: string | null;
+  direction: "incoming" | "outgoing" | null;
+  sent_at: string | null;
+}
+
 export interface JourneyRow {
   rep_id: string | null;
   state: string;
@@ -78,9 +84,10 @@ interface Tally {
   convIn: number;
   vm: number;
   talkS: number;
+  texts: number;
 }
 
-const emptyTally = (): Tally => ({ dials: 0, convOut: 0, convIn: 0, vm: 0, talkS: 0 });
+const emptyTally = (): Tally => ({ dials: 0, convOut: 0, convIn: 0, vm: 0, talkS: 0, texts: 0 });
 
 function tallyCall(t: Tally, c: CallRow) {
   const isConvOut = c.direction === "outgoing" && c.classification === "conversation";
@@ -96,6 +103,7 @@ function tallyCall(t: Tally, c: CallRow) {
 export function buildScoreboard(
   reps: RepRow[],
   calls: CallRow[],
+  messages: MessageRow[],
   journeys: JourneyRow[],
   timeZone: string,
   now: Date
@@ -127,6 +135,15 @@ export function buildScoreboard(
     let t = days.get(date);
     if (!t) days.set(date, (t = emptyTally()));
     tallyCall(t, c);
+  }
+  for (const m of messages) {
+    if (!m.rep_id || !m.sent_at || m.direction !== "outgoing") continue;
+    const days = perRepDay.get(m.rep_id);
+    if (!days) continue;
+    const date = dayInfo(new Date(m.sent_at), timeZone).date;
+    let t = days.get(date);
+    if (!t) days.set(date, (t = emptyTally()));
+    t.texts++;
   }
 
   // Commission MTD is the same figure on every range (tile is labeled MTD).
@@ -161,14 +178,17 @@ export function buildScoreboard(
         total.convIn += t.convIn;
         total.vm += t.vm;
         total.talkS += t.talkS;
+        total.texts += t.texts;
       }
       const key = repKey(rep);
       dials[key] = series.dials;
       conv[key] = series.conv;
       tiles[key] = {
         dials: total.dials,
-        conv: total.convOut + total.convIn,
+        conv: total.convOut, // outgoing only — same numerator the rate uses
+        convIn: total.convIn,
         vm: total.vm,
+        texts: total.texts,
         talk: formatTalk(total.talkS),
         rate: total.dials > 0 ? `${Math.round((total.convOut / total.dials) * 100)}%` : "—",
         comm: `$${Math.round((commMtdCents.get(rep.id) ?? 0) / 100)}`,

@@ -13,19 +13,20 @@ export async function GET() {
   const db = supabaseAdmin();
   const since = new Date(Date.now() - LOOKBACK_DAYS * 86400_000).toISOString();
 
-  const [repsRes, callsRes, journeysRes] = await Promise.all([
+  const [repsRes, callsRes, messagesRes, journeysRes] = await Promise.all([
     db.from("reps").select("id, name").eq("active", true).order("sort_order"),
     db
       .from("call_events")
       .select("rep_id, direction, started_at, answered_at, duration_s, classification, disposition")
       .gte("started_at", since),
+    db.from("message_events").select("rep_id, direction, sent_at").gte("sent_at", since),
     db
       .from("sales_journeys")
       .select("rep_id, state, confirmed_at, commission_amount_cents")
       .not("confirmed_at", "is", null),
   ]);
 
-  const firstError = repsRes.error ?? callsRes.error ?? journeysRes.error;
+  const firstError = repsRes.error ?? callsRes.error ?? messagesRes.error ?? journeysRes.error;
   if (firstError) {
     console.error("scoreboard query failed", firstError);
     return NextResponse.json({ error: "db error" }, { status: 500 });
@@ -33,6 +34,13 @@ export async function GET() {
 
   const timeZone = envOptional("APP_TIMEZONE") ?? "America/Los_Angeles";
   return NextResponse.json(
-    buildScoreboard(repsRes.data ?? [], (callsRes.data ?? []) as any, journeysRes.data ?? [], timeZone, new Date())
+    buildScoreboard(
+      repsRes.data ?? [],
+      (callsRes.data ?? []) as any,
+      (messagesRes.data ?? []) as any,
+      journeysRes.data ?? [],
+      timeZone,
+      new Date()
+    )
   );
 }

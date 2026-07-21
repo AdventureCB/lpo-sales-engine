@@ -49,6 +49,34 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
+  if (type.startsWith("message.")) {
+    if (!data.id) return NextResponse.json({ ok: true, ignored: "no message id" });
+    let msgRepId: string | null = null;
+    if (data.userId) {
+      const { data: rep } = await db
+        .from("reps")
+        .select("id")
+        .eq("quo_user_id", data.userId)
+        .maybeSingle();
+      msgRepId = rep?.id ?? null;
+    }
+    const { error } = await db.from("message_events").upsert(
+      {
+        quo_message_id: data.id,
+        rep_id: msgRepId,
+        direction: data.direction ?? null,
+        status: data.status ?? null,
+        sent_at: data.createdAt ?? null,
+      },
+      { onConflict: "quo_message_id", ignoreDuplicates: false }
+    );
+    if (error) {
+      console.error("quo message upsert failed", error);
+      return NextResponse.json({ error: "db error" }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true });
+  }
+
   if (!type.startsWith("call.")) {
     return NextResponse.json({ ok: true, ignored: type });
   }
