@@ -74,7 +74,7 @@ h2.viewtitle { font-size: 20px; font-weight: 750; margin-bottom: 4px; }
 .range-toggle { display: inline-flex; background: var(--surface-2); border-radius: 9px; padding: 3px; gap: 2px; margin-bottom: 20px; }
 .range-toggle button { border: none; background: none; color: var(--text-2); font-size: 13px; font-weight: 650; padding: 7px 16px; border-radius: 7px; cursor: pointer; }
 .range-toggle button.active { background: var(--surface-3); color: var(--text-1); }
-.repline { display: grid; grid-template-columns: 150px repeat(7, 1fr); gap: 10px; align-items: center; margin-bottom: 12px; }
+.repline { display: grid; grid-template-columns: 140px repeat(8, 1fr); gap: 10px; align-items: center; margin-bottom: 12px; }
 .repline .who { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 14.5px; }
 .stat-tile { background: var(--surface-1); border: 1px solid var(--border-soft); border-radius: 9px; padding: 12px 14px; }
 .stat-tile .n { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }

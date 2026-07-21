@@ -29,6 +29,7 @@ interface ScoreboardData {
           convIn: number;
           vm: number;
           texts: number;
+          textsIn: number;
           talk: string;
           rate: string;
           comm: string;
@@ -51,6 +52,7 @@ const TILE_LABELS: [keyof ScoreboardData["ranges"][string]["tiles"][string], str
   ["conv", "Conversations"],
   ["vm", "VMs left"],
   ["texts", "Texts sent"],
+  ["textsIn", "Texts received"],
   ["talk", "Talk time"],
   ["rate", "Connect rate"],
   ["comm", "Commission MTD"],
@@ -107,7 +109,7 @@ export function ScoreboardView() {
       </div>
       {D.textsIn > 0 && (
         <div className="viewsub" style={{ marginTop: -8 }}>
-          {D.textsIn} inbound text{D.textsIn === 1 ? "" : "s"} received (team-wide)
+          +{D.textsIn} text{D.textsIn === 1 ? "" : "s"} received on shared lines
         </div>
       )}
 

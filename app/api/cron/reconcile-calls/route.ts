@@ -40,7 +40,7 @@ export async function GET(req: Request) {
   const db = supabaseAdmin();
   const [linesRes, repsRes] = await Promise.all([
     db.from("quo_lines").select("phone_number_id, label").eq("active", true),
-    db.from("reps").select("id, quo_user_id"),
+    db.from("reps").select("id, quo_user_id, quo_phone_number_id"),
   ]);
   if (linesRes.error || repsRes.error) {
     return NextResponse.json(
@@ -50,6 +50,11 @@ export async function GET(req: Request) {
   }
   const repByQuoUser = new Map(
     (repsRes.data ?? []).filter((r) => r.quo_user_id).map((r) => [r.quo_user_id!, r.id])
+  );
+  const repByQuoNumber = new Map(
+    (repsRes.data ?? [])
+      .filter((r) => r.quo_phone_number_id)
+      .map((r) => [r.quo_phone_number_id!, r.id])
   );
 
   const createdAfter = new Date(Date.now() - lookbackHours * 3600 * 1000).toISOString();
@@ -122,9 +127,13 @@ export async function GET(req: Request) {
       }
 
       if (messages.length > 0) {
+        const lineOwnerRepId = repByQuoNumber.get(line.phone_number_id) ?? null;
         const messageRows = messages.map((m) => ({
           quo_message_id: m.id,
-          rep_id: (m.userId && repByQuoUser.get(m.userId)) || null,
+          rep_id:
+            (m.userId && repByQuoUser.get(m.userId)) ||
+            (m.direction === "incoming" ? lineOwnerRepId : null),
+          phone_number_id: line.phone_number_id,
           direction: m.direction,
           status: m.status,
           sent_at: m.createdAt,

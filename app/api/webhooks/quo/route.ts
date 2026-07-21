@@ -51,6 +51,8 @@ export async function POST(req: NextRequest) {
 
   if (type.startsWith("message.")) {
     if (!data.id) return NextResponse.json({ ok: true, ignored: "no message id" });
+    // Outgoing: attribute to the sender. Incoming: no userId — attribute to
+    // the owner of the receiving line (null on shared lines).
     let msgRepId: string | null = null;
     if (data.userId) {
       const { data: rep } = await db
@@ -59,11 +61,19 @@ export async function POST(req: NextRequest) {
         .eq("quo_user_id", data.userId)
         .maybeSingle();
       msgRepId = rep?.id ?? null;
+    } else if (data.phoneNumberId) {
+      const { data: rep } = await db
+        .from("reps")
+        .select("id")
+        .eq("quo_phone_number_id", data.phoneNumberId)
+        .maybeSingle();
+      msgRepId = rep?.id ?? null;
     }
     const { error } = await db.from("message_events").upsert(
       {
         quo_message_id: data.id,
         rep_id: msgRepId,
+        phone_number_id: data.phoneNumberId ?? null,
         direction: data.direction ?? null,
         status: data.status ?? null,
         sent_at: data.createdAt ?? null,

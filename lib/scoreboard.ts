@@ -85,9 +85,18 @@ interface Tally {
   vm: number;
   talkS: number;
   texts: number;
+  textsIn: number;
 }
 
-const emptyTally = (): Tally => ({ dials: 0, convOut: 0, convIn: 0, vm: 0, talkS: 0, texts: 0 });
+const emptyTally = (): Tally => ({
+  dials: 0,
+  convOut: 0,
+  convIn: 0,
+  vm: 0,
+  talkS: 0,
+  texts: 0,
+  textsIn: 0,
+});
 
 function tallyCall(t: Tally, c: CallRow) {
   const isConvOut = c.direction === "outgoing" && c.classification === "conversation";
@@ -136,22 +145,22 @@ export function buildScoreboard(
     if (!t) days.set(date, (t = emptyTally()));
     tallyCall(t, c);
   }
-  // Inbound texts have no rep attribution (userId is null on received
-  // messages) — count them per day for the team-level annotation.
+  // Inbound texts are attributed to the receiving line's owner; ones on
+  // shared lines have no rep and roll into the team-level count.
   const textsInByDate = new Map<string, number>();
   for (const m of messages) {
     if (!m.sent_at) continue;
     const date = dayInfo(new Date(m.sent_at), timeZone).date;
-    if (m.direction === "incoming") {
-      textsInByDate.set(date, (textsInByDate.get(date) ?? 0) + 1);
+    const days = m.rep_id ? perRepDay.get(m.rep_id) : undefined;
+    if (!days) {
+      if (m.direction === "incoming")
+        textsInByDate.set(date, (textsInByDate.get(date) ?? 0) + 1);
       continue;
     }
-    if (!m.rep_id || m.direction !== "outgoing") continue;
-    const days = perRepDay.get(m.rep_id);
-    if (!days) continue;
     let t = days.get(date);
     if (!t) days.set(date, (t = emptyTally()));
-    t.texts++;
+    if (m.direction === "incoming") t.textsIn++;
+    else if (m.direction === "outgoing") t.texts++;
   }
 
   // Commission MTD is the same figure on every range (tile is labeled MTD).
@@ -194,6 +203,7 @@ export function buildScoreboard(
         total.vm += t.vm;
         total.talkS += t.talkS;
         total.texts += t.texts;
+        total.textsIn += t.textsIn;
       }
       const key = repKey(rep);
       dials[key] = series.dials;
@@ -204,6 +214,7 @@ export function buildScoreboard(
         convIn: total.convIn,
         vm: total.vm,
         texts: total.texts,
+        textsIn: total.textsIn,
         talk: formatTalk(total.talkS),
         rate: total.dials > 0 ? `${Math.round((total.convOut / total.dials) * 100)}%` : "—",
         comm: `$${Math.round((commMtdCents.get(rep.id) ?? 0) / 100)}`,
