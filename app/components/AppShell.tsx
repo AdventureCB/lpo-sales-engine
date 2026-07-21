@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { UserChip } from "./UserChip";
+import { RefreshButton } from "./RefreshButton";
 
 const TABS = [
   { label: "Dialer", href: "/dialer", live: true },
@@ -47,6 +48,7 @@ export function AppShell({
             <span>Team view</span>
           </div>
         )}
+        <RefreshButton />
       </header>
       <main>{children}</main>
     </>
