@@ -18,6 +18,7 @@ reqwest = { version = "0.12", features = ["blocking"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 coreaudio-sys = "0.2"
 core-foundation = "0.10"
+accessibility-sys = "0.1"
 
 [profile.release]
 strip = true

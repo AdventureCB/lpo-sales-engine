@@ -191,15 +191,17 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setAwaitingDispo(true);
   };
 
+  const [endCallDiag, setEndCallDiag] = useState<string | null>(null);
+
   /** End-call button: try to click Quo's own hang-up via the companion. */
   const endCall = async () => {
     if (!inCall) return;
     if (window.__TAURI__) {
       try {
-        const result = await window.__TAURI__.core.invoke("end_call");
-        console.log("end_call:", result);
+        const result = String(await window.__TAURI__.core.invoke("end_call"));
+        setEndCallDiag(result.startsWith("clicked") ? null : result);
       } catch (e) {
-        console.error("end_call failed", e);
+        setEndCallDiag(String(e));
       }
     }
     hangUp();
@@ -555,6 +557,14 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                   </div>
                 )}
               </div>
+              {endCallDiag && (
+                <pre
+                  style={{ marginTop: 12, fontSize: 10.5, color: "var(--text-3)", whiteSpace: "pre-wrap", maxHeight: 140, overflow: "auto", background: "var(--surface-2)", borderRadius: 8, padding: 10 }}
+                  onClick={() => setEndCallDiag(null)}
+                >
+                  hang-up automation: {endCallDiag}
+                </pre>
+              )}
               {awaitingDispo && (
                 <div className="dispo-row" style={{ display: "flex" }}>
                   {DISPOSITIONS.map(([key, num, label]) => (

@@ -39,21 +39,63 @@ fn open_tel(url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Electron apps hide their UI from the accessibility tree until
+/// AXManualAccessibility is set on them via the native AX API (AppleScript
+/// can't do this). Must run before any AX inspection of Quo.
+#[cfg(target_os = "macos")]
+fn enable_quo_accessibility() -> Result<(), String> {
+    use core_foundation::base::TCFType;
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::string::CFString;
+
+    let pid_out = std::process::Command::new("pgrep")
+        .args(["-x", "Quo"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let pid: i32 = String::from_utf8_lossy(&pid_out.stdout)
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .parse()
+        .map_err(|_| "Quo is not running".to_string())?;
+
+    unsafe {
+        let app = accessibility_sys::AXUIElementCreateApplication(pid);
+        let attr = CFString::new("AXManualAccessibility");
+        let err = accessibility_sys::AXUIElementSetAttributeValue(
+            app,
+            attr.as_concrete_TypeRef(),
+            CFBoolean::true_value().as_CFTypeRef(),
+        );
+        if err != accessibility_sys::kAXErrorSuccess {
+            return Err(format!("AXManualAccessibility set failed ({err})"));
+        }
+    }
+    Ok(())
+}
+
 /// Best-effort hang-up: click Quo's own end-call button via accessibility.
-/// Electron button trees are only sometimes visible to the OS — returns what
-/// happened so the UI can fall back gracefully.
+/// If no matching button is found, dump Quo's UI tree to a log so the
+/// matcher can be tuned. Returns what happened.
 #[tauri::command]
 fn end_call() -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    if let Err(e) = enable_quo_accessibility() {
+        return Err(e);
+    }
     let script = r#"
 tell application "System Events"
   tell process "Quo"
-    try
-      set value of attribute "AXManualAccessibility" to true
-    end try
+    set dump to ""
     repeat with w in windows
       try
-        set btns to every button of entire contents of w
-        repeat with b in btns
+        set els to every UI element of entire contents of w
+        repeat with b in els
+          set r to ""
+          try
+            set r to (role of b as string)
+          end try
           set d to ""
           try
             set d to (description of b as string)
@@ -62,16 +104,19 @@ tell application "System Events"
           try
             set n to (name of b as string)
           end try
-          if d contains "ang up" or d contains "nd call" or n contains "ang up" or n contains "nd call" then
+          if d contains "ang up" or d contains "nd call" or d contains "ang Up" or n contains "ang up" or n contains "nd call" or n contains "ang Up" then
             click b
-            return "clicked: " & d & n
+            return "clicked: " & r & " / " & d & " / " & n
+          end if
+          if r is "AXButton" then
+            set dump to dump & r & " | " & d & " | " & n & linefeed
           end if
         end repeat
       end try
     end repeat
+    return "no match; buttons seen:" & linefeed & dump
   end tell
 end tell
-return "no hang-up button found"
 "#;
     let out = std::process::Command::new("osascript")
         .args(["-e", script])
