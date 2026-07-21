@@ -26,6 +26,9 @@ if system_profiler SPAudioDataType 2>/dev/null | grep -q "BlackHole 2ch"; then
 elif command -v brew >/dev/null 2>&1; then
   echo "→ Installing BlackHole 2ch via Homebrew (may ask for your password)"
   brew install --cask blackhole-2ch
+  echo "→ Restarting audio system so the driver loads (asks for your password)"
+  sudo killall coreaudiod || true
+  sleep 2
 else
   echo "→ Downloading BlackHole 2ch"
   PKG_URL=$(curl -s https://formulae.brew.sh/api/cask/blackhole-2ch.json | grep -o '"url":"[^"]*\.pkg"' | head -1 | cut -d'"' -f4)
@@ -36,6 +39,8 @@ else
     echo "   Installing (asks for your password)…"
     sudo installer -pkg /tmp/blackhole.pkg -target /
     rm -f /tmp/blackhole.pkg
+    sudo killall coreaudiod || true
+    sleep 2
     echo "   ✓ BlackHole installed"
   fi
 fi
