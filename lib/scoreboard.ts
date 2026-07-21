@@ -136,11 +136,19 @@ export function buildScoreboard(
     if (!t) days.set(date, (t = emptyTally()));
     tallyCall(t, c);
   }
+  // Inbound texts have no rep attribution (userId is null on received
+  // messages) — count them per day for the team-level annotation.
+  const textsInByDate = new Map<string, number>();
   for (const m of messages) {
-    if (!m.rep_id || !m.sent_at || m.direction !== "outgoing") continue;
+    if (!m.sent_at) continue;
+    const date = dayInfo(new Date(m.sent_at), timeZone).date;
+    if (m.direction === "incoming") {
+      textsInByDate.set(date, (textsInByDate.get(date) ?? 0) + 1);
+      continue;
+    }
+    if (!m.rep_id || m.direction !== "outgoing") continue;
     const days = perRepDay.get(m.rep_id);
     if (!days) continue;
-    const date = dayInfo(new Date(m.sent_at), timeZone).date;
     let t = days.get(date);
     if (!t) days.set(date, (t = emptyTally()));
     t.texts++;
@@ -157,7 +165,14 @@ export function buildScoreboard(
 
   const repKey = (r: RepRow) => r.name.split(" ")[0].toLowerCase();
 
-  function buildRange(datesFor: (repDays: Map<string, Tally>) => string[], sub: string) {
+  const sumTextsIn = (dates: string[]) =>
+    dates.reduce((s, d) => s + (textsInByDate.get(d) ?? 0), 0);
+
+  function buildRange(
+    datesFor: (repDays: Map<string, Tally>) => string[],
+    sub: string,
+    textsIn: number
+  ) {
     const dials: Record<string, number[]> = {};
     const conv: Record<string, number[]> = {};
     const tiles: Record<string, Record<string, string | number>> = {};
@@ -194,7 +209,7 @@ export function buildScoreboard(
         comm: `$${Math.round((commMtdCents.get(rep.id) ?? 0) / 100)}`,
       };
     }
-    return { sub, dials, conv, tiles };
+    return { sub, dials, conv, tiles, textsIn };
   }
 
   const monthDatesFor = (days: Map<string, Tally>) =>
@@ -214,15 +229,20 @@ export function buildScoreboard(
     ranges: {
       day: buildRange(
         () => [today.date],
-        `Today · ${prettyDate(today.date, true)}`
+        `Today · ${prettyDate(today.date, true)}`,
+        sumTextsIn([today.date])
       ),
       week: buildRange(
         () => weekDates,
-        `${prettyDate(weekDates[0], true)} – ${prettyDate(weekDates[6], true)}`
+        `${prettyDate(weekDates[0], true)} – ${prettyDate(weekDates[6], true)}`,
+        sumTextsIn(weekDates)
       ),
       month: buildRange(
         monthDatesFor,
-        `${prettyDate(`${monthPrefix}-01`, false)} – ${prettyDate(today.date, false)} · summed by weekday`
+        `${prettyDate(`${monthPrefix}-01`, false)} – ${prettyDate(today.date, false)} · summed by weekday`,
+        sumTextsIn(
+          [...textsInByDate.keys()].filter((d) => d.startsWith(monthPrefix) && d <= today.date)
+        )
       ),
     },
   };

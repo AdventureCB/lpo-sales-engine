@@ -18,6 +18,7 @@ interface ScoreboardData {
     string,
     {
       sub: string;
+      textsIn: number;
       dials: Record<string, number[]>;
       conv: Record<string, number[]>;
       tiles: Record<
@@ -104,6 +105,11 @@ export function ScoreboardView() {
           </button>
         ))}
       </div>
+      {D.textsIn > 0 && (
+        <div className="viewsub" style={{ marginTop: -8 }}>
+          {D.textsIn} inbound text{D.textsIn === 1 ? "" : "s"} received (team-wide)
+        </div>
+      )}
 
       {data.reps.map((r, i) => {
         const t = D.tiles[r.key];
