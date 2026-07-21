@@ -44,6 +44,77 @@ export async function getProfilePhoneByEmail(email: string): Promise<string | nu
   return page.data?.[0]?.attributes?.phone_number ?? null;
 }
 
+export interface KlaviyoProfile {
+  id: string;
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  phoneNumber: string | null; // the standard field
+  location: Record<string, unknown>;
+  properties: Record<string, unknown>; // custom properties (phones hide here too)
+  created: string | null;
+}
+
+export async function getProfileByEmail(email: string): Promise<KlaviyoProfile | null> {
+  const filter = encodeURIComponent(`equals(email,"${email}")`);
+  const page = await kGet(`${BASE}/profiles/?filter=${filter}`);
+  const p = page.data?.[0];
+  if (!p) return null;
+  const a = p.attributes ?? {};
+  return {
+    id: p.id,
+    email: a.email ?? null,
+    firstName: a.first_name ?? null,
+    lastName: a.last_name ?? null,
+    phoneNumber: a.phone_number ?? null,
+    location: a.location ?? {},
+    properties: a.properties ?? {},
+    created: a.created ?? null,
+  };
+}
+
+export interface KlaviyoProfileEvent {
+  metric: string;
+  datetime: string;
+  detail: Record<string, unknown>;
+}
+
+/** Recent events for a profile, newest first, metric names resolved. */
+export async function getProfileEvents(profileId: string, limit = 25): Promise<KlaviyoProfileEvent[]> {
+  const filter = encodeURIComponent(`equals(profile_id,"${profileId}")`);
+  const page = await kGet(`${BASE}/events/?filter=${filter}&include=metric&sort=-datetime`);
+  const metricNames = new Map<string, string>();
+  for (const inc of page.included ?? []) {
+    if (inc.type === "metric") metricNames.set(inc.id, inc.attributes?.name ?? inc.id);
+  }
+  const events: KlaviyoProfileEvent[] = [];
+  for (const ev of page.data ?? []) {
+    if (events.length >= limit) break;
+    const props = ev.attributes?.event_properties ?? {};
+    const detail: Record<string, unknown> = {};
+    for (const key of ["Subject", "Campaign Name", "URL", "$value", "Name", "Items"]) {
+      const v = props[key];
+      if (v !== undefined && v !== null && v !== "") {
+        detail[key] = typeof v === "object" ? JSON.stringify(v).slice(0, 160) : v;
+      }
+    }
+    // fall back to the first few scalar props (builder saves etc. use custom keys)
+    if (Object.keys(detail).length === 0) {
+      for (const [k, v] of Object.entries(props)) {
+        if (Object.keys(detail).length >= 3) break;
+        if (k.startsWith("$")) continue;
+        if (typeof v === "string" || typeof v === "number") detail[k] = String(v).slice(0, 120);
+      }
+    }
+    events.push({
+      metric: metricNames.get(ev.relationships?.metric?.data?.id) ?? "event",
+      datetime: ev.attributes?.datetime,
+      detail,
+    });
+  }
+  return events;
+}
+
 export interface KlaviyoEvent {
   email: string;
   occurredAt: string;

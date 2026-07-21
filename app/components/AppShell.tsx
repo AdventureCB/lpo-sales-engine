@@ -6,6 +6,7 @@ const TABS = [
   { label: "Dialer", href: "/dialer", live: true },
   { label: "🔥 Hot List", href: "/hot-list", live: true },
   { label: "Scoreboard", href: "/scoreboard", live: true },
+  { label: "Lookup", href: "/lookup", live: true },
   { label: "Commissions", href: "/commissions", live: false },
 ];
 
