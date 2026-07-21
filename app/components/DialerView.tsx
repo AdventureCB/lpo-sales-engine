@@ -212,8 +212,25 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     finalize("vm_dropped");
   };
 
+  const logSkip = (l: Lead) => {
+    void fetch("/api/dialer/skip", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dealId: l.dealId, dealTitle: l.title }),
+    }).catch(() => {});
+  };
+
   const skip = () => {
-    if (!inCall && !awaitingDispo) setLeadIdx((i) => i + 1);
+    if (inCall || awaitingDispo || !lead) return;
+    logSkip(lead);
+    setLeadIdx((i) => i + 1);
+  };
+
+  /** ✕ on an up-next row: drop it from this session's queue, recorded. */
+  const skipUpcoming = (dealId: number) => {
+    const target = leads.find((l) => l.dealId === dealId);
+    if (target) logSkip(target);
+    setLeads((prev) => prev.filter((l) => l.dealId !== dealId));
   };
 
   useEffect(() => {
@@ -298,8 +315,15 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     <>
       <h2 className="viewtitle">Dial session</h2>
       <div className="viewsub">
-        Queue: <b style={{ color: "var(--text-1)" }}>{queueLabel ?? activeQueue?.name ?? "—"}</b> ·
-        calls place through your Quo line · auto-logged to Pipedrive
+        Queue: <b style={{ color: "var(--text-1)" }}>{queueLabel ?? activeQueue?.name ?? "—"}</b>
+        {leads.length > 0 && (
+          <>
+            {" "}· <b style={{ color: "var(--text-1)" }}>
+              Call {Math.min(leadIdx + 1, leads.length)} / {leads.length}
+            </b>
+          </>
+        )}{" "}
+        · calls place through your Quo line · auto-logged to Pipedrive
       </div>
 
       <div className="dialer-grid">
@@ -522,10 +546,20 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
           <div className="card">
             <div className="panel-h">Up next</div>
             <div className="upnext">
-              {leads.slice(leadIdx + 1, leadIdx + 5).map((l) => (
-                <div className="row" key={l.dealId}>
+              {leads.slice(leadIdx + 1, leadIdx + 6).map((l) => (
+                <div className="row" key={l.dealId} style={{ alignItems: "center", gap: 8 }}>
                   <span className="who">{l.personName ?? l.title}</span>
-                  <span className="why">{l.hot ? "🔥 hot" : l.stageName}</span>
+                  <span className="why" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    {l.hot ? "🔥 hot" : l.stageName}
+                    <button
+                      className="btn ghost"
+                      style={{ padding: "1px 7px", fontSize: 11, lineHeight: 1.4 }}
+                      title="Skip — remove from this session (recorded)"
+                      onClick={() => skipUpcoming(l.dealId)}
+                    >
+                      ✕
+                    </button>
+                  </span>
                 </div>
               ))}
               {leads.length <= leadIdx + 1 && (
