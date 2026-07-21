@@ -64,10 +64,14 @@ export function ScoreboardView() {
   const [tip, setTip] = useState<{ x: number; y: number; html: string } | null>(null);
 
   useEffect(() => {
-    fetch("/api/scoreboard")
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then(setData)
-      .catch((e) => setError(String(e)));
+    const load = () =>
+      fetch("/api/scoreboard")
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then(setData)
+        .catch((e) => setError(String(e)));
+    load();
+    const interval = setInterval(load, 60_000);
+    return () => clearInterval(interval);
   }, []);
 
   if (error) return <div className="viewsub">Couldn’t load scoreboard: {error}</div>;

@@ -2,7 +2,7 @@ import Link from "next/link";
 
 const modules = [
   { name: "Dialer — Queue Runner", phase: "Phase 3", status: "planned", href: null },
-  { name: "🔥 Hot List", phase: "Phase 2", status: "planned", href: null },
+  { name: "🔥 Hot List", phase: "Phase 2", status: "live", href: "/hot-list" },
   { name: "Scoreboard", phase: "Phase 1", status: "live", href: "/scoreboard" },
   { name: "Commissions", phase: "Phase 4", status: "planned", href: null },
 ];

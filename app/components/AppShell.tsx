@@ -2,7 +2,7 @@ import Link from "next/link";
 
 const TABS = [
   { label: "Dialer", href: "/dialer", live: false },
-  { label: "🔥 Hot List", href: "/hot-list", live: false },
+  { label: "🔥 Hot List", href: "/hot-list", live: true },
   { label: "Scoreboard", href: "/scoreboard", live: true },
   { label: "Commissions", href: "/commissions", live: false },
 ];
