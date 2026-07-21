@@ -191,6 +191,20 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setAwaitingDispo(true);
   };
 
+  /** End-call button: try to click Quo's own hang-up via the companion. */
+  const endCall = async () => {
+    if (!inCall) return;
+    if (window.__TAURI__) {
+      try {
+        const result = await window.__TAURI__.core.invoke("end_call");
+        console.log("end_call:", result);
+      } catch (e) {
+        console.error("end_call failed", e);
+      }
+    }
+    hangUp();
+  };
+
   const sendDisposition = async (dispo: string) => {
     if (!lead?.phone || !dialStartRef.current) return;
     const body = {
@@ -268,7 +282,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       if (["INPUT", "SELECT", "TEXTAREA"].includes(tag)) return;
       if (e.key === "Enter" && !inCall && !awaitingDispo) dial();
       if ((e.key === "v" || e.key === "V") && inCall) dropVm();
-      if ((e.key === "e" || e.key === "E") && inCall) hangUp();
+      if ((e.key === "e" || e.key === "E") && inCall) void endCall();
       if ((e.key === "s" || e.key === "S") && !inCall && !awaitingDispo) skip();
       if ((inCall || awaitingDispo) && ["1", "2", "3", "4"].includes(e.key)) {
         if (inCall) hangUp();
@@ -528,8 +542,8 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                   {vmPlaying ? "🎙 Dropping…" : <>🎙 Drop VM <kbd>V</kbd></>}
                 </button>
                 {inCall && (
-                  <button className="btn big" style={{ background: "var(--crit)", color: "#fff" }} onClick={hangUp}>
-                    ⏹ Call ended <kbd>E</kbd>
+                  <button className="btn big" style={{ background: "var(--crit)", color: "#fff" }} onClick={endCall}>
+                    ⏹ End call <kbd>E</kbd>
                   </button>
                 )}
                 <button className="btn ghost" onClick={skip} disabled={inCall || awaitingDispo}>

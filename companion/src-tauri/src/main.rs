@@ -39,6 +39,52 @@ fn open_tel(url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Best-effort hang-up: click Quo's own end-call button via accessibility.
+/// Electron button trees are only sometimes visible to the OS — returns what
+/// happened so the UI can fall back gracefully.
+#[tauri::command]
+fn end_call() -> Result<String, String> {
+    let script = r#"
+tell application "System Events"
+  tell process "Quo"
+    try
+      set value of attribute "AXManualAccessibility" to true
+    end try
+    repeat with w in windows
+      try
+        set btns to every button of entire contents of w
+        repeat with b in btns
+          set d to ""
+          try
+            set d to (description of b as string)
+          end try
+          set n to ""
+          try
+            set n to (name of b as string)
+          end try
+          if d contains "ang up" or d contains "nd call" or n contains "ang up" or n contains "nd call" then
+            click b
+            return "clicked: " & d & n
+          end if
+        end repeat
+      end try
+    end repeat
+  end tell
+end tell
+return "no hang-up button found"
+"#;
+    let out = std::process::Command::new("osascript")
+        .args(["-e", script])
+        .output()
+        .map_err(|e| format!("osascript: {e}"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    if !out.status.success() {
+        return Err(if stderr.is_empty() { "accessibility error".into() } else { stderr });
+    }
+    Ok(if stdout.is_empty() { stderr } else { stdout })
+}
+
 /// One-click creation of the "Mic + VM" aggregate device.
 #[tauri::command]
 fn setup_audio() -> Result<String, String> {
@@ -116,7 +162,8 @@ fn main() {
             list_output_devices,
             setup_audio,
             audio_status,
-            open_tel
+            open_tel,
+            end_call
         ])
         .run(tauri::generate_context!())
         .expect("error while running application");

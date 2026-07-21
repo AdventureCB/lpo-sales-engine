@@ -3,4 +3,4 @@
 [[permission]]
 identifier = "allow-app-commands"
 description = "Dialer page may invoke native audio commands"
-commands.allow = ["play_vm", "list_output_devices", "setup_audio", "audio_status", "open_tel"]
+commands.allow = ["play_vm", "list_output_devices", "setup_audio", "audio_status", "open_tel", "end_call"]
