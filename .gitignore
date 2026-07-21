@@ -11,3 +11,7 @@ npm-debug.log*
 *.tsbuildinfo
 next-env.d.ts
 .env*
+companion/node_modules/
+companion/src-tauri/target/
+companion/src-tauri/gen/
+companion/dist/

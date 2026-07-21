@@ -1,0 +1,20 @@
+[package]
+name = "lpo-queue-runner"
+version = "0.1.0"
+description = "LPO Sales Engine dialer companion"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rodio = { version = "0.19", default-features = false, features = ["wav", "mp3"] }
+cpal = "0.15"
+reqwest = { version = "0.12", features = ["blocking"] }
+
+[profile.release]
+strip = true
+lto = true

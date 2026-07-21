@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "remote-dialer",
+  "description": "Allow the deployed dialer page to invoke native commands",
+  "remote": {
+    "urls": ["https://lpo-sales-engine.vercel.app"]
+  },
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

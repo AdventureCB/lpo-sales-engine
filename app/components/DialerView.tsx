@@ -1,6 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { VmPanel, type VmDrop } from "./VmPanel";
+
+declare global {
+  interface Window {
+    __TAURI__?: { core: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> } };
+  }
+}
 
 interface Queue {
   id: string;
@@ -206,8 +213,23 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     if (autoAdv) setLeadIdx((i) => i + 1);
   };
 
-  const dropVm = () => {
+  const [vmDrop, setVmDrop] = useState<VmDrop | null>(null);
+  const [vmPlaying, setVmPlaying] = useState(false);
+
+  const dropVm = async () => {
     if (!inCall) return;
+    // Inside the desktop companion: play the recording into the virtual
+    // audio device (BlackHole) so the voicemail hears it. In a browser
+    // there's no audio path into the call — log-only.
+    if (window.__TAURI__ && vmDrop?.url) {
+      setVmPlaying(true);
+      try {
+        await window.__TAURI__.core.invoke("play_vm", { url: vmDrop.url });
+      } catch (e) {
+        console.error("vm playback failed", e);
+      }
+      setVmPlaying(false);
+    }
     hangUp();
     finalize("vm_dropped");
   };
@@ -495,8 +517,8 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                 >
                   📞 Dial <kbd>⏎</kbd>
                 </button>
-                <button className="btn big" onClick={dropVm} disabled={!inCall}>
-                  🎙 VM left <kbd>V</kbd>
+                <button className="btn big" onClick={dropVm} disabled={!inCall || vmPlaying}>
+                  {vmPlaying ? "🎙 Dropping…" : <>🎙 Drop VM <kbd>V</kbd></>}
                 </button>
                 {inCall && (
                   <button className="btn big" style={{ background: "var(--crit)", color: "#fff" }} onClick={hangUp}>
@@ -543,6 +565,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
               <span className="tk" /> Auto-advance after call
             </div>
           </div>
+          <VmPanel selected={vmDrop} onSelect={setVmDrop} />
           <div className="card">
             <div className="panel-h">Up next</div>
             <div className="upnext">
