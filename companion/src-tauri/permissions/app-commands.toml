@@ -1,0 +1,6 @@
+# Expose the app's native commands to the dialer page (the remote URL is
+# already scoped in capabilities/default.json).
+[[permission]]
+identifier = "allow-app-commands"
+description = "Dialer page may invoke native audio commands"
+commands.allow = ["play_vm", "list_output_devices", "setup_audio", "audio_status"]

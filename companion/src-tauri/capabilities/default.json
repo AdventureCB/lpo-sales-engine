@@ -6,5 +6,5 @@
     "urls": ["https://lpo-sales-engine.vercel.app"]
   },
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "allow-app-commands"]
 }
