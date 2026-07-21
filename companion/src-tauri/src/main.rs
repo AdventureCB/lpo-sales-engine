@@ -76,27 +76,21 @@ fn enable_quo_accessibility() -> Result<(), String> {
 }
 
 /// Hang up the active Quo call: focus Quo, send its end-call shortcut
-/// (⇧⌘H), and hand focus straight back to the dialer.
+/// (⇧⌘H), and hand focus straight back to the dialer. Fire-and-forget on a
+/// background thread — blocking the main thread beachballs the whole window.
 #[tauri::command]
 fn end_call() -> Result<String, String> {
-    let script = r#"
+    std::thread::spawn(|| {
+        let script = r#"
 tell application "Quo" to activate
 delay 0.2
 tell application "System Events" to keystroke "h" using {command down, shift down}
 delay 0.1
 tell application "LPO Queue Runner" to activate
-return "sent"
 "#;
-    let out = std::process::Command::new("osascript")
-        .args(["-e", script])
-        .output()
-        .map_err(|e| format!("osascript: {e}"))?;
-    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-    if !out.status.success() {
-        return Err(if stderr.is_empty() { "accessibility error".into() } else { stderr });
-    }
-    Ok(if stdout.is_empty() { stderr } else { stdout })
+        let _ = std::process::Command::new("osascript").args(["-e", script]).output();
+    });
+    Ok("sent".into())
 }
 
 /// One-click creation of the "Mic + VM" aggregate device.
