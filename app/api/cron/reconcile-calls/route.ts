@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { isAuthorizedCron } from "@/lib/cron";
 import { supabaseAdmin } from "@/lib/supabase";
-import { listCallsForNumber } from "@/lib/quo-api";
+import { getCallTranscript, listCallsForNumber, quoPool, type QuoCall } from "@/lib/quo-api";
+import { classifyTranscript } from "@/lib/classify";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -50,23 +51,66 @@ export async function GET(req: Request) {
         phoneNumberId: rep.quo_phone_number_id!,
         createdAfter,
       });
-      const rows = calls.map((c) => ({
-        quo_call_id: c.id,
-        rep_id: rep.id,
-        direction: c.direction,
-        status: c.status,
-        started_at: c.createdAt,
-        answered_at: c.answeredAt,
-        completed_at: c.completedAt,
-        duration_s: c.duration,
-      }));
-      if (rows.length > 0) {
+
+      // Classify calls that don't already have a classification (webhook
+      // transcripts or a prior sweep may have set one — never refetch those).
+      const { data: existing } = await db
+        .from("call_events")
+        .select("quo_call_id")
+        .in("quo_call_id", calls.map((c) => c.id))
+        .not("classification", "is", null);
+      const alreadyClassified = new Set((existing ?? []).map((r) => r.quo_call_id));
+
+      let transcriptsFetched = 0;
+      const rows = await quoPool(calls, async (c: QuoCall) => {
+        let classification: string | null = null;
+        if (!alreadyClassified.has(c.id)) {
+          if (!c.answeredAt) {
+            classification = "no_answer";
+          } else {
+            const dialogue = await getCallTranscript(c.id).catch(() => null);
+            if (dialogue) {
+              transcriptsFetched++;
+              classification = classifyTranscript(
+                dialogue.map((d) => ({
+                  speaker: d.userId ? ("rep" as const) : ("contact" as const),
+                  text: d.content ?? "",
+                }))
+              );
+            }
+          }
+        }
+        return {
+          quo_call_id: c.id,
+          rep_id: rep.id,
+          direction: c.direction,
+          status: c.status,
+          started_at: c.createdAt,
+          answered_at: c.answeredAt,
+          completed_at: c.completedAt,
+          // talk seconds = answered→completed; Quo's `duration` spans ring time
+          duration_s:
+            c.answeredAt && c.completedAt
+              ? Math.max(0, Math.round((Date.parse(c.completedAt) - Date.parse(c.answeredAt)) / 1000))
+              : c.duration,
+          classification,
+        };
+      });
+
+      // Two batches: rows without a fresh classification must omit the column
+      // entirely so the upsert can't null out webhook-set values.
+      const withClass = rows.filter((r) => r.classification !== null);
+      const withoutClass = rows
+        .filter((r) => r.classification === null)
+        .map(({ classification, ...rest }) => rest);
+      for (const batch of [withClass, withoutClass]) {
+        if (batch.length === 0) continue;
         const { error } = await db
           .from("call_events")
-          .upsert(rows, { onConflict: "quo_call_id", ignoreDuplicates: false });
+          .upsert(batch, { onConflict: "quo_call_id", ignoreDuplicates: false });
         if (error) throw new Error(error.message);
       }
-      results.push({ rep: rep.name, reconciled: rows.length });
+      results.push({ rep: rep.name, reconciled: rows.length, classified: withClass.length, transcriptsFetched });
     } catch (e) {
       console.error(`reconcile failed for ${rep.name}`, e);
       results.push({ rep: rep.name, error: e instanceof Error ? e.message : String(e) });

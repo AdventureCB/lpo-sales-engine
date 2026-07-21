@@ -82,6 +82,39 @@ export async function listConversationParticipants(opts: {
   return [...participants];
 }
 
+export interface QuoTranscriptDialogue {
+  content: string | null;
+  userId: string | null; // null → external contact
+}
+
+/** Transcript for a call, or null when absent/processing/unavailable. */
+export async function getCallTranscript(callId: string): Promise<QuoTranscriptDialogue[] | null> {
+  try {
+    const res = await quoGet(`/call-transcripts/${callId}`, {});
+    if (res?.data?.status !== "completed" || !Array.isArray(res.data.dialogue)) return null;
+    return res.data.dialogue;
+  } catch (e) {
+    // 404 = no transcript for this call (e.g. plan limits, very short call)
+    if (e instanceof Error && /404/.test(e.message)) return null;
+    throw e;
+  }
+}
+
+/** Run tasks with bounded concurrency, pacing under Quo's 10 req/s. */
+export async function quoPool<T, R>(
+  items: T[],
+  fn: (item: T) => Promise<R>,
+  concurrency = 4
+): Promise<R[]> {
+  const out: R[] = [];
+  for (let i = 0; i < items.length; i += concurrency) {
+    const chunk = items.slice(i, i + concurrency);
+    out.push(...(await Promise.all(chunk.map(fn))));
+    if (i + concurrency < items.length) await new Promise((r) => setTimeout(r, 500));
+  }
+  return out;
+}
+
 /**
  * All calls on a number in the window: conversations → participants → calls
  * per participant, CONCURRENCY at a time (≤8 req/s vs Quo's 10 limit).
