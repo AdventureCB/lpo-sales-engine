@@ -8,7 +8,41 @@ use cpal::traits::{DeviceTrait, HostTrait};
 use rodio::{Decoder, OutputStream, Sink};
 use std::io::Cursor;
 
+#[cfg(target_os = "macos")]
+mod audio_setup;
+
 const VM_DEVICE_NAME: &str = "BlackHole 2ch";
+
+/// One-click creation of the "Mic + VM" aggregate device.
+#[tauri::command]
+fn setup_audio() -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        audio_setup::create_mic_vm_aggregate()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("macOS only".into())
+    }
+}
+
+/// Environment check for the UI: is BlackHole installed / aggregate present?
+#[tauri::command]
+fn audio_status() -> serde_json::Value {
+    let host = cpal::default_host();
+    let outputs: Vec<String> = host
+        .output_devices()
+        .map(|d| d.filter_map(|x| x.name().ok()).collect())
+        .unwrap_or_default();
+    let inputs: Vec<String> = host
+        .input_devices()
+        .map(|d| d.filter_map(|x| x.name().ok()).collect())
+        .unwrap_or_default();
+    serde_json::json!({
+        "blackhole": outputs.iter().any(|n| n.contains("BlackHole")),
+        "aggregate": inputs.iter().any(|n| n == "Mic + VM"),
+    })
+}
 
 #[tauri::command]
 fn list_output_devices() -> Vec<String> {
@@ -51,7 +85,12 @@ async fn play_vm(url: String, device: Option<String>) -> Result<(), String> {
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![play_vm, list_output_devices])
+        .invoke_handler(tauri::generate_handler![
+            play_vm,
+            list_output_devices,
+            setup_audio,
+            audio_status
+        ])
         .run(tauri::generate_context!())
         .expect("error while running application");
 }

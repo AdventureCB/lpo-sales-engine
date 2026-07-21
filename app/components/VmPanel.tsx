@@ -2,6 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 
+declare global {
+  interface Window {
+    __TAURI__?: { core: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> } };
+  }
+}
+
 export interface VmDrop {
   name: string;
   path: string;
@@ -155,6 +161,58 @@ export function VmPanel({
         </div>
       )}
       {status && <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 8 }}>{status}</div>}
+      <AudioSetup />
+    </div>
+  );
+}
+
+/** Companion-only: BlackHole/aggregate status + one-click audio setup. */
+function AudioSetup() {
+  const [state, setState] = useState<{ blackhole: boolean; aggregate: boolean } | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const refresh = () => {
+    window.__TAURI__?.core
+      .invoke("audio_status")
+      .then((s) => setState(s as { blackhole: boolean; aggregate: boolean }))
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    if (window.__TAURI__) refresh();
+  }, []);
+
+  if (!state) return null; // browser, or status unavailable
+
+  const runSetup = async () => {
+    setMsg("Setting up…");
+    try {
+      const result = await window.__TAURI__!.core.invoke("setup_audio");
+      setMsg(String(result));
+      refresh();
+    } catch (e) {
+      setMsg(String(e));
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 12, borderTop: "1px solid var(--border-soft)", paddingTop: 10 }}>
+      <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>
+        BlackHole {state.blackhole ? "✓" : "✗ not installed"} · Mic+VM device{" "}
+        {state.aggregate ? "✓" : "✗ missing"}
+      </div>
+      {(!state.aggregate || !state.blackhole) && (
+        <button
+          className="btn ghost"
+          style={{ width: "100%", justifyContent: "center", fontSize: 12.5, padding: 8, marginTop: 8 }}
+          onClick={runSetup}
+          disabled={!state.blackhole}
+          title={state.blackhole ? undefined : "Install BlackHole first (see SETUP.md)"}
+        >
+          ⚙️ Create Mic + VM device
+        </button>
+      )}
+      {msg && <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 6 }}>{msg}</div>}
     </div>
   );
 }

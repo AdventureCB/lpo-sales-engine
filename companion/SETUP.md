@@ -1,50 +1,28 @@
 # LPO Queue Runner — rep machine setup (macOS)
 
-One-time setup per rep machine (~15 min). After this, "Drop VM" plays the
-rep's recorded voicemail straight into the call.
+## The easy way (~3 min)
 
-## 1. Install the app
+1. Download the release zip and unzip it (contains the dmg + `install.command`).
+2. Double-click **install.command**. If macOS blocks it: right-click → Open.
+   It installs the app, installs BlackHole (the virtual audio device — may
+   ask for your Mac password), and launches Queue Runner.
+3. In Queue Runner: log in, then in the **Voicemail drop** panel click
+   **⚙️ Create Mic + VM device** (one click, no admin needed).
+4. In **Quo**: Settings → Audio → Microphone → choose **Mic + VM**.
+5. Record your drops (Voicemail drop panel → Record new), one per queue type,
+   under ~30 seconds each.
 
-Open `LPO Queue Runner.dmg`, drag the app to Applications. First launch:
-right-click → Open (unsigned app warning appears once). Log in with your
-sales-engine account.
+## Test it
 
-## 2. Install BlackHole (virtual audio device)
-
-Download **BlackHole 2ch** (free): https://existential.audio/blackhole/
-(or `brew install blackhole-2ch`). Restart isn't usually required.
-
-## 3. Create the merged microphone
-
-Quo needs to hear BOTH the real mic and the VM recordings:
-
-1. Open **Audio MIDI Setup** (Applications → Utilities).
-2. Click **+** (bottom left) → **Create Aggregate Device**.
-3. Check **both** your built-in microphone AND **BlackHole 2ch**.
-4. Rename it "Mic + VM".
-5. Enable **Drift Correction** on BlackHole.
-
-## 4. Point Quo at it
-
-Quo desktop → Settings → Audio → Microphone → select **Mic + VM**.
-Speaker/output stays unchanged.
-
-## 5. Record your drops
-
-In Queue Runner → Dialer → Voicemail drop panel → **Record new**. Record one
-per queue type (first touch, recovery, …). Keep them under ~30 seconds.
-
-## 6. Test
-
-Call your own cell, let it hit voicemail, click **Drop VM** at the beep,
-then check the voicemail you received. Adjust mic/BlackHole volumes in
-Audio MIDI Setup if levels are off.
+Call your own cell, let it go to voicemail, click **Drop VM** at the beep,
+hang up, then listen to the voicemail you received.
 
 ## Troubleshooting
 
-- **"audio device 'BlackHole 2ch' not found"** → step 2 didn't finish; check
-  System Settings → Sound → Input lists BlackHole.
-- **Voicemail got silence** → Quo's mic isn't the aggregate device (step 4).
-- **Contact hears you fine but no drop** → same as above.
-- The web version of the dialer (browser) logs "VM left" but cannot play
-  audio into the call — that's companion-only.
+- **"BlackHole ✗ not installed"** in the panel → rerun `install.command`, or
+  install manually from https://existential.audio/blackhole/ then restart the app.
+- **Voicemail recorded silence** → Quo's microphone isn't set to "Mic + VM" (step 4).
+- **Contact hears you fine but drops are silent** → same as above.
+- **First app launch blocked** → right-click the app → Open (unsigned app, one-time).
+- The browser version of the dialer logs "VM left" but cannot play audio into
+  a call — real drops are companion-only.
