@@ -62,6 +62,33 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true });
 }
 
+/** Rename a drop (own folder only). */
+export async function PATCH(req: NextRequest) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  let body: { path?: string; newName?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "invalid json" }, { status: 400 });
+  }
+  const folder = user.repId ?? user.authUserId;
+  const newName = (body.newName ?? "").trim();
+  if (!body.path?.startsWith(`${folder}/`)) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+  if (!/^[\w\- ]{1,60}$/.test(newName)) {
+    return NextResponse.json({ error: "invalid name" }, { status: 400 });
+  }
+  const db = supabaseAdmin();
+  const { error } = await db.storage.from(BUCKET).move(body.path, `${folder}/${newName}.wav`);
+  if (error) {
+    console.error("vm rename failed", error);
+    return NextResponse.json({ error: "storage error" }, { status: 500 });
+  }
+  return NextResponse.json({ ok: true });
+}
+
 /** Delete a drop by path (own folder only). */
 export async function DELETE(req: NextRequest) {
   const user = await getSessionUser();

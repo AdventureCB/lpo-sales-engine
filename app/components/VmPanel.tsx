@@ -39,6 +39,18 @@ function bufferToWav(buffer: AudioBuffer): Blob {
   return new Blob([out.buffer], { type: "audio/wav" });
 }
 
+type RecPhase = "idle" | "countdown" | "recording" | "naming" | "saving";
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  background: "var(--surface-1)",
+  border: "1px solid var(--border)",
+  borderRadius: 8,
+  padding: "8px 10px",
+  color: "var(--text-1)",
+  fontSize: 12.5,
+};
+
 export function VmPanel({
   selected,
   onSelect,
@@ -47,14 +59,23 @@ export function VmPanel({
   onSelect: (d: VmDrop | null) => void;
 }) {
   const [drops, setDrops] = useState<VmDrop[]>([]);
-  const [recording, setRecording] = useState(false);
+  const [phase, setPhase] = useState<RecPhase>("idle");
+  const [countdown, setCountdown] = useState(3);
   const [recSec, setRecSec] = useState(0);
   const [recName, setRecName] = useState("");
   const [status, setStatus] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [renameVal, setRenameVal] = useState("");
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
+  const takenWavRef = useRef<Blob | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previewRef = useRef<HTMLAudioElement | null>(null);
+
+  const flash = (s: string) => {
+    setStatus(s);
+    setTimeout(() => setStatus(null), 2500);
+  };
 
   const load = () =>
     fetch("/api/vm-drops")
@@ -67,53 +88,89 @@ export function VmPanel({
 
   useEffect(() => {
     load();
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** ⏺ → 3-2-1 countdown → recording */
   const startRec = async () => {
+    let stream: MediaStream;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      flash("Mic access denied");
+      return;
+    }
+    setPhase("countdown");
+    setCountdown(3);
+    let n = 3;
+    timerRef.current = setInterval(() => {
+      n -= 1;
+      if (n > 0) {
+        setCountdown(n);
+        return;
+      }
+      if (timerRef.current) clearInterval(timerRef.current);
       const rec = new MediaRecorder(stream);
       chunksRef.current = [];
       rec.ondataavailable = (e) => chunksRef.current.push(e.data);
       rec.start();
       recorderRef.current = rec;
-      setRecording(true);
+      setPhase("recording");
       setRecSec(0);
       timerRef.current = setInterval(() => setRecSec((s) => s + 1), 1000);
-    } catch {
-      setStatus("Mic access denied");
-    }
+    }, 1000);
   };
 
-  const stopAndSave = async () => {
+  /** ⏹ stop → decode take → naming step */
+  const stopRec = async () => {
     const rec = recorderRef.current;
     if (!rec) return;
     if (timerRef.current) clearInterval(timerRef.current);
-    const name = recName.trim() || "Untitled drop";
     await new Promise<void>((resolve) => {
       rec.onstop = () => resolve();
       rec.stop();
     });
     rec.stream.getTracks().forEach((t) => t.stop());
-    setRecording(false);
-    setStatus("Processing…");
     try {
       const raw = new Blob(chunksRef.current);
       const ctx = new AudioContext();
       const decoded = await ctx.decodeAudioData(await raw.arrayBuffer());
-      const wav = bufferToWav(decoded);
-      const r = await fetch(`/api/vm-drops?name=${encodeURIComponent(name)}`, {
-        method: "POST",
-        body: wav,
-      });
-      setStatus(r.ok ? "Saved ✓" : "Upload failed");
+      takenWavRef.current = bufferToWav(decoded);
       setRecName("");
-      await load();
+      setPhase("naming");
     } catch {
-      setStatus("Processing failed");
+      flash("Processing failed");
+      setPhase("idle");
     }
-    setTimeout(() => setStatus(null), 2500);
+  };
+
+  const playTake = () => {
+    if (!takenWavRef.current) return;
+    if (!previewRef.current) previewRef.current = new Audio();
+    previewRef.current.src = URL.createObjectURL(takenWavRef.current);
+    void previewRef.current.play();
+  };
+
+  const saveTake = async () => {
+    const name = recName.trim();
+    if (!name || !takenWavRef.current) return;
+    setPhase("saving");
+    const r = await fetch(`/api/vm-drops?name=${encodeURIComponent(name)}`, {
+      method: "POST",
+      body: takenWavRef.current,
+    }).catch(() => null);
+    flash(r?.ok ? "Saved ✓" : "Upload failed");
+    takenWavRef.current = null;
+    setPhase("idle");
+    await load();
+  };
+
+  const discardTake = () => {
+    takenWavRef.current = null;
+    setPhase("idle");
   };
 
   const preview = () => {
@@ -123,6 +180,34 @@ export function VmPanel({
     void previewRef.current.play();
   };
 
+  const deleteSelected = async () => {
+    if (!selected) return;
+    if (!confirm(`Delete "${selected.name}"?`)) return;
+    await fetch(`/api/vm-drops?path=${encodeURIComponent(selected.path)}`, { method: "DELETE" });
+    onSelect(null);
+    await load();
+    flash("Deleted");
+  };
+
+  const renameSelected = async () => {
+    if (!selected || !renameVal.trim()) return;
+    const r = await fetch("/api/vm-drops", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: selected.path, newName: renameVal.trim() }),
+    }).catch(() => null);
+    setRenaming(false);
+    if (r?.ok) {
+      onSelect(null);
+      await load();
+      flash("Renamed ✓");
+    } else {
+      flash("Rename failed");
+    }
+  };
+
+  const busy = phase !== "idle";
+
   return (
     <div className="card">
       <div className="panel-h">Voicemail drop</div>
@@ -130,36 +215,107 @@ export function VmPanel({
         className="vmsel"
         value={selected?.path ?? ""}
         onChange={(e) => onSelect(drops.find((d) => d.path === e.target.value) ?? null)}
+        disabled={busy}
       >
         {drops.length === 0 && <option value="">No recordings yet</option>}
         {drops.map((d) => (
           <option key={d.path} value={d.path}>{d.name}</option>
         ))}
       </select>
-      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-        <button className="btn ghost" style={{ flex: 1, justifyContent: "center", fontSize: 12.5, padding: 8 }} onClick={preview} disabled={!selected?.url}>
-          ▶ Preview
-        </button>
-        <button className="btn ghost" style={{ flex: 1, justifyContent: "center", fontSize: 12.5, padding: 8 }} onClick={startRec} disabled={recording}>
-          ⏺ Record new
-        </button>
-      </div>
-      {recording && (
-        <div style={{ marginTop: 10, background: "var(--surface-2)", border: "1px solid rgba(208,59,59,.45)", borderRadius: 9, padding: "10px 12px" }}>
-          <div style={{ fontSize: 13, color: "var(--crit)", fontWeight: 650 }}>
-            Recording… {String(Math.floor(recSec / 60)).padStart(2, "0")}:{String(recSec % 60).padStart(2, "0")}
+
+      {!busy && (
+        <>
+          <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+            <button className="btn ghost" style={{ flex: 1, justifyContent: "center", fontSize: 12.5, padding: 8 }} onClick={preview} disabled={!selected?.url}>
+              ▶ Preview
+            </button>
+            <button className="btn ghost" style={{ flex: 1, justifyContent: "center", fontSize: 12.5, padding: 8 }} onClick={startRec}>
+              ⏺ Record new
+            </button>
           </div>
-          <input
-            placeholder="Name this drop…"
-            value={recName}
-            onChange={(e) => setRecName(e.target.value)}
-            style={{ width: "100%", marginTop: 10, background: "var(--surface-1)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px", color: "var(--text-1)", fontSize: 12.5 }}
-          />
-          <button className="btn primary" style={{ width: "100%", justifyContent: "center", fontSize: 12.5, padding: "8px 12px", marginTop: 8 }} onClick={stopAndSave}>
-            ⏹ Stop &amp; save
+          {selected && (
+            <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+              <button
+                className="btn ghost"
+                style={{ flex: 1, justifyContent: "center", fontSize: 12, padding: 6 }}
+                onClick={() => {
+                  setRenaming(true);
+                  setRenameVal(selected.name);
+                }}
+              >
+                ✏️ Rename
+              </button>
+              <button className="btn ghost" style={{ flex: 1, justifyContent: "center", fontSize: 12, padding: 6 }} onClick={deleteSelected}>
+                🗑 Delete
+              </button>
+            </div>
+          )}
+          {renaming && (
+            <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+              <input
+                style={{ ...inputStyle, flex: 1 }}
+                value={renameVal}
+                onChange={(e) => setRenameVal(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && renameSelected()}
+                autoFocus
+              />
+              <button className="btn primary" style={{ fontSize: 12, padding: "6px 10px" }} onClick={renameSelected}>
+                Save
+              </button>
+              <button className="btn ghost" style={{ fontSize: 12, padding: "6px 10px" }} onClick={() => setRenaming(false)}>
+                ✕
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {phase === "countdown" && (
+        <div style={{ marginTop: 10, textAlign: "center", background: "var(--surface-2)", borderRadius: 9, padding: "18px 12px" }}>
+          <div style={{ fontSize: 34, fontWeight: 800, color: "var(--accent-hover)" }}>{countdown}</div>
+          <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 4 }}>Recording starts…</div>
+        </div>
+      )}
+
+      {phase === "recording" && (
+        <div style={{ marginTop: 10, background: "var(--surface-2)", border: "1px solid rgba(208,59,59,.45)", borderRadius: 9, padding: "12px" }}>
+          <div style={{ fontSize: 13, color: "var(--crit)", fontWeight: 650 }}>
+            ● Recording {String(Math.floor(recSec / 60)).padStart(2, "0")}:{String(recSec % 60).padStart(2, "0")}
+          </div>
+          <button className="btn primary" style={{ width: "100%", justifyContent: "center", fontSize: 12.5, padding: "8px 12px", marginTop: 10 }} onClick={stopRec}>
+            ⏹ Stop recording
           </button>
         </div>
       )}
+
+      {phase === "naming" && (
+        <div style={{ marginTop: 10, background: "var(--surface-2)", borderRadius: 9, padding: 12 }}>
+          <div style={{ fontSize: 12.5, color: "var(--text-2)", marginBottom: 8 }}>
+            Take recorded ({recSec}s) — listen, then name it to save.
+          </div>
+          <button className="btn ghost" style={{ width: "100%", justifyContent: "center", fontSize: 12.5, padding: 7, marginBottom: 8 }} onClick={playTake}>
+            ▶ Play take
+          </button>
+          <input
+            placeholder="Name this drop… (e.g. First touch)"
+            value={recName}
+            onChange={(e) => setRecName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && saveTake()}
+            style={inputStyle}
+            autoFocus
+          />
+          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+            <button className="btn primary" style={{ flex: 1, justifyContent: "center", fontSize: 12.5, padding: "8px 12px" }} onClick={saveTake} disabled={!recName.trim()}>
+              💾 Save
+            </button>
+            <button className="btn ghost" style={{ flex: 1, justifyContent: "center", fontSize: 12.5, padding: "8px 12px" }} onClick={discardTake}>
+              Discard
+            </button>
+          </div>
+        </div>
+      )}
+
+      {phase === "saving" && <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 8 }}>Uploading…</div>}
       {status && <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 8 }}>{status}</div>}
       <AudioSetup />
     </div>
