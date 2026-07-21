@@ -39,7 +39,8 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     .maybeSingle();
   if (!data) return null;
 
-  const rep = (data.reps ?? null) as { name: string; pipedrive_user_id: number | null; quo_user_id: string | null } | null;
+  const repRaw = Array.isArray(data.reps) ? data.reps[0] : data.reps;
+  const rep = (repRaw ?? null) as { name: string; pipedrive_user_id: number | null; quo_user_id: string | null } | null;
   return {
     authUserId: data.id,
     email: data.email,
