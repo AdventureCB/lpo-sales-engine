@@ -75,48 +75,17 @@ fn enable_quo_accessibility() -> Result<(), String> {
     Ok(())
 }
 
-/// Best-effort hang-up: click Quo's own end-call button via accessibility.
-/// If no matching button is found, dump Quo's UI tree to a log so the
-/// matcher can be tuned. Returns what happened.
+/// Hang up the active Quo call: focus Quo, send its end-call shortcut
+/// (⇧⌘H), and hand focus straight back to the dialer.
 #[tauri::command]
 fn end_call() -> Result<String, String> {
-    #[cfg(target_os = "macos")]
-    if let Err(e) = enable_quo_accessibility() {
-        return Err(e);
-    }
     let script = r#"
-tell application "System Events"
-  tell process "Quo"
-    set dump to ""
-    repeat with w in windows
-      try
-        set els to every UI element of entire contents of w
-        repeat with b in els
-          set r to ""
-          try
-            set r to (role of b as string)
-          end try
-          set d to ""
-          try
-            set d to (description of b as string)
-          end try
-          set n to ""
-          try
-            set n to (name of b as string)
-          end try
-          if d contains "ang up" or d contains "nd call" or d contains "ang Up" or n contains "ang up" or n contains "nd call" or n contains "ang Up" then
-            click b
-            return "clicked: " & r & " / " & d & " / " & n
-          end if
-          if r is "AXButton" then
-            set dump to dump & r & " | " & d & " | " & n & linefeed
-          end if
-        end repeat
-      end try
-    end repeat
-    return "no match; buttons seen:" & linefeed & dump
-  end tell
-end tell
+tell application "Quo" to activate
+delay 0.2
+tell application "System Events" to keystroke "h" using {command down, shift down}
+delay 0.1
+tell application "LPO Queue Runner" to activate
+return "sent"
 "#;
     let out = std::process::Command::new("osascript")
         .args(["-e", script])

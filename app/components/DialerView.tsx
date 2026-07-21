@@ -191,13 +191,12 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setAwaitingDispo(true);
   };
 
-  /**
-   * Quo exposes no automatable hang-up (no API/shortcut/AX tree) — the rep
-   * hangs up in Quo; this button syncs our UI. The webhook does the same
-   * automatically when the call ends.
-   */
+  /** End the call for real: companion sends Quo's ⇧⌘H end-call shortcut. */
   const endCall = async () => {
     if (!inCall) return;
+    if (window.__TAURI__) {
+      await window.__TAURI__.core.invoke("end_call").catch((e) => console.error("end_call", e));
+    }
     hangUp();
   };
 
@@ -542,9 +541,8 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                     className="btn big"
                     style={{ background: "var(--crit)", color: "#fff" }}
                     onClick={endCall}
-                    title="Hang up in Quo — this records the call as ended here"
                   >
-                    ⏹ Call ended <kbd>E</kbd>
+                    ⏹ End call <kbd>E</kbd>
                   </button>
                 )}
                 <button className="btn ghost" onClick={skip} disabled={inCall || awaitingDispo}>
