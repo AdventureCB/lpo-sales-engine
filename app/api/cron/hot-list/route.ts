@@ -223,6 +223,9 @@ export async function GET(req: Request) {
           now.getTime() + rules.cooldown_days * 24 * 3600_000
         ).toISOString(),
       });
+      // 23505 = a concurrent sweep already flagged this deal (unique index
+      // on active flags) — skip side-effects so tasks aren't duplicated.
+      if (error?.code === "23505") continue;
       if (error) throw new Error(error.message);
 
       // Pipedrive side-effects are best-effort — a failure there must not
