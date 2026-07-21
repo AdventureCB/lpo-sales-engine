@@ -3,7 +3,12 @@
 ## The easy way (~3 min)
 
 1. Download the release zip and unzip it (contains the dmg + `install.command`).
-2. Double-click **install.command**. If macOS blocks it: right-click → Open.
+2. Run **install.command**. macOS will block a double-click ("Apple could not
+   verify…") because the script is unsigned — either:
+   - open **Terminal** and run: `bash ` then drag `install.command` into the
+     window and press Enter, **or**
+   - try the double-click, then System Settings → Privacy & Security →
+     scroll down → **Open Anyway**.
    It installs the app, installs BlackHole (the virtual audio device — may
    ask for your Mac password), and launches Queue Runner.
 3. In Queue Runner: log in, then in the **Voicemail drop** panel click
