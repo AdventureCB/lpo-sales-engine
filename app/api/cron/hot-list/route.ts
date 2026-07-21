@@ -10,8 +10,10 @@ import {
   getDeal,
   setDealLabels,
   createDueTodayActivity,
+  getRecentSentThreads,
   PipedriveRateLimitError,
 } from "@/lib/pipedrive";
+import { normalizeEmail } from "@/lib/identity";
 import { evaluateDeal, DEFAULT_RULES, type HotRules } from "@/lib/hotlist";
 
 export const runtime = "nodejs";
@@ -79,6 +81,41 @@ export async function GET(req: Request) {
   if (!envOptional("PIPEDRIVE_API_TOKEN")) {
     summary.pipedrive = "skipped: PIPEDRIVE_API_TOKEN not set";
     return NextResponse.json({ ok: true, summary });
+  }
+
+  // ── 1b. Ingest Pipedrive rep-email opens ──────────────────────────────────
+  // Sent threads carry mail_tracking_status AND a direct deal_id — no email
+  // matching needed. occurred_at = last_message_timestamp keeps the event
+  // stable across sweeps, so the unique constraint dedupes re-observations.
+  try {
+    const mailSince = new Date(now.getTime() - 7 * 24 * 3600_000).toISOString();
+    const threads = await getRecentSentThreads(mailSince);
+    const opened = threads.filter(
+      (t) => t.mail_tracking_status === "opened" && t.last_message_timestamp
+    );
+    if (opened.length > 0) {
+      const rows = opened
+        .map((t) => ({
+          source: "pipedrive",
+          type: "email_open",
+          person_email: normalizeEmail(t.to_email),
+          pipedrive_deal_id: t.deal_id,
+          occurred_at: t.last_message_timestamp!,
+          meta: { thread_id: t.id, subject: t.subject },
+        }))
+        // NULL emails would bypass the dedupe constraint (NULLs compare
+        // distinct) and duplicate on every sweep — skip those rare threads.
+        .filter((r) => r.person_email);
+      const { error } = await db.from("engagement_events").upsert(rows, {
+        onConflict: "source,type,person_email,occurred_at",
+        ignoreDuplicates: true,
+      });
+      if (error) throw new Error(error.message);
+    }
+    summary.pipedriveMail = { threadsScanned: threads.length, opened: opened.length };
+  } catch (e) {
+    console.error("pipedrive mail ingest failed", e);
+    summary.pipedriveMail = { error: e instanceof Error ? e.message : String(e) };
   }
 
   // ── 2. Resolve unmatched recent events to deals ───────────────────────────

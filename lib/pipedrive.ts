@@ -100,6 +100,49 @@ export async function setDealLabels(dealId: number, labelIds: number[]): Promise
   });
 }
 
+export interface SentThread {
+  id: number;
+  subject: string | null;
+  deal_id: number | null;
+  mail_tracking_status: string | null; // "opened" | "not_opened" | null
+  last_message_timestamp: string | null;
+  to_email: string | null;
+}
+
+/** Sent mail threads with last activity since `sinceIso` (tracking flags included). */
+export async function getRecentSentThreads(sinceIso: string): Promise<SentThread[]> {
+  const since = Date.parse(sinceIso);
+  const threads: SentThread[] = [];
+  let start = 0;
+  for (let page = 0; page < 10; page++) {
+    const data = await pd(V1, "/mailbox/mailThreads", {
+      params: { folder: "sent", limit: "50", start: String(start) },
+    });
+    const batch = data ?? [];
+    if (batch.length === 0) break;
+    let reachedOld = false;
+    for (const t of batch) {
+      const ts = t.last_message_timestamp ? Date.parse(t.last_message_timestamp) : 0;
+      if (ts < since) {
+        reachedOld = true;
+        continue;
+      }
+      threads.push({
+        id: t.id,
+        subject: t.subject ?? null,
+        deal_id: t.deal_id ?? null,
+        mail_tracking_status: t.mail_tracking_status ?? null,
+        last_message_timestamp: t.last_message_timestamp ?? null,
+        to_email: t.parties?.to?.[0]?.email_address ?? null,
+      });
+    }
+    if (reachedOld) break;
+    start += batch.length;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return threads;
+}
+
 export async function createDueTodayActivity(opts: {
   dealId: number;
   ownerId: number;
