@@ -54,6 +54,7 @@ export interface PipedriveDeal {
   owner_id: number;
   owner_name?: string;
   label_ids: number[];
+  person_id: number | null;
 }
 
 export async function getOpenDealsForPerson(personId: number): Promise<PipedriveDeal[]> {
@@ -77,7 +78,45 @@ export async function getDeal(dealId: number): Promise<PipedriveDeal> {
     owner_id: typeof d.user_id === "object" ? d.user_id?.id : d.user_id,
     owner_name: typeof d.user_id === "object" ? d.user_id?.name : undefined,
     label_ids: d.label_ids ?? [],
+    person_id: typeof d.person_id === "object" ? d.person_id?.value ?? null : d.person_id ?? null,
   };
+}
+
+export interface PersonActivity {
+  id: number;
+  type: string;
+  subject: string | null;
+  note: string | null;
+  deal_id: number | null;
+  add_time: string | null; // UTC "YYYY-MM-DD HH:MM:SS"
+}
+
+export async function getRecentPersonActivities(personId: number): Promise<PersonActivity[]> {
+  const data = await pd(V1, `/persons/${personId}/activities`, {
+    params: { limit: "20" },
+  });
+  return (data ?? []).map((a: any) => ({
+    id: a.id,
+    type: a.type,
+    subject: a.subject ?? null,
+    note: a.note ?? null,
+    deal_id: a.deal_id ?? null,
+    add_time: a.add_time ?? null,
+  }));
+}
+
+export async function updateActivity(
+  id: number,
+  fields: { deal_id?: number; note?: string }
+): Promise<void> {
+  await pd(V1, `/activities/${id}`, { method: "PUT", body: JSON.stringify(fields) });
+}
+
+export async function addDealNote(dealId: number, content: string): Promise<void> {
+  await pd(V1, "/notes", {
+    method: "POST",
+    body: JSON.stringify({ deal_id: dealId, content }),
+  });
 }
 
 let hotLabelIdCache: number | null | undefined;
