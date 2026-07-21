@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { DEFAULT_RULES } from "@/lib/hotlist";
 import { getSessionUser } from "@/lib/auth";
+import { fillMissingFlagPhones } from "@/lib/flag-phones";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,6 +55,7 @@ export async function GET() {
   }
 
   const flags = flagsRes.data ?? [];
+  await fillMissingFlagPhones(db, flags);
   const active = flags.filter((f) => !f.cleared_at);
   const newToday = flags.filter((f) => f.flagged_at >= dayAgo);
 

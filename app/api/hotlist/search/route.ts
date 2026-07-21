@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
+import { fillMissingFlagPhones } from "@/lib/flag-phones";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,5 +30,7 @@ export async function GET(req: NextRequest) {
     console.error("hot search failed", error);
     return NextResponse.json({ error: "db error" }, { status: 500 });
   }
-  return NextResponse.json({ results: data ?? [] });
+  const results = data ?? [];
+  await fillMissingFlagPhones(db, results);
+  return NextResponse.json({ results });
 }

@@ -37,6 +37,13 @@ export async function getMetricIds(): Promise<Map<string, string>> {
   return ids;
 }
 
+/** Phone from a Klaviyo profile, looked up by email. */
+export async function getProfilePhoneByEmail(email: string): Promise<string | null> {
+  const filter = encodeURIComponent(`equals(email,"${email}")`);
+  const page = await kGet(`${BASE}/profiles/?filter=${filter}`);
+  return page.data?.[0]?.attributes?.phone_number ?? null;
+}
+
 export interface KlaviyoEvent {
   email: string;
   occurredAt: string;
