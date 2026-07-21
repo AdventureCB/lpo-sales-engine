@@ -1,8 +1,10 @@
+import Link from "next/link";
+
 const modules = [
-  { name: "Dialer — Queue Runner", phase: "Phase 3", status: "planned" },
-  { name: "🔥 Hot List", phase: "Phase 2", status: "planned" },
-  { name: "Scoreboard", phase: "Phase 1", status: "planned" },
-  { name: "Commissions", phase: "Phase 4", status: "planned" },
+  { name: "Dialer — Queue Runner", phase: "Phase 3", status: "planned", href: null },
+  { name: "🔥 Hot List", phase: "Phase 2", status: "planned", href: null },
+  { name: "Scoreboard", phase: "Phase 1", status: "live", href: "/scoreboard" },
+  { name: "Commissions", phase: "Phase 4", status: "planned", href: null },
 ];
 
 export default function Home() {
@@ -41,8 +43,14 @@ export default function Home() {
               justifyContent: "space-between",
             }}
           >
-            <span>{m.name}</span>
-            <span style={{ color: "var(--text-3)" }}>
+            {m.href ? (
+              <Link href={m.href} style={{ color: "var(--accent-hover)", textDecoration: "none", fontWeight: 650 }}>
+                {m.name} →
+              </Link>
+            ) : (
+              <span>{m.name}</span>
+            )}
+            <span style={{ color: m.status === "live" ? "var(--good)" : "var(--text-3)" }}>
               {m.phase} · {m.status}
             </span>
           </li>
