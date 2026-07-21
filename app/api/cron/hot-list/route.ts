@@ -8,11 +8,13 @@ import {
   getOpenDealsForPerson,
   getHotLabelId,
   getDeal,
+  getPersonsByIds,
   setDealLabels,
   createDueTodayActivity,
   getRecentSentThreads,
   PipedriveRateLimitError,
 } from "@/lib/pipedrive";
+import { normalizePhone } from "@/lib/identity";
 import { normalizeEmail } from "@/lib/identity";
 import { evaluateDeal, DEFAULT_RULES, type HotRules } from "@/lib/hotlist";
 
@@ -218,6 +220,12 @@ export async function GET(req: Request) {
       const deal = await getDeal(dealId).catch(() => null);
       if (!deal || deal.status !== "open") continue;
 
+      let personPhone: string | null = null;
+      if (deal.person_id) {
+        const persons = await getPersonsByIds([deal.person_id]).catch(() => null);
+        personPhone = normalizePhone(persons?.get(deal.person_id)?.phone);
+      }
+
       const { error } = await db.from("hot_flags").insert({
         deal_id: dealId,
         reason: verdict.reason,
@@ -225,6 +233,7 @@ export async function GET(req: Request) {
         deal_title: deal.title,
         owner_name: deal.owner_name ?? null,
         owner_pipedrive_id: deal.owner_id ?? null,
+        person_phone: personPhone,
         cooldown_until: new Date(
           now.getTime() + rules.cooldown_days * 24 * 3600_000
         ).toISOString(),

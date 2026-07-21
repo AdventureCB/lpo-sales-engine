@@ -21,7 +21,7 @@ export async function GET() {
 
   let flagsQuery = db
     .from("hot_flags")
-    .select("id, deal_id, reason, signals, deal_title, owner_name, flagged_at, cleared_at, cooldown_until")
+    .select("id, deal_id, reason, signals, deal_title, owner_name, person_phone, flagged_at, cleared_at, cooldown_until")
     .order("flagged_at", { ascending: false })
     .limit(50);
   if (ownerFilter) flagsQuery = flagsQuery.eq("owner_pipedrive_id", ownerFilter);

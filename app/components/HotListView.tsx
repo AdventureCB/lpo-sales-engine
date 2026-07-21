@@ -24,9 +24,17 @@ interface Flag {
   reason: string;
   deal_title: string | null;
   owner_name: string | null;
+  person_phone?: string | null;
   flagged_at: string;
   cleared_at: string | null;
   cooldown_until: string | null;
+}
+
+function flagStatus(f: Flag): string {
+  if (!f.cleared_at) return "🔥 Active";
+  if (f.cooldown_until && new Date(f.cooldown_until) > new Date())
+    return `⏳ Cooldown to ${fmtWhen(f.cooldown_until).split(",")[0]}`;
+  return `Cleared ${fmtWhen(f.cleared_at)}`;
 }
 
 interface FeedItem {
@@ -89,6 +97,18 @@ export function HotListView({ isAdmin = false }: { isAdmin?: boolean }) {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [expanded, setExpanded] = useState<number | null>(null);
   const [dealEvents, setDealEvents] = useState<Record<number, FeedItem[]>>({});
+  const [searchTerm, setSearchTerm] = useState("");
+  const [searchResults, setSearchResults] = useState<Flag[] | null>(null);
+
+  const runSearch = async () => {
+    const term = searchTerm.trim();
+    if (term.length < 2) {
+      setSearchResults(null);
+      return;
+    }
+    const r = await fetch(`/api/hotlist/search?term=${encodeURIComponent(term)}`).catch(() => null);
+    if (r?.ok) setSearchResults((await r.json()).results);
+  };
 
   const toggleExpand = (dealId: number) => {
     if (expanded === dealId) {
@@ -169,6 +189,55 @@ export function HotListView({ isAdmin = false }: { isAdmin?: boolean }) {
 
       <div className="split" style={{ marginTop: 0 }}>
         <div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+            <input
+              className="vmsel"
+              style={{ flex: 1 }}
+              placeholder="Search hot-list history (anyone ever flagged)…"
+              value={searchTerm}
+              onChange={(e) => {
+                setSearchTerm(e.target.value);
+                if (!e.target.value.trim()) setSearchResults(null);
+              }}
+              onKeyDown={(e) => e.key === "Enter" && runSearch()}
+            />
+            <button className="btn" style={{ padding: "8px 14px" }} onClick={runSearch}>🔍</button>
+            {searchResults && (
+              <button
+                className="btn ghost"
+                style={{ padding: "8px 12px" }}
+                onClick={() => {
+                  setSearchResults(null);
+                  setSearchTerm("");
+                }}
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          {searchResults && (
+            <div className="card" style={{ padding: "6px 12px", marginBottom: 18 }}>
+              <table className="data">
+                <thead>
+                  <tr><th>Deal</th><th>Phone</th><th>Owner</th><th>Last reason</th><th>Status</th></tr>
+                </thead>
+                <tbody>
+                  {searchResults.length === 0 && (
+                    <tr><td colSpan={5} style={{ color: "var(--text-3)", padding: "14px 10px" }}>No matches in hot-list history.</td></tr>
+                  )}
+                  {searchResults.map((f) => (
+                    <tr key={f.id}>
+                      <td><b>{f.deal_title ?? `Deal #${f.deal_id}`}</b></td>
+                      <td style={{ whiteSpace: "nowrap" }}>{f.person_phone ?? "—"}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{f.owner_name ?? "—"}</td>
+                      <td style={{ fontSize: 12.5, color: "var(--text-2)" }}>{f.reason}</td>
+                      <td style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>{flagStatus(f)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           <div className="card" style={{ padding: "6px 12px" }}>
             <table className="data">
               <thead>
@@ -196,6 +265,11 @@ export function HotListView({ isAdmin = false }: { isAdmin?: boolean }) {
                           {expanded === f.deal_id ? "▾" : "▸"}
                         </span>
                         <b>{f.deal_title ?? `Deal #${f.deal_id}`}</b>
+                        {f.person_phone && (
+                          <div style={{ fontSize: 12, color: "var(--text-2)", marginLeft: 18 }}>
+                            {f.person_phone}
+                          </div>
+                        )}
                       </td>
                       <td style={{ whiteSpace: "nowrap" }}>{f.owner_name ?? "—"}</td>
                       <td style={{ fontSize: 12.5, color: "var(--text-2)" }}>{f.reason}</td>

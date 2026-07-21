@@ -180,9 +180,18 @@ export function VmPanel({
     void previewRef.current.play();
   };
 
+  // window.confirm() is a silent no-op inside the Tauri webview — use a
+  // two-click inline confirm instead.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
   const deleteSelected = async () => {
     if (!selected) return;
-    if (!confirm(`Delete "${selected.name}"?`)) return;
+    if (!confirmingDelete) {
+      setConfirmingDelete(true);
+      setTimeout(() => setConfirmingDelete(false), 3000);
+      return;
+    }
+    setConfirmingDelete(false);
     await fetch(`/api/vm-drops?path=${encodeURIComponent(selected.path)}`, { method: "DELETE" });
     onSelect(null);
     await load();
@@ -245,8 +254,18 @@ export function VmPanel({
               >
                 ✏️ Rename
               </button>
-              <button className="btn ghost" style={{ flex: 1, justifyContent: "center", fontSize: 12, padding: 6 }} onClick={deleteSelected}>
-                🗑 Delete
+              <button
+                className="btn ghost"
+                style={{
+                  flex: 1,
+                  justifyContent: "center",
+                  fontSize: 12,
+                  padding: 6,
+                  ...(confirmingDelete ? { background: "var(--crit)", color: "#fff", boxShadow: "none" } : {}),
+                }}
+                onClick={deleteSelected}
+              >
+                {confirmingDelete ? "Really delete?" : "🗑 Delete"}
               </button>
             </div>
           )}
