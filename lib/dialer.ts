@@ -1,6 +1,6 @@
 import "server-only";
 import { supabaseAdmin } from "./supabase";
-import { listOpenDealsByStage, getPersonsByIds, type DealListItem } from "./pipedrive";
+import { listDealsFiltered, getPersonsByIds, type DealListItem } from "./pipedrive";
 import { normalizePhone } from "./identity";
 import type { SessionUser } from "./auth";
 
@@ -59,9 +59,11 @@ export interface QueueLead {
 
 export async function buildQueueLeads(opts: {
   user: SessionUser;
-  stageIds: number[];
+  stageIds: number[]; // empty = use pipelineId (or whole account)
   ownerScope: OwnerScope;
   nameContains?: string;
+  pipelineId?: number;
+  status?: "open" | "won" | "lost";
 }): Promise<{ leads: QueueLead[]; skippedNoPhone: number }> {
   const db = supabaseAdmin();
   const { data: reps } = await db
@@ -72,9 +74,14 @@ export async function buildQueueLeads(opts: {
   const repIds = new Set((reps ?? []).map((r) => r.pipedrive_user_id as number));
   const allowed = buildOwnerCheck(opts.user, opts.ownerScope, repIds);
 
+  const status = opts.status ?? "open";
   const deals: DealListItem[] = [];
-  for (const stageId of opts.stageIds) {
-    deals.push(...(await listOpenDealsByStage(stageId)));
+  if (opts.stageIds.length > 0) {
+    for (const stageId of opts.stageIds) {
+      deals.push(...(await listDealsFiltered({ stageId, status })));
+    }
+  } else {
+    deals.push(...(await listDealsFiltered({ pipelineId: opts.pipelineId, status }, 500)));
   }
   let filtered = deals.filter(allowed);
   if (opts.nameContains) {

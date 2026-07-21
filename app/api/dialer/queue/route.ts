@@ -17,12 +17,19 @@ export async function GET(req: NextRequest) {
   const nameContains = params.get("name") ?? undefined;
   const queueId = params.get("queueId");
   const stageIdParam = params.get("stageId");
+  const pipelineParam = params.get("pipelineId");
+  const statusParam = params.get("status");
+  const status = ["open", "won", "lost"].includes(statusParam ?? "")
+    ? (statusParam as "open" | "won" | "lost")
+    : undefined;
 
   let stageIds: number[];
+  let pipelineId: number | undefined;
   let cacheKey: string;
-  if (stageIdParam) {
-    stageIds = stageIdParam.split(",").map(Number).filter(Number.isFinite);
-    cacheKey = `adhoc:${stageIdParam}`;
+  if (stageIdParam || pipelineParam) {
+    stageIds = (stageIdParam ?? "").split(",").map(Number).filter(Number.isFinite);
+    pipelineId = pipelineParam ? Number(pipelineParam) : undefined;
+    cacheKey = `adhoc:${stageIdParam ?? ""}:${pipelineParam ?? ""}:${statusParam ?? ""}`;
   } else if (queueId) {
     const db = supabaseAdmin();
     const { data: q } = await db
@@ -43,6 +50,8 @@ export async function GET(req: NextRequest) {
       stageIds,
       ownerScope: owner,
       nameContains,
+      pipelineId,
+      status,
       cacheKey,
     });
     return NextResponse.json({ leads, skippedNoPhone });

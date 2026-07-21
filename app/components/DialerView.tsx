@@ -15,12 +15,43 @@ interface Lead {
   personName: string | null;
   phone: string | null;
   stageName: string;
-  updateTime: string | null;
+  updateTime?: string | null;
   hot: boolean;
   hotReason: string | null;
+  callable?: boolean; // search results: sales can't dial other reps' deals
+  status?: string;
 }
 
 type OwnerScope = "mine" | "unassigned" | "both" | "anyone";
+
+const PIPELINES: { id: string; label: string }[] = [
+  { id: "", label: "Any pipeline" },
+  { id: "6", label: "Intake" },
+  { id: "7", label: "Sales / Nurture" },
+  { id: "8", label: "Order" },
+];
+
+const STAGES_BY_PIPE: Record<string, { id: string; label: string }[]> = {
+  "": [],
+  "6": [
+    { id: "44", label: "Intake- Needs Qualification" },
+    { id: "45", label: "Recovery" },
+    { id: "46", label: "Qualified" },
+    { id: "47", label: "Waiting on Timing" },
+  ],
+  "7": [
+    { id: "48", label: "Qualified" },
+    { id: "55", label: "Warm" },
+    { id: "54", label: "Cold" },
+    { id: "56", label: "Hot" },
+    { id: "50", label: "Deposit Placed" },
+  ],
+  "8": [
+    { id: "51", label: "Deposit Placed" },
+    { id: "52", label: "Confirmation Scheduled" },
+    { id: "53", label: "Confirmed (Won)" },
+  ],
+};
 
 const DISPOSITIONS: [string, string, string][] = [
   ["connected", "1", "✅ Connected"],
@@ -43,6 +74,13 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [ownerScope, setOwnerScope] = useState<OwnerScope>(isAdmin ? "anyone" : "both");
   const [nameFilter, setNameFilter] = useState("");
+  const [pipeline, setPipeline] = useState("");
+  const [stage, setStage] = useState("");
+  const [dealStatus, setDealStatus] = useState("open");
+  const [queueLabel, setQueueLabel] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [searchResults, setSearchResults] = useState<Lead[] | null>(null);
+  const [searching, setSearching] = useState(false);
 
   const [inCall, setInCall] = useState(false);
   const [awaitingDispo, setAwaitingDispo] = useState(false);
@@ -108,7 +146,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   };
 
   const dial = () => {
-    if (!lead?.phone || inCall || awaitingDispo) return;
+    if (!lead?.phone || inCall || awaitingDispo || lead.callable === false) return;
     dialStartRef.current = new Date().toISOString();
     setInCall(true);
     setCallSec(0);
@@ -199,10 +237,29 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   useEffect(() => () => stopTimers(), []);
 
   const applyFilter = async () => {
-    if (!activeQueue) return;
     setLoading(true);
+    setSearchResults(null);
     try {
-      await loadQueue(activeQueue, ownerScope, nameFilter.trim());
+      if (pipeline || stage || dealStatus !== "open") {
+        // Ad-hoc queue from the filter builder
+        setActiveQueue(null);
+        const params = new URLSearchParams({ owner: ownerScope, status: dealStatus });
+        if (stage) params.set("stageId", stage);
+        else if (pipeline) params.set("pipelineId", pipeline);
+        if (nameFilter.trim()) params.set("name", nameFilter.trim());
+        const r = await fetch(`/api/dialer/queue?${params}`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const d = await r.json();
+        setLeads(d.leads);
+        setLeadIdx(0);
+        const stageLabel = stage
+          ? STAGES_BY_PIPE[pipeline]?.find((s) => s.id === stage)?.label
+          : PIPELINES.find((p) => p.id === pipeline)?.label;
+        setQueueLabel(`${stageLabel ?? "All deals"} · ${dealStatus}`);
+      } else if (activeQueue) {
+        await loadQueue(activeQueue, ownerScope, nameFilter.trim());
+        setQueueLabel(null);
+      }
       await loadQueues(ownerScope);
     } catch (e) {
       setError(String(e));
@@ -211,19 +268,83 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     }
   };
 
+  const runSearch = async () => {
+    const term = searchTerm.trim();
+    if (term.length < 2) return;
+    setSearching(true);
+    try {
+      const r = await fetch(`/api/dialer/search?term=${encodeURIComponent(term)}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      setSearchResults(d.results);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const pickSearchResult = (l: Lead) => {
+    setActiveQueue(null);
+    setQueueLabel(`Search: ${l.title}`);
+    setLeads([l]);
+    setLeadIdx(0);
+    setSearchResults(null);
+  };
+
   if (error) return <div className="viewsub">Couldn’t load dialer: {error}</div>;
 
   return (
     <>
       <h2 className="viewtitle">Dial session</h2>
       <div className="viewsub">
-        Queue: <b style={{ color: "var(--text-1)" }}>{activeQueue?.name ?? "—"}</b> · calls place
-        through your Quo line · auto-logged to Pipedrive
+        Queue: <b style={{ color: "var(--text-1)" }}>{queueLabel ?? activeQueue?.name ?? "—"}</b> ·
+        calls place through your Quo line · auto-logged to Pipedrive
       </div>
 
       <div className="dialer-grid">
-        {/* left: queues + filter */}
+        {/* left: search + queues + filter */}
         <div>
+          <div className="panel-h">Find any deal</div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+            <input
+              className="vmsel"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && runSearch()}
+              placeholder="Name, deal, email…"
+            />
+            <button className="btn" style={{ padding: "8px 12px" }} onClick={runSearch}>
+              {searching ? "…" : "🔍"}
+            </button>
+          </div>
+          {searchResults && (
+            <div className="queue-list" style={{ marginBottom: 12 }}>
+              {searchResults.length === 0 && (
+                <div style={{ fontSize: 12.5, color: "var(--text-3)", padding: "4px 2px" }}>
+                  No deals match.
+                </div>
+              )}
+              {searchResults.map((r) => (
+                <div
+                  key={r.dealId}
+                  className="queue-item"
+                  style={{ opacity: r.callable === false ? 0.55 : 1 }}
+                  onClick={() => pickSearchResult(r)}
+                  title={r.callable === false ? "Owned by another rep — view only" : undefined}
+                >
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {r.title}
+                    <span style={{ display: "block", fontSize: 11, color: "var(--text-3)", fontWeight: 500 }}>
+                      {r.stageName} · {r.status}
+                      {r.callable === false ? " · 🔒" : ""}
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="panel-h">Queues</div>
           <div className="queue-list">
             {queues.map((q) => (
@@ -232,6 +353,8 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                 className={`queue-item ${activeQueue?.id === q.id ? "active" : ""}`}
                 onClick={() => {
                   setLoading(true);
+                  setQueueLabel(null);
+                  setSearchResults(null);
                   loadQueue(q, ownerScope, nameFilter.trim())
                     .catch((e) => setError(String(e)))
                     .finally(() => setLoading(false));
@@ -247,6 +370,38 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
           </div>
 
           <div className="panel-h" style={{ marginTop: 20 }}>Filter</div>
+          <div className="field" style={{ marginBottom: 10 }}>
+            <label>Pipeline</label>
+            <select
+              className="vmsel"
+              value={pipeline}
+              onChange={(e) => {
+                setPipeline(e.target.value);
+                setStage("");
+              }}
+            >
+              {PIPELINES.map((p) => (
+                <option key={p.id} value={p.id}>{p.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field" style={{ marginBottom: 10 }}>
+            <label>Stage</label>
+            <select className="vmsel" value={stage} onChange={(e) => setStage(e.target.value)}>
+              <option value="">Any stage</option>
+              {(STAGES_BY_PIPE[pipeline] ?? []).map((s) => (
+                <option key={s.id} value={s.id}>{s.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field" style={{ marginBottom: 10 }}>
+            <label>Status</label>
+            <select className="vmsel" value={dealStatus} onChange={(e) => setDealStatus(e.target.value)}>
+              <option value="open">Open</option>
+              <option value="won">Won</option>
+              <option value="lost">Lost</option>
+            </select>
+          </div>
           <div className="field" style={{ marginBottom: 10 }}>
             <label>Owner</label>
             <select
@@ -303,8 +458,17 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
               <div className="lead-notes">
                 {notes.length > 0 ? notes.join(" · ") : "No notes on this deal."}
               </div>
+              {lead.callable === false && (
+                <div className="viewsub" style={{ marginBottom: 12 }}>
+                  🔒 Owned by another rep — view only.
+                </div>
+              )}
               <div className="dial-controls">
-                <button className="btn primary big" onClick={dial} disabled={inCall || awaitingDispo}>
+                <button
+                  className="btn primary big"
+                  onClick={dial}
+                  disabled={inCall || awaitingDispo || lead.callable === false}
+                >
                   📞 Dial <kbd>⏎</kbd>
                 </button>
                 <button className="btn big" onClick={dropVm} disabled={!inCall}>

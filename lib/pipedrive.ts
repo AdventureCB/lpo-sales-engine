@@ -109,16 +109,21 @@ export interface DealListItem {
   update_time: string | null;
 }
 
-/** Open deals in a stage (v2 cursor pagination), capped. */
-export async function listOpenDealsByStage(stageId: number, cap = 300): Promise<DealListItem[]> {
+export interface DealFilter {
+  stageId?: number;
+  pipelineId?: number;
+  status?: "open" | "won" | "lost"; // undefined = any (not deleted)
+}
+
+/** Deals matching a stage/pipeline/status filter (v2 cursor pagination), capped. */
+export async function listDealsFiltered(filter: DealFilter, cap = 300): Promise<DealListItem[]> {
   const deals: DealListItem[] = [];
   let cursor: string | null = null;
   while (deals.length < cap) {
-    const params: Record<string, string> = {
-      stage_id: String(stageId),
-      status: "open",
-      limit: "100",
-    };
+    const params: Record<string, string> = { limit: "100" };
+    if (filter.stageId) params.stage_id = String(filter.stageId);
+    if (filter.pipelineId) params.pipeline_id = String(filter.pipelineId);
+    if (filter.status) params.status = filter.status;
     if (cursor) params.cursor = cursor;
     const url = new URL(`${V2}/deals`);
     url.searchParams.set("api_token", env("PIPEDRIVE_API_TOKEN"));
@@ -143,6 +148,35 @@ export async function listOpenDealsByStage(stageId: number, cap = 300): Promise<
     await new Promise((r) => setTimeout(r, 150));
   }
   return deals;
+}
+
+export interface DealSearchHit {
+  id: number;
+  title: string;
+  status: string;
+  stage_id: number | null;
+  owner_id: number | null;
+  person_id: number | null;
+  person_name: string | null;
+}
+
+/** Full-text deal search across all of Pipedrive. */
+export async function searchDeals(term: string, limit = 15): Promise<DealSearchHit[]> {
+  const data = await pd(V2, "/deals/search", {
+    params: { term, limit: String(limit) },
+  });
+  return (data?.items ?? []).map((hit: any) => {
+    const item = hit.item ?? {};
+    return {
+      id: item.id,
+      title: item.title,
+      status: item.status ?? "open",
+      stage_id: item.stage?.id ?? null,
+      owner_id: item.owner?.id ?? null,
+      person_id: item.person?.id ?? null,
+      person_name: item.person?.name ?? null,
+    };
+  });
 }
 
 export interface PersonPhone {
