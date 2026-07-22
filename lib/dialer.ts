@@ -64,7 +64,12 @@ export async function buildQueueLeads(opts: {
   nameContains?: string;
   pipelineId?: number;
   status?: "open" | "won" | "lost";
-}): Promise<{ leads: QueueLead[]; skippedNoPhone: number }> {
+}): Promise<{
+  leads: QueueLead[];
+  skippedNoPhone: number;
+  skippedOwnership: number;
+  truncated: boolean;
+}> {
   const db = supabaseAdmin();
   const { data: reps } = await db
     .from("reps")
@@ -75,15 +80,22 @@ export async function buildQueueLeads(opts: {
   const allowed = buildOwnerCheck(opts.user, opts.ownerScope, repIds);
 
   const status = opts.status ?? "open";
+  const DEAL_CAP = 3000; // per stage/pipeline — well above current volumes
   const deals: DealListItem[] = [];
+  let truncated = false;
   if (opts.stageIds.length > 0) {
     for (const stageId of opts.stageIds) {
-      deals.push(...(await listDealsFiltered({ stageId, status })));
+      const batch = await listDealsFiltered({ stageId, status }, DEAL_CAP);
+      if (batch.length >= DEAL_CAP) truncated = true;
+      deals.push(...batch);
     }
   } else {
-    deals.push(...(await listDealsFiltered({ pipelineId: opts.pipelineId, status }, 500)));
+    const batch = await listDealsFiltered({ pipelineId: opts.pipelineId, status }, DEAL_CAP);
+    if (batch.length >= DEAL_CAP) truncated = true;
+    deals.push(...batch);
   }
   let filtered = deals.filter(allowed);
+  const skippedOwnership = deals.length - filtered.length;
   if (opts.nameContains) {
     const needle = opts.nameContains.toLowerCase();
     filtered = filtered.filter((d) => d.title.toLowerCase().includes(needle));
@@ -127,7 +139,7 @@ export async function buildQueueLeads(opts: {
     return (a.updateTime ?? "").localeCompare(b.updateTime ?? "");
   });
 
-  return { leads, skippedNoPhone };
+  return { leads, skippedNoPhone, skippedOwnership, truncated };
 }
 
 // Warm-lambda cache: queue builds hit several Pipedrive pages, and the

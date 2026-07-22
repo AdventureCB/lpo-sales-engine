@@ -79,6 +79,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [notes, setNotes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [queueMeta, setQueueMeta] = useState<{ skippedNoPhone: number; skippedOwnership: number; truncated: boolean } | null>(null);
   const [ownerScope, setOwnerScope] = useState<OwnerScope>(isAdmin ? "anyone" : "both");
   const [nameFilter, setNameFilter] = useState("");
   const [pipeline, setPipeline] = useState("");
@@ -119,6 +120,11 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     setLeads(d.leads);
+    setQueueMeta({
+      skippedNoPhone: d.skippedNoPhone ?? 0,
+      skippedOwnership: d.skippedOwnership ?? 0,
+      truncated: d.truncated ?? false,
+    });
   }, []);
 
   useEffect(() => {
@@ -306,6 +312,11 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const d = await r.json();
         setLeads(d.leads);
+        setQueueMeta({
+          skippedNoPhone: d.skippedNoPhone ?? 0,
+          skippedOwnership: d.skippedOwnership ?? 0,
+          truncated: d.truncated ?? false,
+        });
         setLeadIdx(0);
         const stageLabel = stage
           ? STAGES_BY_PIPE[pipeline]?.find((s) => s.id === stage)?.label
@@ -362,6 +373,16 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
           </>
         )}{" "}
         · calls place through your Quo line · auto-logged to Pipedrive
+        {queueMeta && (queueMeta.skippedNoPhone > 0 || queueMeta.skippedOwnership > 0) && (
+          <span style={{ color: "var(--text-3)" }}>
+            {" "}· excluded: {queueMeta.skippedNoPhone > 0 ? `${queueMeta.skippedNoPhone} without phone` : ""}
+            {queueMeta.skippedNoPhone > 0 && queueMeta.skippedOwnership > 0 ? ", " : ""}
+            {queueMeta.skippedOwnership > 0 ? `${queueMeta.skippedOwnership} other-owner` : ""}
+          </span>
+        )}
+        {queueMeta?.truncated && (
+          <span style={{ color: "var(--warn)" }}> · ⚠ list capped at 3000 deals</span>
+        )}
       </div>
 
       <div className="dialer-grid">

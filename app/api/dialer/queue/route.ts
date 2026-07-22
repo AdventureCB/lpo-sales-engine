@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const { leads, skippedNoPhone } = await cachedQueueLeads({
+    const { leads, skippedNoPhone, skippedOwnership, truncated } = await cachedQueueLeads({
       user,
       stageIds,
       ownerScope: owner,
@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
       status,
       cacheKey,
     });
-    return NextResponse.json({ leads, skippedNoPhone });
+    return NextResponse.json({ leads, skippedNoPhone, skippedOwnership, truncated });
   } catch (e) {
     console.error("queue build failed", e);
     return NextResponse.json({ error: e instanceof Error ? e.message : "failed" }, { status: 500 });
