@@ -16,20 +16,22 @@ export async function GET(req: NextRequest) {
   const db = supabaseAdmin();
   const { data: queues, error } = await db
     .from("queue_config")
-    .select("id, name, stage_ids, priority, cadence_days, is_primary")
+    .select("id, name, stage_ids, priority, cadence_days, is_primary, pool_mode")
     .order("priority");
   if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
 
   const out = [];
   for (const q of queues ?? []) {
     try {
-      const { leads } = await cachedQueueLeads({
+      const { leads, pool } = await cachedQueueLeads({
         user,
         stageIds: q.stage_ids,
         ownerScope: owner,
+        poolMode: q.pool_mode ?? false,
+        takeLeases: false, // counts must not reserve leads
         cacheKey: q.id,
       });
-      out.push({ ...q, count: leads.length });
+      out.push({ ...q, count: pool ? pool.eligible : leads.length });
     } catch (e) {
       console.error(`queue count failed for ${q.name}`, e);
       out.push({ ...q, count: null });

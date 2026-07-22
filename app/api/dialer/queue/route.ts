@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
   let stageIds: number[];
   let pipelineId: number | undefined;
   let cacheKey: string;
+  let poolMode = false;
   if (stageIdParam || pipelineParam) {
     stageIds = (stageIdParam ?? "").split(",").map(Number).filter(Number.isFinite);
     pipelineId = pipelineParam ? Number(pipelineParam) : undefined;
@@ -34,27 +35,30 @@ export async function GET(req: NextRequest) {
     const db = supabaseAdmin();
     const { data: q } = await db
       .from("queue_config")
-      .select("id, stage_ids")
+      .select("id, stage_ids, pool_mode")
       .eq("id", queueId)
       .maybeSingle();
     if (!q) return NextResponse.json({ error: "queue not found" }, { status: 404 });
     stageIds = q.stage_ids;
+    poolMode = q.pool_mode ?? false;
     cacheKey = q.id;
   } else {
     return NextResponse.json({ error: "queueId or stageId required" }, { status: 400 });
   }
 
   try {
-    const { leads, skippedNoPhone, skippedOwnership, truncated } = await cachedQueueLeads({
+    const { leads, skippedNoPhone, skippedOwnership, truncated, pool } = await cachedQueueLeads({
       user,
       stageIds,
       ownerScope: owner,
       nameContains,
       pipelineId,
       status,
+      poolMode,
+      takeLeases: true,
       cacheKey,
     });
-    return NextResponse.json({ leads, skippedNoPhone, skippedOwnership, truncated });
+    return NextResponse.json({ leads, skippedNoPhone, skippedOwnership, truncated, pool });
   } catch (e) {
     console.error("queue build failed", e);
     return NextResponse.json({ error: e instanceof Error ? e.message : "failed" }, { status: 500 });

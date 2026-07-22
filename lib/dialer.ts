@@ -57,6 +57,10 @@ export interface QueueLead {
   hotReason: string | null;
 }
 
+const POOL_COOLDOWN_DAYS = 2;
+const POOL_SLICE = 100; // leads served (and leased) per rep per build
+const LEASE_MINUTES = 45;
+
 export async function buildQueueLeads(opts: {
   user: SessionUser;
   stageIds: number[]; // empty = use pipelineId (or whole account)
@@ -64,11 +68,14 @@ export async function buildQueueLeads(opts: {
   nameContains?: string;
   pipelineId?: number;
   status?: "open" | "won" | "lost";
+  poolMode?: boolean;
+  takeLeases?: boolean; // false for count-only builds
 }): Promise<{
   leads: QueueLead[];
   skippedNoPhone: number;
   skippedOwnership: number;
   truncated: boolean;
+  pool?: { eligible: number; coolingDown: number; leasedByOthers: number };
 }> {
   const db = supabaseAdmin();
   const { data: reps } = await db
@@ -139,7 +146,85 @@ export async function buildQueueLeads(opts: {
     return (a.updateTime ?? "").localeCompare(b.updateTime ?? "");
   });
 
+  if (opts.poolMode) {
+    const pool = await applyPoolRules(db, leads, opts.user.email, opts.takeLeases !== false);
+    return { leads: pool.leads, skippedNoPhone, skippedOwnership, truncated, pool: pool.stats };
+  }
+
   return { leads, skippedNoPhone, skippedOwnership, truncated };
+}
+
+/**
+ * Shared-pool rules: 2-day cooldown after any attempt, exclusion of deals
+ * currently leased to another rep, fewest-attempts-first ordering (nobody
+ * gets call #2 until every deal has had call #1). The served slice gets
+ * leased so simultaneous dialers never hold the same lead.
+ */
+async function applyPoolRules(
+  db: ReturnType<typeof supabaseAdmin>,
+  leads: QueueLead[],
+  actor: string,
+  takeLeases: boolean
+): Promise<{ leads: QueueLead[]; stats: { eligible: number; coolingDown: number; leasedByOthers: number } }> {
+  const now = Date.now();
+  const dealIds = leads.map((l) => l.dealId);
+  if (dealIds.length === 0) return { leads, stats: { eligible: 0, coolingDown: 0, leasedByOthers: 0 } };
+
+  const cooldownCutoff = new Date(now - POOL_COOLDOWN_DAYS * 24 * 3600_000).toISOString();
+  const [attemptsRes, leasesRes] = await Promise.all([
+    db.from("dial_attempts").select("deal_id, attempted_at").in("deal_id", dealIds),
+    db.from("dial_leases").select("deal_id, actor").gt("expires_at", new Date(now).toISOString()),
+  ]);
+
+  const attemptCount = new Map<number, number>();
+  const lastAttempt = new Map<number, string>();
+  for (const a of attemptsRes.data ?? []) {
+    attemptCount.set(a.deal_id, (attemptCount.get(a.deal_id) ?? 0) + 1);
+    if ((lastAttempt.get(a.deal_id) ?? "") < a.attempted_at) lastAttempt.set(a.deal_id, a.attempted_at);
+  }
+  const leasedByOther = new Set(
+    (leasesRes.data ?? []).filter((l) => l.actor !== actor).map((l) => l.deal_id)
+  );
+
+  let coolingDown = 0;
+  let leasedCount = 0;
+  const eligible = leads.filter((l) => {
+    const last = lastAttempt.get(l.dealId);
+    if (last && last > cooldownCutoff) {
+      coolingDown++;
+      return false;
+    }
+    if (leasedByOther.has(l.dealId)) {
+      leasedCount++;
+      return false;
+    }
+    return true;
+  });
+
+  eligible.sort((a, b) => {
+    const ca = attemptCount.get(a.dealId) ?? 0;
+    const cb = attemptCount.get(b.dealId) ?? 0;
+    if (ca !== cb) return ca - cb; // fewest attempts first — round fairness
+    const la = lastAttempt.get(a.dealId) ?? "";
+    const lb = lastAttempt.get(b.dealId) ?? "";
+    if (la !== lb) return la.localeCompare(lb); // least recently attempted
+    return (a.updateTime ?? "").localeCompare(b.updateTime ?? "");
+  });
+
+  const slice = eligible.slice(0, POOL_SLICE);
+  if (takeLeases && slice.length > 0) {
+    const expires = new Date(now + LEASE_MINUTES * 60_000).toISOString();
+    const { error } = await db.from("dial_leases").upsert(
+      slice.map((l) => ({ deal_id: l.dealId, actor, expires_at: expires })),
+      { onConflict: "deal_id" }
+    );
+    if (error) console.error("lease upsert failed", error);
+  }
+
+  return {
+    leads: slice,
+    stats: { eligible: eligible.length, coolingDown, leasedByOthers: leasedCount },
+  };
 }
 
 // Warm-lambda cache: queue builds hit several Pipedrive pages, and the
@@ -150,6 +235,9 @@ const CACHE_TTL_MS = 120_000;
 export async function cachedQueueLeads(
   opts: Parameters<typeof buildQueueLeads>[0] & { cacheKey: string }
 ): Promise<Awaited<ReturnType<typeof buildQueueLeads>>> {
+  // Real pool builds take leases — they must always be fresh. (Count-only
+  // pool builds may cache like everything else.)
+  if (opts.poolMode && opts.takeLeases !== false) return buildQueueLeads(opts);
   const key = `${opts.cacheKey}:${opts.user.authUserId}:${opts.ownerScope}:${opts.nameContains ?? ""}`;
   const hit = queueCache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.data;

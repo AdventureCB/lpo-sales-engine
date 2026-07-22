@@ -36,6 +36,8 @@ const PIPELINES: { id: string; label: string }[] = [
   { id: "6", label: "Intake" },
   { id: "7", label: "Sales / Nurture" },
   { id: "8", label: "Order" },
+  { id: "9", label: "Base Camp List" },
+  { id: "10", label: "Re-Prospect Pool" },
 ];
 
 const STAGES_BY_PIPE: Record<string, { id: string; label: string }[]> = {
@@ -58,6 +60,18 @@ const STAGES_BY_PIPE: Record<string, { id: string; label: string }[]> = {
     { id: "52", label: "Confirmation Scheduled" },
     { id: "53", label: "Confirmed (Won)" },
   ],
+  "9": [
+    { id: "57", label: "Price" },
+    { id: "58", label: "Shipping" },
+    { id: "59", label: "Straight pop" },
+    { id: "60", label: "Timing" },
+    { id: "61", label: "Other" },
+  ],
+  "10": [
+    { id: "62", label: "Lead Pool" },
+    { id: "64", label: "Email Only" },
+    { id: "63", label: "Archive/Do Not Call" },
+  ],
 };
 
 const DISPOSITIONS: [string, string, string][] = [
@@ -79,7 +93,12 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [notes, setNotes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [queueMeta, setQueueMeta] = useState<{ skippedNoPhone: number; skippedOwnership: number; truncated: boolean } | null>(null);
+  const [queueMeta, setQueueMeta] = useState<{
+    skippedNoPhone: number;
+    skippedOwnership: number;
+    truncated: boolean;
+    pool?: { eligible: number; coolingDown: number; leasedByOthers: number };
+  } | null>(null);
   const [ownerScope, setOwnerScope] = useState<OwnerScope>(isAdmin ? "anyone" : "both");
   const [nameFilter, setNameFilter] = useState("");
   const [pipeline, setPipeline] = useState("");
@@ -124,6 +143,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       skippedNoPhone: d.skippedNoPhone ?? 0,
       skippedOwnership: d.skippedOwnership ?? 0,
       truncated: d.truncated ?? false,
+      pool: d.pool,
     });
   }, []);
 
@@ -165,6 +185,12 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setCallSec(0);
     callSecRef.current = 0;
     setSess((s) => ({ ...s, dials: s.dials + 1 }));
+    // Record the attempt — drives the shared pool's cooldown + fairness.
+    void fetch("/api/dialer/attempt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dealId: lead.dealId }),
+    }).catch(() => {});
     // Quo desktop registers as the tel: handler (same handoff the Pipedrive
     // integration uses). The companion webview blocks tel: navigation, so
     // hand it to the OS natively there.
@@ -316,6 +342,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
           skippedNoPhone: d.skippedNoPhone ?? 0,
           skippedOwnership: d.skippedOwnership ?? 0,
           truncated: d.truncated ?? false,
+          pool: d.pool,
         });
         setLeadIdx(0);
         const stageLabel = stage
@@ -382,6 +409,13 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
         )}
         {queueMeta?.truncated && (
           <span style={{ color: "var(--warn)" }}> · ⚠ list capped at 3000 deals</span>
+        )}
+        {queueMeta?.pool && (
+          <span style={{ color: "var(--text-3)" }}>
+            {" "}· shared pool: {queueMeta.pool.eligible} eligible
+            {queueMeta.pool.coolingDown > 0 && `, ${queueMeta.pool.coolingDown} cooling down (2d)`}
+            {queueMeta.pool.leasedByOthers > 0 && `, ${queueMeta.pool.leasedByOthers} with another rep`}
+          </span>
         )}
       </div>
 
