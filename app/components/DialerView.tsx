@@ -91,6 +91,9 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [leadIdx, setLeadIdx] = useState(0);
   const [notes, setNotes] = useState<string[]>([]);
+  const [activities, setActivities] = useState<
+    { type: string; subject: string | null; done: boolean; due_date: string | null; add_time: string | null }[]
+  >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [queueMeta, setQueueMeta] = useState<{
@@ -164,10 +167,14 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
 
   useEffect(() => {
     setNotes([]);
+    setActivities([]);
     if (lead) {
       fetch(`/api/dialer/lead?dealId=${lead.dealId}`)
         .then((r) => r.json())
-        .then((d) => setNotes(d.notes ?? []));
+        .then((d) => {
+          setNotes(d.notes ?? []);
+          setActivities(d.activities ?? []);
+        });
     }
   }, [lead?.dealId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -575,6 +582,35 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
               <div className="lead-notes">
                 {notes.length > 0 ? notes.join(" · ") : "No notes on this deal."}
               </div>
+              {activities.length > 0 && (
+                <div style={{ marginBottom: 22 }}>
+                  <div className="panel-h">Recent activity</div>
+                  {activities.map((a, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "baseline",
+                        padding: "5px 0",
+                        fontSize: 13,
+                        borderBottom: i < activities.length - 1 ? "1px solid var(--border-soft)" : "none",
+                      }}
+                    >
+                      <span>
+                        {{ call: "📞", meeting: "📅", email: "✉️", task: "📋", deadline: "⏰", lunch: "🍽" }[a.type] ?? "📋"}
+                      </span>
+                      <span style={{ color: "var(--text-1)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {a.subject ?? a.type}
+                      </span>
+                      <span style={{ color: "var(--text-3)", fontSize: 12, whiteSpace: "nowrap" }}>
+                        {a.done ? "✓ " : "due "}
+                        {(a.due_date ?? a.add_time ?? "").slice(0, 10)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {lead.callable === false && (
                 <div className="viewsub" style={{ marginBottom: 12 }}>
                   🔒 Owned by another rep — view only.

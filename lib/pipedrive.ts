@@ -248,6 +248,37 @@ export async function getPersonsByIds(ids: number[]): Promise<Map<number, Person
   return out;
 }
 
+export interface DealActivity {
+  id: number;
+  type: string;
+  subject: string | null;
+  done: boolean;
+  due_date: string | null;
+  add_time: string | null;
+  owner_id: number | null;
+}
+
+/** Most recent activities on a deal (done or upcoming), newest first. */
+export async function getDealActivities(dealId: number, limit = 3): Promise<DealActivity[]> {
+  const data = await pd(V2, "/activities", {
+    params: {
+      deal_id: String(dealId),
+      limit: String(limit),
+      sort_by: "add_time",
+      sort_direction: "desc",
+    },
+  });
+  return (data ?? []).map((a: any) => ({
+    id: a.id,
+    type: a.type ?? "task",
+    subject: a.subject ?? null,
+    done: Boolean(a.done),
+    due_date: a.due_date ?? null,
+    add_time: a.add_time ?? null,
+    owner_id: a.owner_id ?? null,
+  }));
+}
+
 /** Latest notes on a deal (for the lead card). */
 export async function getDealNotes(dealId: number, limit = 2): Promise<string[]> {
   const data = await pd(V1, "/notes", {
