@@ -190,13 +190,25 @@ export async function GET(req: Request) {
 
   // ── 3–4. Score and flag ───────────────────────────────────────────────────
   try {
-    const { data: recent } = await db
-      .from("engagement_events")
-      .select("source, type, occurred_at, pipedrive_deal_id")
-      .not("pipedrive_deal_id", "is", null)
-      .gte("occurred_at", scoringWindowStart);
-    const byDeal = new Map<number, typeof recent>();
-    for (const ev of recent ?? []) {
+    // Supabase caps every select at 1000 rows — the 7-day window holds far
+    // more, so page through explicitly (newest first) or scoring silently
+    // sees only stale events.
+    type Ev = { source: string; type: string; occurred_at: string; pipedrive_deal_id: number };
+    const recent: Ev[] = [];
+    for (let page = 0; page < 20; page++) {
+      const { data, error } = await db
+        .from("engagement_events")
+        .select("source, type, occurred_at, pipedrive_deal_id")
+        .not("pipedrive_deal_id", "is", null)
+        .gte("occurred_at", scoringWindowStart)
+        .order("occurred_at", { ascending: false })
+        .range(page * 1000, page * 1000 + 999);
+      if (error) throw new Error(error.message);
+      recent.push(...((data ?? []) as Ev[]));
+      if (!data || data.length < 1000) break;
+    }
+    const byDeal = new Map<number, Ev[]>();
+    for (const ev of recent) {
       byDeal.set(ev.pipedrive_deal_id, [...(byDeal.get(ev.pipedrive_deal_id) ?? []), ev]);
     }
 
@@ -270,11 +282,16 @@ export async function GET(req: Request) {
     const quietCutoff = new Date(
       now.getTime() - rules.quiet_clear_days * 24 * 3600_000
     ).toISOString();
+    // Bounded per sweep: each clear costs multiple Pipedrive calls, and a
+    // big batch coming due at once (e.g. a flag wave hitting the 7-day mark
+    // together) must not blow the 60s function limit.
     const { data: staleFlags } = await db
       .from("hot_flags")
       .select("id, deal_id")
       .is("cleared_at", null)
-      .lt("flagged_at", quietCutoff);
+      .lt("flagged_at", quietCutoff)
+      .order("flagged_at", { ascending: true })
+      .limit(10);
     const hotLabelId = await getHotLabelId().catch(() => null);
     let cleared = 0;
     for (const flag of staleFlags ?? []) {
