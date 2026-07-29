@@ -44,6 +44,22 @@ export async function getMetrics(): Promise<{ id: string; name: string; integrat
   return out;
 }
 
+let listsCache: { id: string; name: string }[] | null = null;
+
+/** All Klaviyo lists — the sub-event picker for list-membership metrics. */
+export async function getLists(): Promise<{ id: string; name: string }[]> {
+  if (listsCache) return listsCache;
+  const out: { id: string; name: string }[] = [];
+  let url: string | null = `${BASE}/lists/`;
+  while (url) {
+    const page = await kGet(url);
+    for (const l of page.data ?? []) out.push({ id: l.id, name: l.attributes?.name ?? l.id });
+    url = page.links?.next ?? null;
+  }
+  listsCache = out.sort((a, b) => a.name.localeCompare(b.name));
+  return listsCache;
+}
+
 export async function getMetricIds(): Promise<Map<string, string>> {
   if (metricIdCache) return metricIdCache;
   const metrics = await getMetrics();

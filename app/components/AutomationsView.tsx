@@ -87,7 +87,14 @@ function newAction(type: string): Record<string, any> {
 
 function describeTrigger(t: Record<string, any>): string {
   const label = TRIGGERS.find(([k]) => k === t.type)?.[1] ?? t.type;
-  return t.signal_type ? `${label}: ${t.signal_type}` : label;
+  let s = t.signal_type ? `${label}: ${t.metric_name ?? t.signal_type}` : label;
+  for (const f of t.filters ?? []) s += ` · ${f.label ?? `${f.field} = ${f.value}`}`;
+  return s;
+}
+
+/** Metrics whose events are about list membership need a "which list?" sub-pick. */
+function isListMetric(name: string | undefined): boolean {
+  return /\blist\b/i.test(name ?? "");
 }
 
 export function AutomationsView() {
@@ -101,6 +108,9 @@ export function AutomationsView() {
   const [metricId, setMetricId] = useState("");
   const [sample, setSample] = useState<Record<string, unknown> | null>(null);
   const [sampleLoading, setSampleLoading] = useState(false);
+  const [lists, setLists] = useState<{ id: string; name: string }[] | null>(null);
+  const [listId, setListId] = useState("");
+  const [filters, setFilters] = useState<{ field: string; value: string }[]>([]);
   const [actions, setActions] = useState<Record<string, any>[]>([newAction("create_deal")]);
   const [addActionType, setAddActionType] = useState("send_sms");
 
@@ -164,8 +174,23 @@ export function AutomationsView() {
     }
   }, [showBuilder, triggerType, metrics]);
 
+  const selectedMetric = metrics?.find((x) => x.id === metricId);
+
+  // Some events need a sub-pick (e.g. Added to List → which list) — load the
+  // live list catalog the first time a list-membership metric is chosen.
+  useEffect(() => {
+    if (metricId && isListMetric(selectedMetric?.name) && !lists) {
+      fetch("/api/crm/klaviyo-metrics?lists=1")
+        .then((r) => r.json())
+        .then((d) => setLists(d.lists ?? []))
+        .catch(() => setLists([]));
+    }
+  }, [metricId, selectedMetric, lists]);
+
   // Fetch a sample event's fields whenever a metric is picked.
   useEffect(() => {
+    setListId("");
+    setFilters([]);
     if (!metricId) {
       setSample(null);
       return;
@@ -203,6 +228,25 @@ export function AutomationsView() {
       }
       trigger.signal_type = m.slug;
       trigger.metric_name = m.name;
+
+      const triggerFilters: Record<string, unknown>[] = [];
+      if (isListMetric(m.name)) {
+        const list = lists?.find((l) => l.id === listId);
+        if (!list) {
+          setBuilderMsg("This event needs a list — pick which list it applies to");
+          return;
+        }
+        // Match by id or name across the field names Klaviyo uses, so the
+        // filter holds whichever shape the event's properties arrive in.
+        const keys = Object.keys(sample ?? {});
+        const field =
+          keys.find((k) => /^\$?list([ _-]?(id|name))?$/i.test(k)) ?? "List";
+        triggerFilters.push({ field, values: [list.id, list.name], label: `List: ${list.name}`, list_id: list.id });
+      }
+      for (const f of filters) {
+        if (f.field.trim() && f.value.trim()) triggerFilters.push({ field: f.field.trim(), value: f.value.trim() });
+      }
+      if (triggerFilters.length > 0) trigger.filters = triggerFilters;
     }
     const r = await fetch("/api/crm/automations", {
       method: "POST",
@@ -287,6 +331,53 @@ export function AutomationsView() {
                     </button>
                   ))}
               </div>
+            </div>
+          )}
+          {triggerType === "signal_received" && metricId && isListMetric(selectedMetric?.name) && (
+            <div className="field" style={{ marginBottom: 10 }}>
+              <label>Which list? (required for this event)</label>
+              <select className="vmsel" value={listId} onChange={(e) => setListId(e.target.value)}>
+                <option value="">{lists ? "Choose a list…" : "Loading lists…"}</option>
+                {(lists ?? []).map((l) => (
+                  <option key={l.id} value={l.id}>{l.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {triggerType === "signal_received" && metricId && (
+            <div style={{ marginBottom: 10 }}>
+              {filters.map((f, i) => (
+                <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                  <select
+                    className="vmsel"
+                    style={{ flex: 1 }}
+                    value={f.field}
+                    onChange={(e) => setFilters((prev) => prev.map((x, idx) => (idx === i ? { ...x, field: e.target.value } : x)))}
+                  >
+                    <option value="">Choose a field…</option>
+                    {Object.keys(sample ?? {}).map((k) => (
+                      <option key={k} value={k}>{k}</option>
+                    ))}
+                  </select>
+                  <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>equals</span>
+                  <input
+                    style={{ flex: 1 }}
+                    value={f.value}
+                    placeholder={String((sample as any)?.[f.field] ?? "value")}
+                    onChange={(e) => setFilters((prev) => prev.map((x, idx) => (idx === i ? { ...x, value: e.target.value } : x)))}
+                  />
+                  <button className="btn ghost" style={{ padding: "2px 8px", fontSize: 11 }} onClick={() => setFilters((prev) => prev.filter((_, idx) => idx !== i))}>✕</button>
+                </div>
+              ))}
+              <button
+                className="btn ghost"
+                style={{ padding: "4px 10px", fontSize: 12 }}
+                onClick={() => setFilters((prev) => [...prev, { field: "", value: "" }])}
+                disabled={!sample || Object.keys(sample).length === 0}
+                title={!sample || Object.keys(sample).length === 0 ? "Needs a recent event to know the available fields" : ""}
+              >
+                ＋ Only run when a field matches…
+              </button>
             </div>
           )}
           <div className="panel-h" style={{ marginTop: 6 }}>Actions (run in order)</div>

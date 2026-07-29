@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
-import { getMetrics, getLatestEventProps, metricSlug } from "@/lib/klaviyo";
+import { getMetrics, getLatestEventProps, getLists, metricSlug } from "@/lib/klaviyo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,8 +15,12 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
 
-  const sampleId = new URL(req.url).searchParams.get("sample");
+  const params = new URL(req.url).searchParams;
+  const sampleId = params.get("sample");
   try {
+    if (params.get("lists")) {
+      return NextResponse.json({ lists: await getLists() });
+    }
     if (sampleId) {
       const props = await getLatestEventProps(sampleId);
       return NextResponse.json({ sample: props ?? {} });

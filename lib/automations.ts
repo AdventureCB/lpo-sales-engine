@@ -48,6 +48,18 @@ export function triggerMatches(auto: Automation, event: CrmEvent): boolean {
   if (auto.trigger.signal_type && event.payload.signal_type !== auto.trigger.signal_type) return false;
   if (auto.trigger.to_stage_id && event.payload.to_stage_id !== auto.trigger.to_stage_id) return false;
   if (auto.trigger.pipeline_id && event.payload.pipeline_id !== auto.trigger.pipeline_id) return false;
+  // Sub-event filters (e.g. "Added to List" → a specific list): each one must
+  // match a field of the event's meta, case-insensitively. `values` (array)
+  // matches any of the listed values — the list picker stores both id and name
+  // so the filter holds regardless of which one the event carries.
+  for (const f of auto.trigger.filters ?? []) {
+    const meta = event.payload.meta ?? {};
+    const actual = String(meta[f.field] ?? getPath(event.payload, f.field) ?? "").trim().toLowerCase();
+    const wanted: string[] = (Array.isArray(f.values) ? f.values : [f.value]).map((v: any) =>
+      String(v ?? "").trim().toLowerCase()
+    );
+    if (!wanted.some((w) => w !== "" && w === actual)) return false;
+  }
   return true;
 }
 
