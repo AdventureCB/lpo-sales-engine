@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { isAuthorizedCron } from "@/lib/cron";
 import { supabaseAdmin } from "@/lib/supabase";
 import { envOptional } from "@/lib/env";
-import { getMetricIds, getEventsForMetric } from "@/lib/klaviyo";
+import { getMetricIds, getEventsForMetric, metricSlug } from "@/lib/klaviyo";
 import {
   findPersonIdByEmail,
   getOpenDealsForPerson,
@@ -227,12 +227,34 @@ export async function GET(req: Request) {
     try {
       const since = new Date(now.getTime() - ingestHours * 3600_000).toISOString();
       const metricIds = await getMetricIds();
+
+      // Metric list is dynamic: the built-ins plus any Klaviyo metric an
+      // enabled automation triggers on (Typeform / Shopify / Gorgias events
+      // all arrive through Klaviyo). Trigger metrics keep full properties
+      // so templates can port any field.
+      const { data: enabledAutos } = await db
+        .from("crm_automations")
+        .select("trigger")
+        .eq("enabled", true);
+      const triggerSlugs = new Set<string>();
+      const metricList: Array<[string, string, string]> = [...KLAVIYO_METRICS];
+      for (const a of enabledAutos ?? []) {
+        const t = a.trigger as { type?: string; signal_type?: string; metric_name?: string };
+        if (t.type !== "signal_received") continue;
+        if (t.signal_type) triggerSlugs.add(t.signal_type);
+        if (t.metric_name && !metricList.some(([name]) => name === t.metric_name)) {
+          metricList.push([t.metric_name, "klaviyo", metricSlug(t.metric_name)]);
+        }
+      }
+
       let ingested = 0;
-      for (const [metricName, source, type] of KLAVIYO_METRICS) {
+      for (const [metricName, source, type] of metricList) {
         if (remaining() < 8_000) break;
         const metricId = metricIds.get(metricName);
         if (!metricId) continue;
-        const events = await getEventsForMetric(metricId, since);
+        const events = await getEventsForMetric(metricId, since, {
+          fullProps: triggerSlugs.has(type),
+        });
         if (events.length === 0) continue;
         const rows = events.map((e) => ({
           source,
@@ -250,9 +272,10 @@ export async function GET(req: Request) {
           .select("id, type, person_email, meta");
         if (error) throw new Error(error.message);
         ingested += rows.length;
-        // High-intent signals feed the automation engine (only newly
-        // inserted rows come back from an ignore-duplicates upsert).
-        if (type === "builder_save" || type === "checkout_started") {
+        // Any signal type an enabled automation triggers on feeds the
+        // engine (only newly inserted rows come back from an
+        // ignore-duplicates upsert — no double-firing).
+        if (triggerSlugs.has(type)) {
           const { enqueueEvent } = await import("@/lib/automations");
           for (const ev of inserted ?? []) {
             await enqueueEvent(db, "signal_received", {

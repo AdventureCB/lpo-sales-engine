@@ -20,12 +20,19 @@ interface Run {
 }
 
 const TRIGGERS: [string, string][] = [
-  ["signal_received", "Signal received (builder save / checkout)"],
+  ["signal_received", "Klaviyo event (Shopify / Typeform / any metric)"],
   ["deal_created", "Deal created"],
   ["deal_stage_changed", "Deal stage changed"],
   ["inbound_sms", "Inbound text received"],
   ["hot_flag_created", "Deal flagged Hot"],
 ];
+
+interface KMetric {
+  id: string;
+  name: string;
+  integration: string | null;
+  slug: string;
+}
 
 const ACTION_TYPES: [string, string][] = [
   ["send_sms", "Send SMS (via Quo)"],
@@ -48,7 +55,10 @@ export function AutomationsView() {
   const [showBuilder, setShowBuilder] = useState(false);
   const [name, setName] = useState("");
   const [triggerType, setTriggerType] = useState("signal_received");
-  const [signalType, setSignalType] = useState("builder_save");
+  const [metrics, setMetrics] = useState<KMetric[] | null>(null);
+  const [metricId, setMetricId] = useState("");
+  const [sample, setSample] = useState<Record<string, unknown> | null>(null);
+  const [sampleLoading, setSampleLoading] = useState(false);
   const [actionsJson, setActionsJson] = useState(
     '[\n  {\n    "type": "create_deal",\n    "title_template": "Saved Build - {{contact.name}}",\n    "pipedrive_stage_id": 44,\n    "enrich_phone_from_klaviyo": true,\n    "owner_strategy": "round_robin",\n    "owner_pool": [24081760, 24391245]\n  }\n]'
   );
@@ -89,6 +99,36 @@ export function AutomationsView() {
     await load();
   };
 
+  // Load the live metric catalog when the builder opens on a signal trigger.
+  useEffect(() => {
+    if (showBuilder && triggerType === "signal_received" && !metrics) {
+      fetch("/api/crm/klaviyo-metrics")
+        .then((r) => r.json())
+        .then((d) => setMetrics(d.metrics ?? []))
+        .catch(() => setMetrics([]));
+    }
+  }, [showBuilder, triggerType, metrics]);
+
+  // Fetch a sample event's fields whenever a metric is picked.
+  useEffect(() => {
+    if (!metricId) {
+      setSample(null);
+      return;
+    }
+    setSampleLoading(true);
+    fetch(`/api/crm/klaviyo-metrics?sample=${metricId}`)
+      .then((r) => r.json())
+      .then((d) => setSample(d.sample ?? {}))
+      .catch(() => setSample({}))
+      .finally(() => setSampleLoading(false));
+  }, [metricId]);
+
+  const insertToken = (key: string) => {
+    setActionsJson((prev) => prev.replace(/\}\s*\]\s*$/, `}\n]`)); // normalize tail
+    void navigator.clipboard?.writeText(`{{event.meta.${key}}}`);
+    setBuilderMsg(`Copied {{event.meta.${key}}} — paste it into a template field`);
+  };
+
   const create = async () => {
     let actions: unknown;
     try {
@@ -98,7 +138,15 @@ export function AutomationsView() {
       return;
     }
     const trigger: Record<string, unknown> = { type: triggerType };
-    if (triggerType === "signal_received") trigger.signal_type = signalType;
+    if (triggerType === "signal_received") {
+      const m = metrics?.find((x) => x.id === metricId);
+      if (!m) {
+        setBuilderMsg("Pick a metric for the trigger");
+        return;
+      }
+      trigger.signal_type = m.slug;
+      trigger.metric_name = m.name;
+    }
     const r = await fetch("/api/crm/automations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -147,15 +195,43 @@ export function AutomationsView() {
               </select>
             </div>
             {triggerType === "signal_received" && (
-              <div className="field" style={{ margin: 0, flex: 1 }}>
-                <label>Signal</label>
-                <select className="vmsel" value={signalType} onChange={(e) => setSignalType(e.target.value)}>
-                  <option value="builder_save">3D builder save</option>
-                  <option value="checkout_started">Checkout started</option>
+              <div className="field" style={{ margin: 0, flex: 2 }}>
+                <label>Event / metric (live from Klaviyo)</label>
+                <select className="vmsel" value={metricId} onChange={(e) => setMetricId(e.target.value)}>
+                  <option value="">{metrics ? "Choose an event…" : "Loading catalog…"}</option>
+                  {(metrics ?? []).map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.integration ?? "Klaviyo"} · {m.name}
+                    </option>
+                  ))}
                 </select>
               </div>
             )}
           </div>
+          {triggerType === "signal_received" && metricId && (
+            <div style={{ background: "var(--surface-2)", borderRadius: 9, padding: 10, marginBottom: 10 }}>
+              <div style={{ fontSize: 11, color: "var(--text-3)", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 6 }}>
+                Available data fields {sampleLoading ? "(loading sample…)" : "(from the latest real event — click to copy a template token)"}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {sample && Object.keys(sample).length === 0 && !sampleLoading && (
+                  <span style={{ fontSize: 12, color: "var(--text-3)" }}>No recent events for this metric.</span>
+                )}
+                {sample &&
+                  Object.entries(sample).slice(0, 20).map(([k, v]) => (
+                    <button
+                      key={k}
+                      className="btn ghost"
+                      style={{ padding: "3px 8px", fontSize: 11.5 }}
+                      title={`Example: ${String(typeof v === "object" ? JSON.stringify(v) : v).slice(0, 80)}`}
+                      onClick={() => insertToken(k)}
+                    >
+                      {k}
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
           <div className="field" style={{ marginBottom: 10 }}>
             <label>Actions (JSON — templates: {"{{contact.first_name}}, {{deal.title}}, {{event.*}}"})</label>
             <textarea

@@ -23,18 +23,51 @@ async function kGet(url: string): Promise<any> {
 }
 
 let metricIdCache: Map<string, string> | null = null;
+let metricsCache: { id: string; name: string; integration: string | null }[] | null = null;
 
-export async function getMetricIds(): Promise<Map<string, string>> {
-  if (metricIdCache) return metricIdCache;
-  const ids = new Map<string, string>();
+export async function getMetrics(): Promise<{ id: string; name: string; integration: string | null }[]> {
+  if (metricsCache) return metricsCache;
+  const out: { id: string; name: string; integration: string | null }[] = [];
   let url: string | null = `${BASE}/metrics/`;
   while (url) {
     const page = await kGet(url);
-    for (const m of page.data ?? []) ids.set(m.attributes?.name, m.id);
+    for (const m of page.data ?? []) {
+      out.push({
+        id: m.id,
+        name: m.attributes?.name,
+        integration: m.attributes?.integration?.name ?? null,
+      });
+    }
     url = page.links?.next ?? null;
   }
-  metricIdCache = ids;
-  return ids;
+  metricsCache = out;
+  return out;
+}
+
+export async function getMetricIds(): Promise<Map<string, string>> {
+  if (metricIdCache) return metricIdCache;
+  const metrics = await getMetrics();
+  metricIdCache = new Map(metrics.map((m) => [m.name, m.id]));
+  return metricIdCache;
+}
+
+/** Latest event's full properties for a metric — powers the field picker. */
+export async function getLatestEventProps(metricId: string): Promise<Record<string, unknown> | null> {
+  const filter = encodeURIComponent(`equals(metric_id,"${metricId}")`);
+  const page = await kGet(`${BASE}/events/?filter=${filter}&sort=-datetime`);
+  const props = page.data?.[0]?.attributes?.event_properties;
+  return props && typeof props === "object" ? props : null;
+}
+
+/** Stable slug for a metric name; legacy names keep their original slugs. */
+const LEGACY_SLUGS: Record<string, string> = {
+  "Opened Email": "email_open",
+  "Clicked Email": "email_click",
+  "3D Builder - Save Build": "builder_save",
+  "Checkout Started": "checkout_started",
+};
+export function metricSlug(name: string): string {
+  return LEGACY_SLUGS[name] ?? name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
 /** Phone from a Klaviyo profile, looked up by email. */
@@ -122,7 +155,11 @@ export interface KlaviyoEvent {
 }
 
 /** Events for one metric since a timestamp, profile emails resolved. */
-export async function getEventsForMetric(metricId: string, sinceIso: string): Promise<KlaviyoEvent[]> {
+export async function getEventsForMetric(
+  metricId: string,
+  sinceIso: string,
+  opts: { fullProps?: boolean } = {}
+): Promise<KlaviyoEvent[]> {
   const events: KlaviyoEvent[] = [];
   const filter = encodeURIComponent(
     `and(equals(metric_id,"${metricId}"),greater-or-equal(datetime,${sinceIso}))`
@@ -144,6 +181,18 @@ export async function getEventsForMetric(metricId: string, sinceIso: string): Pr
       // campaign, click URL, order value — not the whole property bag.
       const props = ev.attributes?.event_properties ?? {};
       const detail: Record<string, unknown> = {};
+      if (opts.fullProps) {
+        // Automation-trigger metrics keep every scalar property (capped) so
+        // templates can port any field over.
+        let budget = 2000;
+        for (const [k, v] of Object.entries(props)) {
+          if (budget <= 0) break;
+          const val = typeof v === "object" ? JSON.stringify(v).slice(0, 300) : v;
+          if (val === undefined || val === null || val === "") continue;
+          detail[k] = val;
+          budget -= String(val).length + k.length;
+        }
+      }
       for (const key of ["Subject", "Campaign Name", "URL", "$value", "Name", "Items"]) {
         const v = props[key];
         if (v !== undefined && v !== null && v !== "") {
