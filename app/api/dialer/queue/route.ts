@@ -58,6 +58,22 @@ export async function GET(req: NextRequest) {
       takeLeases: true,
       cacheKey,
     });
+    // Persist the count from this real build — the queue list serves these
+    // instead of spending Pipedrive calls to recount.
+    if (queueId) {
+      await supabaseAdmin()
+        .from("queue_counts")
+        .upsert(
+          {
+            queue_id: queueId,
+            actor: user.email,
+            owner_scope: owner,
+            count: pool ? pool.eligible : leads.length,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "queue_id,actor,owner_scope" }
+        );
+    }
     return NextResponse.json({ leads, skippedNoPhone, skippedOwnership, truncated, pool });
   } catch (e) {
     console.error("queue build failed", e);

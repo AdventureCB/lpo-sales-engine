@@ -69,26 +69,14 @@ export async function GET(req: Request) {
   // ── 1. Score and flag ─────────────────────────────────────────────────────
   if (hasPipedrive) {
     try {
-      // Supabase caps every select at 1000 rows — the 7-day window holds far
-      // more, so page through explicitly (newest first).
-      type Ev = { source: string; type: string; occurred_at: string; pipedrive_deal_id: number };
-      const recent: Ev[] = [];
-      for (let page = 0; page < 20; page++) {
-        const { data, error } = await db
-          .from("engagement_events")
-          .select("source, type, occurred_at, pipedrive_deal_id")
-          .not("pipedrive_deal_id", "is", null)
-          .gte("occurred_at", scoringWindowStart)
-          .order("occurred_at", { ascending: false })
-          .range(page * 1000, page * 1000 + 999);
-        if (error) throw new Error(error.message);
-        recent.push(...((data ?? []) as Ev[]));
-        if (!data || data.length < 1000) break;
-      }
-      const byDeal = new Map<number, Ev[]>();
-      for (const ev of recent) {
-        byDeal.set(ev.pipedrive_deal_id, [...(byDeal.get(ev.pipedrive_deal_id) ?? []), ev]);
-      }
+      // Aggregates computed in Postgres — one round-trip, regardless of how
+      // many events the window holds.
+      const { data: candidates, error: rpcError } = await db.rpc("score_hot_candidates", {
+        window_start: scoringWindowStart,
+        click_window_hours: rules.click_window_hours,
+        distinct_window_hours: rules.distinct_signal_window_hours,
+      });
+      if (rpcError) throw new Error(rpcError.message);
 
       // One query for every deal currently blocked from re-flagging
       // (active flag or cooldown) — not a round-trip per candidate.
@@ -106,11 +94,26 @@ export async function GET(req: Request) {
       const hotLabelId = await getHotLabelId().catch(() => null);
       let flagged = 0;
       let deferred = 0;
-      for (const [dealId, events] of byDeal) {
+      for (const c of (candidates ?? []) as Array<{
+        deal_id: number;
+        opens: number;
+        clicks: number;
+        distinct_types: number;
+      }>) {
+        const dealId = c.deal_id;
         if (blocked.has(dealId)) continue;
-        const verdict = evaluateDeal(events, rules, now);
-        if (!verdict.hot) continue;
-        if (flagged >= MAX_NEW_FLAGS_PER_SWEEP || remaining() < 20_000) {
+        const reasons: string[] = [];
+        if (c.opens >= rules.opens_in_window)
+          reasons.push(`${c.opens} opens in ${rules.opens_window_days}d`);
+        if (c.clicks > 0) reasons.push(`click in last ${rules.click_window_hours}h`);
+        if (c.distinct_types >= rules.distinct_signal_types)
+          reasons.push(`${c.distinct_types} signal types in ${rules.distinct_signal_window_hours}h`);
+        if (reasons.length === 0) continue;
+        const verdict = {
+          reason: reasons.join(" · "),
+          signals: { opens: c.opens, clicks: c.clicks, distinctTypes: c.distinct_types },
+        };
+        if (flagged >= MAX_NEW_FLAGS_PER_SWEEP || remaining() < 12_000) {
           deferred++;
           continue;
         }
@@ -156,7 +159,11 @@ export async function GET(req: Request) {
         }
         flagged++;
       }
-      summary.scoring = { dealsScored: byDeal.size, flagged, ...(deferred ? { deferredToNextSweep: deferred } : {}) };
+      summary.scoring = {
+        dealsScored: (candidates ?? []).length,
+        flagged,
+        ...(deferred ? { deferredToNextSweep: deferred } : {}),
+      };
     } catch (e) {
       console.error("scoring failed", e);
       summary.scoring = { error: e instanceof Error ? e.message : String(e) };
@@ -274,10 +281,15 @@ export async function GET(req: Request) {
     }
   }
 
-  // ── 5. Match unmatched emails → deals (whatever budget remains) ──────────
+  // ── 5. Match unmatched emails → deals ─────────────────────────────────────
+  // Strict Pipedrive-call diet: this stage burned ~23k calls/day when it
+  // retried every unmatched marketing email daily. Hard cap per sweep, and
+  // failed matches retry after 7 days, not 24h (fresh signals for the same
+  // email arrive as new rows with NULL attempted_at and get tried promptly).
+  const MAX_MATCH_EMAILS = 25;
   if (hasPipedrive && remaining() > 12_000) {
     try {
-      const retryBefore = new Date(now.getTime() - 24 * 3600_000).toISOString();
+      const retryBefore = new Date(now.getTime() - 7 * 24 * 3600_000).toISOString();
       const { data: unmatched } = await db
         .from("engagement_events")
         .select("id, person_email, match_attempted_at")
@@ -295,7 +307,7 @@ export async function GET(req: Request) {
       let processedEmails = 0;
       let rateLimited = false;
       for (const [email, ids] of byEmail) {
-        if (remaining() < 8_000) break;
+        if (processedEmails >= MAX_MATCH_EMAILS || remaining() < 8_000) break;
         try {
           const personId = await findPersonIdByEmail(email);
           const deals = personId ? await getOpenDealsForPerson(personId) : [];
