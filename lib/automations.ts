@@ -194,10 +194,13 @@ async function actCreateDeal(db: SupabaseClient, action: Record<string, any>, ct
   if (!email) throw new Error("no contact email");
   const { createDealFromEmail, nextRoundRobinOwner } = await import("./deal-create");
 
-  // Owner: fixed id, or fair rotation over a pool (add reps by adding ids).
+  // Owner: fixed id, or fair rotation over a pool. Each automation rotates
+  // independently (per-lead-type fairness); set action.rotation_key to make
+  // specific automations share one sequence instead.
   let ownerPipedriveId: number | null = action.owner_pipedrive_id ?? null;
   if (action.owner_strategy === "round_robin" && Array.isArray(action.owner_pool) && action.owner_pool.length > 0) {
-    ownerPipedriveId = await nextRoundRobinOwner(db, action.owner_pool.map(Number));
+    const rotationKey = action.rotation_key ?? `auto:${ctx._automationId ?? "global"}`;
+    ownerPipedriveId = await nextRoundRobinOwner(db, action.owner_pool.map(Number), rotationKey);
   }
 
   const result = await createDealFromEmail(db, {

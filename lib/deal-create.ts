@@ -6,13 +6,19 @@ import { getProfilePhoneByEmail } from "./klaviyo";
 import { upsertDeal, upsertContact } from "./crm-sync";
 
 /**
- * Round-robin owner rotation. The cursor persists per POOL (sorted ids), so
- * every automation sharing a pool participates in one fair sequence — and
- * adding a rep is just adding their id to the pool.
+ * Round-robin owner rotation. Each rotation KEY keeps its own cursor —
+ * by default every automation rotates independently, so each lead type
+ * (saved builds, abandoned carts, survey responses, …) is individually
+ * evenly dispersed. Pool changes are safe: the cursor wraps modulo the
+ * current pool size, and adding a rep is just adding their id.
  */
-export async function nextRoundRobinOwner(db: SupabaseClient, pool: number[]): Promise<number> {
+export async function nextRoundRobinOwner(
+  db: SupabaseClient,
+  pool: number[],
+  rotationKey: string
+): Promise<number> {
   if (pool.length === 0) throw new Error("empty owner pool");
-  const key = `rr:${[...pool].sort((a, b) => a - b).join(",")}`;
+  const key = `rr:${rotationKey}`;
   const { data } = await db.from("crm_sync_state").select("value").eq("key", key).maybeSingle();
   const lastIndex = typeof (data?.value as any)?.last_index === "number" ? (data!.value as any).last_index : -1;
   const nextIndex = (lastIndex + 1) % pool.length;

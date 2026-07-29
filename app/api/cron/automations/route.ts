@@ -47,6 +47,7 @@ export async function GET(req: Request) {
     if (matching.length > 0) {
       const ctx = await buildContext(db, event);
       for (const auto of matching) {
+        ctx._automationId = auto.id; // per-automation state (e.g. round-robin cursor)
         if (!conditionsPass(auto.conditions, ctx)) {
           await db.from("crm_automation_runs").insert({
             automation_id: auto.id,
