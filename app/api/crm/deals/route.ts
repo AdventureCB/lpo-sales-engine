@@ -1,0 +1,51 @@
+import { NextRequest, NextResponse } from "next/server";
+import { supabaseAdmin } from "@/lib/supabase";
+import { getSessionUser } from "@/lib/auth";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const SORTS: Record<string, string> = {
+  updated: "updated_at",
+  created: "pd_add_time",
+  title: "title",
+  value: "value_cents",
+  activity: "last_activity_at",
+  stage_changed: "stage_changed_at",
+};
+
+/** Admin deal browser over the mirrored CRM. */
+export async function GET(req: NextRequest) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
+
+  const p = new URL(req.url).searchParams;
+  const page = Math.max(0, Number(p.get("page")) || 0);
+  const sort = SORTS[p.get("sort") ?? "updated"] ?? "updated_at";
+  const asc = p.get("dir") === "asc";
+  const PAGE_SIZE = 50;
+
+  const db = supabaseAdmin();
+  let q = db
+    .from("crm_deals")
+    .select(
+      "id, title, status, value_cents, owner_pipedrive_id, stage_changed_at, last_activity_at, updated_at, pd_add_time, pipedrive_deal_id, crm_stages ( name, pipeline_id, crm_pipelines ( name ) ), crm_contacts ( name, phones )",
+      { count: "exact" }
+    );
+
+  if (p.get("status")) q = q.eq("status", p.get("status"));
+  if (p.get("stageId")) q = q.eq("stage_id", p.get("stageId"));
+  if (p.get("owner")) q = q.eq("owner_pipedrive_id", Number(p.get("owner")));
+  const search = (p.get("q") ?? "").trim();
+  if (search) q = q.ilike("title", `%${search.replace(/[%_]/g, "")}%`);
+
+  const { data, count, error } = await q
+    .order(sort, { ascending: asc, nullsFirst: false })
+    .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
+  if (error) {
+    console.error("crm deals query failed", error);
+    return NextResponse.json({ error: "db error" }, { status: 500 });
+  }
+  return NextResponse.json({ deals: data ?? [], total: count ?? 0, page, pageSize: PAGE_SIZE });
+}

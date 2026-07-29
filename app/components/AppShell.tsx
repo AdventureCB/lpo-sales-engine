@@ -7,6 +7,7 @@ const TABS = [
   { label: "🔥 Hot List", href: "/hot-list", live: true },
   { label: "Scoreboard", href: "/scoreboard", live: true },
   { label: "Lookup", href: "/lookup", live: true },
+  { label: "CRM", href: "/crm", live: true, adminOnly: true },
   { label: "Commissions", href: "/commissions", live: false },
 ];
 
@@ -29,7 +30,7 @@ export function AppShell({
           </div>
         </div>
         <nav className="tabs">
-          {TABS.map((t) =>
+          {TABS.filter((t) => !("adminOnly" in t && t.adminOnly) || user?.role === "admin").map((t) =>
             t.live ? (
               <Link key={t.label} href={t.href} className={active === t.href ? "active" : ""}>
                 {t.label}
