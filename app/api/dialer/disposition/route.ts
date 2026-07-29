@@ -72,6 +72,8 @@ export async function POST(req: NextRequest) {
     disposition?: string;
     dialStartedAt?: string;
     final?: boolean;
+    sprintId?: string;
+    crmDealId?: string;
   };
   try {
     body = await req.json();
@@ -84,6 +86,13 @@ export async function POST(req: NextRequest) {
   }
 
   const db = supabaseAdmin();
+  if (body.sprintId && body.crmDealId) {
+    await db
+      .from("crm_sprint_items")
+      .update({ disposition })
+      .eq("sprint_id", body.sprintId)
+      .eq("deal_id", body.crmDealId);
+  }
   const windowStart = new Date(Date.parse(dialStartedAt) - 60_000).toISOString();
   const { data: call } = await db
     .from("call_events")

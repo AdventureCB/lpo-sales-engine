@@ -69,6 +69,36 @@ export function CrmView() {
   const [dir, setDir] = useState<"asc" | "desc">("desc");
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [sprintName, setSprintName] = useState("");
+  const [sprintOwner, setSprintOwner] = useState("parker@lonepeakoverland.com");
+  const [sprintMsg, setSprintMsg] = useState<string | null>(null);
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const createSprint = async () => {
+    if (!sprintName.trim() || selected.size === 0) return;
+    const r = await fetch("/api/crm/sprints", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: sprintName.trim(), owner: sprintOwner, dealIds: [...selected] }),
+    }).catch(() => null);
+    if (r?.ok) {
+      setSprintMsg(`✓ Sprint "${sprintName.trim()}" created for ${sprintOwner.split("@")[0]} (${selected.size} deals) — it's in their dialer now`);
+      setSelected(new Set());
+      setSprintName("");
+    } else {
+      setSprintMsg("Sprint creation failed");
+    }
+    setTimeout(() => setSprintMsg(null), 6000);
+  };
 
   const loadMeta = useCallback(
     () =>
@@ -204,10 +234,49 @@ export function CrmView() {
         />
       </div>
 
+      {selected.size > 0 && (
+        <div className="card" style={{ padding: "10px 14px", marginBottom: 14, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <b style={{ fontSize: 13.5 }}>⚡ {selected.size} selected</b>
+          <input
+            className="vmsel"
+            style={{ width: 200 }}
+            placeholder="Sprint name…"
+            value={sprintName}
+            onChange={(e) => setSprintName(e.target.value)}
+          />
+          <select className="vmsel" style={{ width: "auto" }} value={sprintOwner} onChange={(e) => setSprintOwner(e.target.value)}>
+            <option value="parker@lonepeakoverland.com">Parker</option>
+            <option value="jackson@lonepeakoverland.com">Jackson</option>
+            <option value="cainen@lonepeakoverland.com">Cainen</option>
+            <option value="kyle@lonepeakoverland.com">Kyle</option>
+          </select>
+          <button className="btn primary" style={{ padding: "8px 14px", fontSize: 13 }} onClick={createSprint} disabled={!sprintName.trim()}>
+            Create sprint
+          </button>
+          <button className="btn ghost" style={{ padding: "8px 12px", fontSize: 13 }} onClick={() => setSelected(new Set())}>
+            Clear
+          </button>
+        </div>
+      )}
+      {sprintMsg && <div className="viewsub" style={{ color: "var(--good)" }}>{sprintMsg}</div>}
+
       <div className="card" style={{ padding: "6px 12px" }}>
         <table className="data">
           <thead>
             <tr>
+              <th style={{ width: 30 }}>
+                <input
+                  type="checkbox"
+                  checked={deals.length > 0 && deals.every((d) => selected.has(d.id))}
+                  onChange={(e) =>
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      deals.forEach((d) => (e.target.checked ? next.add(d.id) : next.delete(d.id)));
+                      return next;
+                    })
+                  }
+                />
+              </th>
               {COLUMNS.map(([key, label]) => (
                 <th key={key} style={{ cursor: "pointer" }} onClick={() => clickSort(key)}>
                   {label} {sort === key ? (dir === "desc" ? "↓" : "↑") : ""}
@@ -219,16 +288,23 @@ export function CrmView() {
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={7} style={{ color: "var(--text-3)", padding: "16px 10px" }}>Loading…</td></tr>
+              <tr><td colSpan={8} style={{ color: "var(--text-3)", padding: "16px 10px" }}>Loading…</td></tr>
             )}
             {!loading && deals.length === 0 && (
-              <tr><td colSpan={7} style={{ color: "var(--text-3)", padding: "16px 10px" }}>
+              <tr><td colSpan={8} style={{ color: "var(--text-3)", padding: "16px 10px" }}>
                 No deals in the mirror yet — run the import above.
               </td></tr>
             )}
             {!loading && deals.map((d) => (
               <tr key={d.id}>
-                <td><b>{d.title}</b></td>
+                <td>
+                  <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} />
+                </td>
+                <td>
+                  <a href={`/crm/deal/${d.id}`} style={{ color: "var(--text-1)", textDecoration: "none" }}>
+                    <b>{d.title}</b>
+                  </a>
+                </td>
                 <td style={{ whiteSpace: "nowrap" }}>
                   {d.crm_stages?.name ?? "—"}
                   <div style={{ fontSize: 11, color: "var(--text-3)" }}>{d.crm_stages?.crm_pipelines?.name}</div>

@@ -23,6 +23,57 @@ export async function GET(req: NextRequest) {
     ? (statusParam as "open" | "won" | "lost")
     : undefined;
 
+  // Sprint queues read from the CRM mirror — no Pipedrive involved.
+  if (queueId?.startsWith("sprint:")) {
+    const sprintId = queueId.slice(7);
+    const db = supabaseAdmin();
+    const { data: sprint } = await db
+      .from("crm_sprints")
+      .select("id, owner")
+      .eq("id", sprintId)
+      .maybeSingle();
+    if (!sprint) return NextResponse.json({ error: "sprint not found" }, { status: 404 });
+    if (user.role !== "admin" && sprint.owner !== user.email) {
+      return NextResponse.json({ error: "not your sprint" }, { status: 403 });
+    }
+    const { data: items, error } = await db
+      .from("crm_sprint_items")
+      .select(
+        "position, called_at, crm_deals ( id, title, pipedrive_deal_id, crm_stages ( name ), crm_contacts ( name, phones ) )"
+      )
+      .eq("sprint_id", sprintId)
+      .is("called_at", null)
+      .order("position");
+    if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+    let skippedNoPhone = 0;
+    const leads = (items ?? [])
+      .map((it: any) => {
+        const d = it.crm_deals;
+        const phones = d?.crm_contacts?.phones ?? [];
+        const phone =
+          phones.find((p: any) => p.primary && p.e164)?.e164 ??
+          phones.find((p: any) => p.e164)?.e164 ??
+          null;
+        if (!phone) {
+          skippedNoPhone++;
+          return null;
+        }
+        return {
+          dealId: d.pipedrive_deal_id,
+          crmDealId: d.id,
+          sprintId,
+          title: d.title,
+          personName: d.crm_contacts?.name ?? null,
+          phone,
+          stageName: d.crm_stages?.name ?? "—",
+          hot: false,
+          hotReason: null,
+        };
+      })
+      .filter(Boolean);
+    return NextResponse.json({ leads, skippedNoPhone, skippedOwnership: 0, truncated: false });
+  }
+
   let stageIds: number[];
   let pipelineId: number | undefined;
   let cacheKey: string;

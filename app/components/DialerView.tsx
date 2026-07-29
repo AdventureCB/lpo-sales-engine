@@ -27,6 +27,8 @@ interface Lead {
   hotReason: string | null;
   callable?: boolean; // search results: sales can't dial other reps' deals
   status?: string;
+  sprintId?: string; // sprint session fields
+  crmDealId?: string;
 }
 
 type OwnerScope = "mine" | "unassigned" | "both" | "anyone";
@@ -192,11 +194,12 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setCallSec(0);
     callSecRef.current = 0;
     setSess((s) => ({ ...s, dials: s.dials + 1 }));
-    // Record the attempt — drives the shared pool's cooldown + fairness.
+    // Record the attempt — drives the shared pool's cooldown + fairness,
+    // and marks sprint items as called.
     void fetch("/api/dialer/attempt", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dealId: lead.dealId }),
+      body: JSON.stringify({ dealId: lead.dealId, sprintId: lead.sprintId, crmDealId: lead.crmDealId }),
     }).catch(() => {});
     // Quo desktop registers as the tel: handler (same handoff the Pipedrive
     // integration uses). The companion webview blocks tel: navigation, so
@@ -246,6 +249,8 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       phone: lead.phone,
       disposition: dispo,
       dialStartedAt: dialStartRef.current,
+      sprintId: lead.sprintId,
+      crmDealId: lead.crmDealId,
     };
     for (let attempt = 0; attempt < 4; attempt++) {
       const r = await fetch("/api/dialer/disposition", {
