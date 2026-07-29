@@ -1,8 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { env, envOptional } from "./env";
-import { normalizeEmail, normalizePhone } from "./identity";
-import { getProfilePhoneByEmail } from "./klaviyo";
+import { env } from "./env";
+import { normalizeEmail } from "./identity";
 
 /**
  * CRM automation engine: event → matching automations → actions.
@@ -186,68 +185,25 @@ async function actCreateTask(db: SupabaseClient, action: Record<string, any>, ct
 }
 
 /**
- * Create a deal from a signal (the Zap replacement). Pipedrive is still the
- * system of record, so the deal is created there and mirrored immediately;
- * missing phones are enriched from the Klaviyo profile — the exact gap the
- * old Zap left open.
+ * Create a deal from a signal (the Zap replacement) — delegates to the
+ * shared source-agnostic creator (person find/create, Klaviyo phone
+ * enrichment, open-deal dedupe, immediate mirror).
  */
 async function actCreateDeal(db: SupabaseClient, action: Record<string, any>, ctx: Record<string, any>): Promise<string> {
   const email = normalizeEmail(ctx.contact?.email ?? ctx.event?.person_email);
   if (!email) throw new Error("no contact email");
-  if (!envOptional("PIPEDRIVE_API_TOKEN")) throw new Error("pipedrive unavailable");
-
-  const token = env("PIPEDRIVE_API_TOKEN");
-  const pd = async (path: string, method: string, body?: unknown) => {
-    const u = new URL(`https://api.pipedrive.com/v1${path}`);
-    u.searchParams.set("api_token", token);
-    const res = await fetch(u, {
-      method,
-      headers: body ? { "Content-Type": "application/json" } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok || json.success === false) throw new Error(`pd ${path} ${res.status}`);
-    return json.data;
-  };
-
-  // Find-or-create the person; enrich phone from Klaviyo if missing.
-  const search = await pd(`/persons/search?term=${encodeURIComponent(email)}&fields=email&exact_match=true&limit=1`, "GET");
-  let personId: number | null = search?.items?.[0]?.item?.id ?? null;
-  let dedupeExistingDeal = false;
-  if (personId && action.skip_if_open_deal !== false) {
-    const deals = await pd(`/persons/${personId}/deals?status=open&limit=1`, "GET");
-    dedupeExistingDeal = (deals ?? []).length > 0;
-  }
-  if (dedupeExistingDeal) return "skipped: open deal already exists";
-
-  let phone: string | null = null;
-  if (action.enrich_phone_from_klaviyo && envOptional("KLAVIYO_PRIVATE_KEY")) {
-    phone = normalizePhone(await getProfilePhoneByEmail(email).catch(() => null));
-  }
-  if (!personId) {
-    const person = await pd("/persons", "POST", {
-      name: ctx.contact?.name ?? email.split("@")[0],
-      email: [{ value: email, primary: true }],
-      ...(phone ? { phone: [{ value: phone, primary: true }] } : {}),
-    });
-    personId = person.id;
-  } else if (phone) {
-    const person = await pd(`/persons/${personId}`, "GET");
-    const hasPhone = (person.phone ?? []).some((p: any) => p.value);
-    if (!hasPhone) await pd(`/persons/${personId}`, "PUT", { phone: [{ value: phone, primary: true }] });
-  }
-
-  const title = renderTemplate(action.title_template ?? "New deal - {{contact.name}}", ctx);
-  const deal = await pd("/deals", "POST", {
-    title,
-    person_id: personId,
-    ...(action.pipedrive_stage_id ? { stage_id: action.pipedrive_stage_id } : {}),
-    ...(action.owner_pipedrive_id ? { user_id: action.owner_pipedrive_id } : {}),
+  const { createDealFromEmail } = await import("./deal-create");
+  const result = await createDealFromEmail(db, {
+    email,
+    name: ctx.contact?.name ?? null,
+    title: action.title_template ? renderTemplate(action.title_template, ctx) : null,
+    ownerPipedriveId: action.owner_pipedrive_id ?? null,
+    pipedriveStageId: action.pipedrive_stage_id ?? null,
+    enrichPhone: action.enrich_phone_from_klaviyo !== false,
+    skipIfOpenDeal: action.skip_if_open_deal !== false,
   });
-  // Mirror immediately (webhook will land too — idempotent by pd id).
-  const { upsertDeal } = await import("./crm-sync");
-  await upsertDeal(db, deal);
-  return `deal created: ${title} (#${deal.id})${phone ? " · phone enriched from Klaviyo" : ""}`;
+  if (!result.created) return `skipped: ${result.skippedReason}`;
+  return `deal created: ${result.title} (#${result.pipedriveDealId})${result.phoneEnriched ? " · phone enriched from Klaviyo" : ""}`;
 }
 
 export async function executeAction(

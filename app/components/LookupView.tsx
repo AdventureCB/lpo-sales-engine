@@ -35,6 +35,41 @@ export function LookupView() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [dealOwner, setDealOwner] = useState("24081760");
+  const [creatingDeal, setCreatingDeal] = useState(false);
+  const [dealMsg, setDealMsg] = useState<{ text: string; link?: string } | null>(null);
+
+  const createDeal = async () => {
+    if (!result?.profile?.email) return;
+    setCreatingDeal(true);
+    setDealMsg(null);
+    try {
+      const r = await fetch("/api/crm/create-deal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: result.profile.email,
+          name: result.profile.name,
+          ownerPipedriveId: Number(dealOwner),
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        setDealMsg({ text: `Failed: ${d.error}` });
+      } else if (!d.created) {
+        setDealMsg({ text: `Skipped — ${d.skippedReason}` });
+      } else {
+        setDealMsg({
+          text: `✓ Deal created: ${d.title}${d.phoneEnriched ? " · phone added from Klaviyo" : ""}`,
+          link: d.crmDealId ? `/crm/deal/${d.crmDealId}` : undefined,
+        });
+      }
+    } catch (e) {
+      setDealMsg({ text: String(e) });
+    } finally {
+      setCreatingDeal(false);
+    }
+  };
 
   const search = async () => {
     const term = email.trim();
@@ -102,6 +137,28 @@ export function LookupView() {
               {result.profile.email}
               {locStr && <> · {locStr}</>}
             </div>
+
+            <div className="panel-h" style={{ marginTop: 18 }}>Make it a deal</div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <select className="vmsel" style={{ width: "auto" }} value={dealOwner} onChange={(e) => setDealOwner(e.target.value)}>
+                <option value="24081760">Owner: Parker</option>
+                <option value="24391245">Owner: Jackson</option>
+                <option value="24723797">Owner: Cainen</option>
+              </select>
+              <button className="btn primary" style={{ padding: "8px 14px", fontSize: 13 }} onClick={createDeal} disabled={creatingDeal}>
+                {creatingDeal ? "Creating…" : "＋ Create deal"}
+              </button>
+            </div>
+            {dealMsg && (
+              <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 8 }}>
+                {dealMsg.text}
+                {dealMsg.link && (
+                  <>
+                    {" "}<a href={dealMsg.link} style={{ color: "var(--accent-hover)" }}>open deal →</a>
+                  </>
+                )}
+              </div>
+            )}
 
             <div className="panel-h" style={{ marginTop: 18 }}>Phone numbers</div>
             {result.profile.phones.length === 0 && (

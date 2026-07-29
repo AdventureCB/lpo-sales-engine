@@ -83,6 +83,27 @@ export function CrmView() {
     });
   };
 
+  const [assignOwner, setAssignOwner] = useState("");
+
+  const bulkAssign = async () => {
+    if (!assignOwner || selected.size === 0) return;
+    const ids = [...selected];
+    let ok = 0;
+    for (const id of ids) {
+      const r = await fetch("/api/crm/deal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, ownerPipedriveId: Number(assignOwner) }),
+      }).catch(() => null);
+      if (r?.ok) ok++;
+    }
+    setSprintMsg(`✓ Assigned ${ok}/${ids.length} deals`);
+    setSelected(new Set());
+    setAssignOwner("");
+    setTimeout(() => setSprintMsg(null), 5000);
+    await loadDeals();
+  };
+
   const createSprint = async () => {
     if (!sprintName.trim() || selected.size === 0) return;
     const r = await fetch("/api/crm/sprints", {
@@ -256,6 +277,16 @@ export function CrmView() {
           </button>
           <button className="btn ghost" style={{ padding: "8px 12px", fontSize: 13 }} onClick={() => setSelected(new Set())}>
             Clear
+          </button>
+          <span style={{ color: "var(--text-3)", fontSize: 12 }}>or</span>
+          <select className="vmsel" style={{ width: "auto" }} value={assignOwner} onChange={(e) => setAssignOwner(e.target.value)}>
+            <option value="">Assign owner…</option>
+            <option value="24081760">→ Parker</option>
+            <option value="24391245">→ Jackson</option>
+            <option value="24723797">→ Cainen</option>
+          </select>
+          <button className="btn ghost" style={{ padding: "8px 14px", fontSize: 13 }} onClick={bulkAssign} disabled={!assignOwner}>
+            Assign {selected.size}
           </button>
         </div>
       )}

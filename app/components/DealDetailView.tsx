@@ -96,6 +96,20 @@ export function DealDetailView({ dealId }: { dealId: string }) {
                   </option>
                 ))}
               </select>
+              <select
+                className="vmsel"
+                style={{ width: "auto" }}
+                value={d.owner_pipedrive_id ?? ""}
+                onChange={(e) => update({ ownerPipedriveId: e.target.value })}
+                disabled={saving}
+                title="Deal owner"
+              >
+                <option value="" disabled>Owner…</option>
+                <option value="24081760">Parker</option>
+                <option value="24391245">Jackson</option>
+                <option value="24723797">Cainen</option>
+                <option value="23851101">Gabi</option>
+              </select>
               {d.status === "open" ? (
                 <>
                   <button className="btn ghost" style={{ padding: "8px 13px", fontSize: 13 }} onClick={() => update({ status: "won" })} disabled={saving}>

@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
 
-  let body: { id?: string; stageId?: string; status?: string; note?: string };
+  let body: { id?: string; stageId?: string; status?: string; note?: string; ownerPipedriveId?: number };
   try {
     body = await req.json();
   } catch {
@@ -115,6 +115,27 @@ export async function POST(req: NextRequest) {
         writeThroughError = e instanceof Error ? e.message : String(e);
       }
     }
+  }
+
+  if (body.ownerPipedriveId) {
+    const { error } = await db
+      .from("crm_deals")
+      .update({ owner_pipedrive_id: body.ownerPipedriveId, updated_at: new Date().toISOString() })
+      .eq("id", deal.id);
+    if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+    if (canWriteThrough) {
+      try {
+        await updateDealStage(deal.pipedrive_deal_id!, { owner_id: body.ownerPipedriveId });
+      } catch (e) {
+        writeThroughError = e instanceof Error ? e.message : String(e);
+      }
+    }
+    await db.from("crm_activities").insert({
+      deal_id: deal.id,
+      type: "system",
+      subject: "Owner reassigned",
+      actor: user.email,
+    });
   }
 
   if (body.stageId || body.status) {
