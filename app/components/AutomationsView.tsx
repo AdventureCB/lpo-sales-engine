@@ -35,13 +35,55 @@ interface KMetric {
 }
 
 const ACTION_TYPES: [string, string][] = [
+  ["create_deal", "Create deal"],
   ["send_sms", "Send SMS (via Quo)"],
   ["klaviyo_event", "Trigger Klaviyo flow (email)"],
-  ["create_deal", "Create deal (find/create person, Klaviyo phone enrich)"],
   ["create_task", "Create task on deal"],
   ["add_note", "Add note to deal"],
   ["webhook", "Call a webhook (any API)"],
 ];
+
+const REPS: [number, string][] = [
+  [24081760, "Parker"],
+  [24391245, "Jackson"],
+  [24723797, "Cainen"],
+];
+
+const STAGE_OPTIONS: [number, string][] = [
+  [44, "Intake ▸ Needs Qualification"],
+  [45, "Intake ▸ Recovery"],
+  [55, "Sales/Nurture ▸ Warm"],
+  [54, "Sales/Nurture ▸ Cold"],
+  [56, "Sales/Nurture ▸ Hot"],
+  [62, "Re-Prospect ▸ Lead Pool"],
+];
+
+const QUO_LINES: [string, string][] = [
+  ["PN4tAddEF7", "Parker's line"],
+  ["PNQvoLc6PO", "Jackson's line"],
+  ["PN2nRozOQb", "Customer Service"],
+  ["PNZuEepf4x", "Primary"],
+];
+
+/** Default config per action type; the form edits these fields directly. */
+function newAction(type: string): Record<string, any> {
+  switch (type) {
+    case "create_deal":
+      return { type, title_template: "New Lead - {{contact.name}}", pipedrive_stage_id: 44, enrich_phone_from_klaviyo: true, skip_if_open_deal: true, owner_strategy: "round_robin", owner_pool: [24081760, 24391245] };
+    case "send_sms":
+      return { type, from: "PN2nRozOQb", to: "contact_phone", body_template: "Hi {{contact.first_name}}! " };
+    case "klaviyo_event":
+      return { type, metric_name: "LPO Automation: " };
+    case "create_task":
+      return { type, subject_template: "Follow up: {{deal.title}}", due_in_days: 0 };
+    case "add_note":
+      return { type, body_template: "" };
+    case "webhook":
+      return { type, url: "https://" };
+    default:
+      return { type };
+  }
+}
 
 function describeTrigger(t: Record<string, any>): string {
   const label = TRIGGERS.find(([k]) => k === t.type)?.[1] ?? t.type;
@@ -59,9 +101,22 @@ export function AutomationsView() {
   const [metricId, setMetricId] = useState("");
   const [sample, setSample] = useState<Record<string, unknown> | null>(null);
   const [sampleLoading, setSampleLoading] = useState(false);
-  const [actionsJson, setActionsJson] = useState(
-    '[\n  {\n    "type": "create_deal",\n    "title_template": "Saved Build - {{contact.name}}",\n    "pipedrive_stage_id": 44,\n    "enrich_phone_from_klaviyo": true,\n    "owner_strategy": "round_robin",\n    "owner_pool": [24081760, 24391245]\n  }\n]'
-  );
+  const [actions, setActions] = useState<Record<string, any>[]>([newAction("create_deal")]);
+  const [addActionType, setAddActionType] = useState("send_sms");
+
+  const setActionField = (i: number, field: string, value: any) => {
+    setActions((prev) => prev.map((a, idx) => (idx === i ? { ...a, [field]: value } : a)));
+  };
+  const removeAction = (i: number) => setActions((prev) => prev.filter((_, idx) => idx !== i));
+  const togglePoolRep = (i: number, repId: number) => {
+    setActions((prev) =>
+      prev.map((a, idx) => {
+        if (idx !== i) return a;
+        const pool: number[] = a.owner_pool ?? [];
+        return { ...a, owner_pool: pool.includes(repId) ? pool.filter((r) => r !== repId) : [...pool, repId] };
+      })
+    );
+  };
   const [builderMsg, setBuilderMsg] = useState<string | null>(null);
 
   const load = useCallback(
@@ -124,18 +179,20 @@ export function AutomationsView() {
   }, [metricId]);
 
   const insertToken = (key: string) => {
-    setActionsJson((prev) => prev.replace(/\}\s*\]\s*$/, `}\n]`)); // normalize tail
     void navigator.clipboard?.writeText(`{{event.meta.${key}}}`);
-    setBuilderMsg(`Copied {{event.meta.${key}}} — paste it into a template field`);
+    setBuilderMsg(`Copied {{event.meta.${key}}} — paste it into any template field`);
   };
 
   const create = async () => {
-    let actions: unknown;
-    try {
-      actions = JSON.parse(actionsJson);
-    } catch {
-      setBuilderMsg("Actions JSON is invalid");
+    if (actions.length === 0) {
+      setBuilderMsg("Add at least one action");
       return;
+    }
+    for (const a of actions) {
+      if (a.type === "create_deal" && a.owner_strategy === "round_robin" && (a.owner_pool ?? []).length === 0) {
+        setBuilderMsg("Round-robin needs at least one rep in the pool");
+        return;
+      }
     }
     const trigger: Record<string, unknown> = { type: triggerType };
     if (triggerType === "signal_received") {
@@ -232,18 +289,157 @@ export function AutomationsView() {
               </div>
             </div>
           )}
-          <div className="field" style={{ marginBottom: 10 }}>
-            <label>Actions (JSON — templates: {"{{contact.first_name}}, {{deal.title}}, {{event.*}}"})</label>
-            <textarea
-              value={actionsJson}
-              onChange={(e) => setActionsJson(e.target.value)}
-              rows={10}
-              style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 9, padding: 10, color: "var(--text-1)", fontSize: 12.5, fontFamily: "ui-monospace, monospace" }}
-            />
+          <div className="panel-h" style={{ marginTop: 6 }}>Actions (run in order)</div>
+          {actions.map((a, i) => (
+            <div key={i} style={{ background: "var(--surface-2)", borderRadius: 9, padding: 12, marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                <b style={{ fontSize: 13 }}>
+                  {i + 1}. {ACTION_TYPES.find(([k]) => k === a.type)?.[1] ?? a.type}
+                </b>
+                <button className="btn ghost" style={{ padding: "2px 8px", fontSize: 11 }} onClick={() => removeAction(i)}>✕</button>
+              </div>
+
+              {a.type === "create_deal" && (
+                <>
+                  <div className="field" style={{ marginBottom: 8 }}>
+                    <label>Deal title (use copied field tokens)</label>
+                    <input value={a.title_template} onChange={(e) => setActionField(i, "title_template", e.target.value)} />
+                  </div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+                    <div className="field" style={{ margin: 0 }}>
+                      <label>Stage</label>
+                      <select className="vmsel" value={a.pipedrive_stage_id} onChange={(e) => setActionField(i, "pipedrive_stage_id", Number(e.target.value))}>
+                        {STAGE_OPTIONS.map(([id, label]) => (
+                          <option key={id} value={id}>{label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="field" style={{ margin: 0 }}>
+                      <label>Owner assignment</label>
+                      <select
+                        className="vmsel"
+                        value={a.owner_strategy === "round_robin" ? "round_robin" : String(a.owner_pipedrive_id ?? "")}
+                        onChange={(e) => {
+                          if (e.target.value === "round_robin") {
+                            setActionField(i, "owner_strategy", "round_robin");
+                          } else {
+                            setActions((prev) => prev.map((x, idx) => idx === i ? { ...x, owner_strategy: undefined, owner_pipedrive_id: Number(e.target.value) } : x));
+                          }
+                        }}
+                      >
+                        <option value="round_robin">Round-robin (rotate)</option>
+                        {REPS.map(([id, label]) => (
+                          <option key={id} value={id}>Always {label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {a.owner_strategy === "round_robin" && (
+                      <div style={{ display: "flex", gap: 10, paddingBottom: 8 }}>
+                        {REPS.map(([id, label]) => (
+                          <label key={id} style={{ fontSize: 12.5, display: "flex", gap: 4, alignItems: "center", color: "var(--text-2)" }}>
+                            <input type="checkbox" checked={(a.owner_pool ?? []).includes(id)} onChange={() => togglePoolRep(i, id)} />
+                            {label}
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", gap: 14, marginTop: 8 }}>
+                    <label style={{ fontSize: 12.5, display: "flex", gap: 5, alignItems: "center", color: "var(--text-2)" }}>
+                      <input type="checkbox" checked={a.enrich_phone_from_klaviyo} onChange={(e) => setActionField(i, "enrich_phone_from_klaviyo", e.target.checked)} />
+                      Enrich missing phone from Klaviyo
+                    </label>
+                    <label style={{ fontSize: 12.5, display: "flex", gap: 5, alignItems: "center", color: "var(--text-2)" }}>
+                      <input type="checkbox" checked={a.skip_if_open_deal} onChange={(e) => setActionField(i, "skip_if_open_deal", e.target.checked)} />
+                      Skip if an open deal exists
+                    </label>
+                  </div>
+                </>
+              )}
+
+              {a.type === "send_sms" && (
+                <>
+                  <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+                    <div className="field" style={{ margin: 0, flex: 1 }}>
+                      <label>From line</label>
+                      <select className="vmsel" value={a.from} onChange={(e) => setActionField(i, "from", e.target.value)}>
+                        {QUO_LINES.map(([id, label]) => (
+                          <option key={id} value={id}>{label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="field" style={{ margin: 0, flex: 1 }}>
+                      <label>Send to</label>
+                      <select className="vmsel" value={a.to} onChange={(e) => setActionField(i, "to", e.target.value)}>
+                        <option value="contact_phone">Contact's phone</option>
+                        <option value="event_phone">Phone from event</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="field" style={{ margin: 0 }}>
+                    <label>Message</label>
+                    <textarea
+                      value={a.body_template}
+                      onChange={(e) => setActionField(i, "body_template", e.target.value)}
+                      rows={3}
+                      style={{ width: "100%", background: "var(--surface-1)", border: "1px solid var(--border)", borderRadius: 8, padding: 8, color: "var(--text-1)", fontSize: 13 }}
+                    />
+                  </div>
+                </>
+              )}
+
+              {a.type === "klaviyo_event" && (
+                <div className="field" style={{ margin: 0 }}>
+                  <label>Metric name to fire (build a Klaviyo flow triggered by it — the flow sends the email)</label>
+                  <input value={a.metric_name} onChange={(e) => setActionField(i, "metric_name", e.target.value)} />
+                </div>
+              )}
+
+              {a.type === "create_task" && (
+                <div style={{ display: "flex", gap: 10 }}>
+                  <div className="field" style={{ margin: 0, flex: 2 }}>
+                    <label>Task subject</label>
+                    <input value={a.subject_template} onChange={(e) => setActionField(i, "subject_template", e.target.value)} />
+                  </div>
+                  <div className="field" style={{ margin: 0, flex: 1 }}>
+                    <label>Due in (days)</label>
+                    <input type="number" value={a.due_in_days} onChange={(e) => setActionField(i, "due_in_days", Number(e.target.value))} />
+                  </div>
+                </div>
+              )}
+
+              {a.type === "add_note" && (
+                <div className="field" style={{ margin: 0 }}>
+                  <label>Note</label>
+                  <textarea
+                    value={a.body_template}
+                    onChange={(e) => setActionField(i, "body_template", e.target.value)}
+                    rows={2}
+                    style={{ width: "100%", background: "var(--surface-1)", border: "1px solid var(--border)", borderRadius: 8, padding: 8, color: "var(--text-1)", fontSize: 13 }}
+                  />
+                </div>
+              )}
+
+              {a.type === "webhook" && (
+                <div className="field" style={{ margin: 0 }}>
+                  <label>URL (receives event + deal + contact as JSON)</label>
+                  <input value={a.url} onChange={(e) => setActionField(i, "url", e.target.value)} />
+                </div>
+              )}
+            </div>
+          ))}
+
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            <select className="vmsel" style={{ width: "auto" }} value={addActionType} onChange={(e) => setAddActionType(e.target.value)}>
+              {ACTION_TYPES.map(([k, label]) => (
+                <option key={k} value={k}>{label}</option>
+              ))}
+            </select>
+            <button className="btn ghost" style={{ padding: "8px 12px", fontSize: 13 }} onClick={() => setActions((prev) => [...prev, newAction(addActionType)])}>
+              ＋ Add action
+            </button>
           </div>
-          <div style={{ fontSize: 11.5, color: "var(--text-3)", marginBottom: 10 }}>
-            Action types: {ACTION_TYPES.map(([k]) => k).join(" · ")}
-          </div>
+
           <button className="btn primary" onClick={create} disabled={!name.trim()}>Create (disabled)</button>
           {builderMsg && <span style={{ fontSize: 12.5, color: "var(--text-2)", marginLeft: 10 }}>{builderMsg}</span>}
         </div>
