@@ -80,6 +80,14 @@ export async function POST(req: NextRequest) {
       },
       { onConflict: "quo_message_id", ignoreDuplicates: false }
     );
+    if (!error && data.direction === "incoming" && type === "message.received") {
+      const { enqueueEvent } = await import("@/lib/automations");
+      await enqueueEvent(db, "inbound_sms", {
+        phone: (data.from ?? data.participants?.[0]) ?? null,
+        phone_number_id: data.phoneNumberId ?? null,
+        quo_message_id: data.id,
+      });
+    }
     if (error) {
       console.error("quo message upsert failed", error);
       return NextResponse.json({ error: "db error" }, { status: 500 });

@@ -39,7 +39,8 @@ export async function POST(req: NextRequest) {
     if (entity === "person" && action !== "delete") {
       await upsertContact(db, data);
     } else if (entity === "deal" && action !== "delete") {
-      await upsertDeal(db, data);
+      // Live changes emit automation events; the bulk importer does not.
+      await upsertDeal(db, data, { emitEvents: true });
     } else if (action === "delete") {
       await db.from("crm_sync_state").upsert(
         {

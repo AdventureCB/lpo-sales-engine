@@ -181,7 +181,8 @@ export function CrmView() {
       <h2 className="viewtitle">CRM · Deals</h2>
       <div className="viewsub">
         Native system of record (admin preview) · mirrored from Pipedrive continuously ·{" "}
-        {meta ? `${meta.mirror.deals.toLocaleString()} deals, ${meta.mirror.contacts.toLocaleString()} contacts mirrored` : "…"}
+        {meta ? `${meta.mirror.deals.toLocaleString()} deals, ${meta.mirror.contacts.toLocaleString()} contacts mirrored` : "…"}{" "}
+        · <a href="/crm/automations" style={{ color: "var(--accent-hover)" }}>⚙ Automations</a>
       </div>
 
       <div className="card" style={{ padding: "10px 14px", marginBottom: 16, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>

@@ -157,6 +157,13 @@ export async function GET(req: Request) {
         } catch (e) {
           console.error(`pipedrive side-effects failed for deal ${dealId}`, e);
         }
+        {
+          const { enqueueEvent } = await import("@/lib/automations");
+          await enqueueEvent(db, "hot_flag_created", {
+            pipedrive_deal_id: dealId,
+            reason: verdict.reason,
+          });
+        }
         flagged++;
       }
       summary.scoring = {
@@ -234,12 +241,27 @@ export async function GET(req: Request) {
           occurred_at: e.occurredAt,
           meta: e.meta,
         }));
-        const { error } = await db.from("engagement_events").upsert(rows, {
-          onConflict: "source,type,person_email,occurred_at",
-          ignoreDuplicates: true,
-        });
+        const { data: inserted, error } = await db
+          .from("engagement_events")
+          .upsert(rows, {
+            onConflict: "source,type,person_email,occurred_at",
+            ignoreDuplicates: true,
+          })
+          .select("id, type, person_email, meta");
         if (error) throw new Error(error.message);
         ingested += rows.length;
+        // High-intent signals feed the automation engine (only newly
+        // inserted rows come back from an ignore-duplicates upsert).
+        if (type === "builder_save" || type === "checkout_started") {
+          const { enqueueEvent } = await import("@/lib/automations");
+          for (const ev of inserted ?? []) {
+            await enqueueEvent(db, "signal_received", {
+              signal_type: ev.type,
+              person_email: ev.person_email,
+              meta: ev.meta,
+            });
+          }
+        }
       }
       summary.klaviyo = { ingested, windowHours: ingestHours };
     } catch (e) {

@@ -70,10 +70,24 @@ export async function upsertContact(db: SupabaseClient, p: any): Promise<void> {
   if (error) throw new Error(`contact upsert: ${error.message}`);
 }
 
-export async function upsertDeal(db: SupabaseClient, d: any): Promise<void> {
+export async function upsertDeal(
+  db: SupabaseClient,
+  d: any,
+  opts: { emitEvents?: boolean } = {}
+): Promise<void> {
   const personId =
     typeof d.person_id === "object" ? d.person_id?.value ?? null : d.person_id ?? null;
   const stageUuid = await crmStageId(db, d.stage_id ?? null);
+  // Snapshot the pre-upsert state so we can emit created/stage-changed events.
+  let existing: { id: string; stage_id: string | null } | null = null;
+  if (opts.emitEvents) {
+    const { data } = await db
+      .from("crm_deals")
+      .select("id, stage_id")
+      .eq("pipedrive_deal_id", d.id)
+      .maybeSingle();
+    existing = data ?? null;
+  }
   const contactUuid = await crmContactId(db, personId);
   const ownerId = typeof d.user_id === "object" ? d.user_id?.id ?? null : d.user_id ?? d.owner_id ?? null;
   const valueCents =
@@ -96,8 +110,30 @@ export async function upsertDeal(db: SupabaseClient, d: any): Promise<void> {
     last_activity_at: d.last_activity_date ?? null,
     updated_at: new Date().toISOString(),
   };
-  const { error } = await db.from("crm_deals").upsert(row, { onConflict: "pipedrive_deal_id" });
+  const { data: upserted, error } = await db
+    .from("crm_deals")
+    .upsert(row, { onConflict: "pipedrive_deal_id" })
+    .select("id")
+    .single();
   if (error) throw new Error(`deal upsert: ${error.message}`);
+
+  if (opts.emitEvents && upserted) {
+    const { enqueueEvent } = await import("./automations");
+    if (!existing) {
+      await enqueueEvent(db, "deal_created", {
+        crm_deal_id: upserted.id,
+        pipedrive_deal_id: d.id,
+        stage_id: stageUuid,
+      });
+    } else if (stageUuid && existing.stage_id !== stageUuid) {
+      await enqueueEvent(db, "deal_stage_changed", {
+        crm_deal_id: upserted.id,
+        pipedrive_deal_id: d.id,
+        from_stage_id: existing.stage_id,
+        to_stage_id: stageUuid,
+      });
+    }
+  }
 }
 
 export async function syncPipelinesAndStages(
