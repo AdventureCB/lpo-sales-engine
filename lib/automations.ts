@@ -192,18 +192,25 @@ async function actCreateTask(db: SupabaseClient, action: Record<string, any>, ct
 async function actCreateDeal(db: SupabaseClient, action: Record<string, any>, ctx: Record<string, any>): Promise<string> {
   const email = normalizeEmail(ctx.contact?.email ?? ctx.event?.person_email);
   if (!email) throw new Error("no contact email");
-  const { createDealFromEmail } = await import("./deal-create");
+  const { createDealFromEmail, nextRoundRobinOwner } = await import("./deal-create");
+
+  // Owner: fixed id, or fair rotation over a pool (add reps by adding ids).
+  let ownerPipedriveId: number | null = action.owner_pipedrive_id ?? null;
+  if (action.owner_strategy === "round_robin" && Array.isArray(action.owner_pool) && action.owner_pool.length > 0) {
+    ownerPipedriveId = await nextRoundRobinOwner(db, action.owner_pool.map(Number));
+  }
+
   const result = await createDealFromEmail(db, {
     email,
     name: ctx.contact?.name ?? null,
     title: action.title_template ? renderTemplate(action.title_template, ctx) : null,
-    ownerPipedriveId: action.owner_pipedrive_id ?? null,
+    ownerPipedriveId,
     pipedriveStageId: action.pipedrive_stage_id ?? null,
     enrichPhone: action.enrich_phone_from_klaviyo !== false,
     skipIfOpenDeal: action.skip_if_open_deal !== false,
   });
   if (!result.created) return `skipped: ${result.skippedReason}`;
-  return `deal created: ${result.title} (#${result.pipedriveDealId})${result.phoneEnriched ? " · phone enriched from Klaviyo" : ""}`;
+  return `deal created: ${result.title} (#${result.pipedriveDealId}) → owner ${ownerPipedriveId ?? "default"}${result.phoneEnriched ? " · phone enriched from Klaviyo" : ""}`;
 }
 
 export async function executeAction(

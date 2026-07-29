@@ -50,7 +50,7 @@ export function AutomationsView() {
   const [triggerType, setTriggerType] = useState("signal_received");
   const [signalType, setSignalType] = useState("builder_save");
   const [actionsJson, setActionsJson] = useState(
-    '[\n  {\n    "type": "send_sms",\n    "from": "PN2nRozOQb",\n    "body_template": "Hi {{contact.first_name}}! ..."\n  }\n]'
+    '[\n  {\n    "type": "create_deal",\n    "title_template": "Saved Build - {{contact.name}}",\n    "pipedrive_stage_id": 44,\n    "enrich_phone_from_klaviyo": true,\n    "owner_strategy": "round_robin",\n    "owner_pool": [24081760, 24391245]\n  }\n]'
   );
   const [builderMsg, setBuilderMsg] = useState<string | null>(null);
 

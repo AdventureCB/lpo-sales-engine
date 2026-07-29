@@ -5,6 +5,23 @@ import { normalizeEmail, normalizePhone } from "./identity";
 import { getProfilePhoneByEmail } from "./klaviyo";
 import { upsertDeal, upsertContact } from "./crm-sync";
 
+/**
+ * Round-robin owner rotation. The cursor persists per POOL (sorted ids), so
+ * every automation sharing a pool participates in one fair sequence — and
+ * adding a rep is just adding their id to the pool.
+ */
+export async function nextRoundRobinOwner(db: SupabaseClient, pool: number[]): Promise<number> {
+  if (pool.length === 0) throw new Error("empty owner pool");
+  const key = `rr:${[...pool].sort((a, b) => a - b).join(",")}`;
+  const { data } = await db.from("crm_sync_state").select("value").eq("key", key).maybeSingle();
+  const lastIndex = typeof (data?.value as any)?.last_index === "number" ? (data!.value as any).last_index : -1;
+  const nextIndex = (lastIndex + 1) % pool.length;
+  await db
+    .from("crm_sync_state")
+    .upsert({ key, value: { last_index: nextIndex }, updated_at: new Date().toISOString() }, { onConflict: "key" });
+  return pool[nextIndex];
+}
+
 export interface CreateDealResult {
   created: boolean;
   skippedReason?: string;
