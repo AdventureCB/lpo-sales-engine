@@ -172,10 +172,14 @@ export function CrmView() {
         }
         const c = d.state?.counts ?? {};
         if (d.done) {
-          setImportMsg(`✓ Import complete — ${c.persons ?? 0} contacts, ${c.deals ?? 0} deals`);
+          setImportMsg(
+            `✓ Import complete — ${c.persons ?? 0} contacts, ${c.deals ?? 0} deals, ${c.notes ?? 0} notes, ${c.activities ?? 0} activities`
+          );
           return;
         }
-        setImportMsg(`Importing… (${d.state.phase}) ${c.persons ?? 0} contacts · ${c.deals ?? 0} deals`);
+        setImportMsg(
+          `Importing… (${d.state.phase}) ${c.persons ?? 0} contacts · ${c.deals ?? 0} deals · ${c.notes ?? 0} notes · ${c.activities ?? 0} activities`
+        );
       }
     } catch (e) {
       setImportMsg(`${String(e)} — progress is saved; click Import again to resume`);

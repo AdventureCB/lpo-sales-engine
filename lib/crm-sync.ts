@@ -93,17 +93,7 @@ export async function upsertDealsBatch(db: SupabaseClient, deals: any[]): Promis
   const stageMap = new Map<number, string | null>();
   for (const sid of stageIds) stageMap.set(sid, await crmStageId(db, sid));
 
-  // Contact uuids in chunked .in() queries instead of one query per deal.
-  const personIds = [...new Set(deals.map(personIdOf).filter(Boolean))] as number[];
-  const contactMap = new Map<number, string>();
-  for (let i = 0; i < personIds.length; i += 200) {
-    const { data, error } = await db
-      .from("crm_contacts")
-      .select("id, pipedrive_person_id")
-      .in("pipedrive_person_id", personIds.slice(i, i + 200));
-    if (error) throw new Error(`contact lookup: ${error.message}`);
-    for (const r of data ?? []) contactMap.set(r.pipedrive_person_id, r.id);
-  }
+  const contactMap = await pdIdMap(db, "crm_contacts", "pipedrive_person_id", deals.map(personIdOf));
 
   const byId = new Map(
     deals.map((d) => {
@@ -113,6 +103,106 @@ export async function upsertDealsBatch(db: SupabaseClient, deals: any[]): Promis
   );
   const { error } = await db.from("crm_deals").upsert([...byId.values()], { onConflict: "pipedrive_deal_id" });
   if (error) throw new Error(`deals batch upsert: ${error.message}`);
+}
+
+/** Bulk pipedrive-id → crm-uuid lookup, chunked to keep URLs sane. */
+async function pdIdMap(
+  db: SupabaseClient,
+  table: string,
+  idColumn: string,
+  ids: Array<number | null | undefined>
+): Promise<Map<number, string>> {
+  const unique = [...new Set(ids.filter(Boolean))] as number[];
+  const map = new Map<number, string>();
+  for (let i = 0; i < unique.length; i += 200) {
+    const { data, error } = await db
+      .from(table)
+      .select(`id, ${idColumn}`)
+      .in(idColumn, unique.slice(i, i + 200));
+    if (error) throw new Error(`${table} lookup: ${error.message}`);
+    for (const r of (data ?? []) as any[]) map.set(r[idColumn], r.id);
+  }
+  return map;
+}
+
+function stripHtml(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const text = s
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li)>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .trim();
+  return text || null;
+}
+
+/** Importer: a page of Pipedrive notes → crm_activities (type "note"). */
+export async function upsertNotesBatch(db: SupabaseClient, notes: any[]): Promise<void> {
+  if (notes.length === 0) return;
+  const dealMap = await pdIdMap(db, "crm_deals", "pipedrive_deal_id", notes.map((n) => n.deal_id));
+  const contactMap = await pdIdMap(db, "crm_contacts", "pipedrive_person_id", notes.map((n) => n.person_id));
+  const rows = new Map(
+    notes
+      .map((n) => ({
+        pipedrive_note_id: n.id,
+        deal_id: n.deal_id ? dealMap.get(n.deal_id) ?? null : null,
+        contact_id: n.person_id ? contactMap.get(n.person_id) ?? null : null,
+        type: "note",
+        body: stripHtml(n.content),
+        actor: n.user?.email ?? null,
+        occurred_at: n.add_time ?? new Date().toISOString(),
+      }))
+      .filter((r) => (r.deal_id || r.contact_id) && r.body)
+      .map((r) => [r.pipedrive_note_id, r])
+  );
+  if (rows.size === 0) return;
+  const { error } = await db
+    .from("crm_activities")
+    .upsert([...rows.values()], { onConflict: "pipedrive_note_id" });
+  if (error) throw new Error(`notes batch upsert: ${error.message}`);
+}
+
+const ACTIVITY_TYPE_MAP: Record<string, string> = {
+  call: "call",
+  meeting: "meeting",
+  email: "email",
+  task: "task",
+  deadline: "task",
+  lunch: "meeting",
+};
+
+/** Importer: a page of Pipedrive activities → crm_activities. */
+export async function upsertActivitiesBatch(db: SupabaseClient, activities: any[]): Promise<void> {
+  if (activities.length === 0) return;
+  const dealMap = await pdIdMap(db, "crm_deals", "pipedrive_deal_id", activities.map((a) => a.deal_id));
+  const contactMap = await pdIdMap(db, "crm_contacts", "pipedrive_person_id", activities.map((a) => a.person_id));
+  const rows = new Map(
+    activities
+      .map((a) => ({
+        pipedrive_activity_id: a.id,
+        deal_id: a.deal_id ? dealMap.get(a.deal_id) ?? null : null,
+        contact_id: a.person_id ? contactMap.get(a.person_id) ?? null : null,
+        type: ACTIVITY_TYPE_MAP[a.type] ?? "task",
+        subject: a.subject ?? null,
+        body: stripHtml(a.note),
+        due_at: a.due_date ? `${a.due_date}T${a.due_time || "00:00"}:00Z` : null,
+        done_at: a.marked_as_done_time || null,
+        occurred_at: a.add_time ?? new Date().toISOString(),
+        meta: { pipedrive_owner_id: a.owner_id ?? a.user_id ?? null },
+      }))
+      .filter((r) => r.deal_id || r.contact_id)
+      .map((r) => [r.pipedrive_activity_id, r])
+  );
+  if (rows.size === 0) return;
+  const { error } = await db
+    .from("crm_activities")
+    .upsert([...rows.values()], { onConflict: "pipedrive_activity_id" });
+  if (error) throw new Error(`activities batch upsert: ${error.message}`);
 }
 
 function dealRowFromPipedrive(d: any, stageUuid: string | null, contactUuid: string | null) {

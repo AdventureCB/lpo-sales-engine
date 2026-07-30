@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
 import { env } from "@/lib/env";
-import { syncPipelinesAndStages, upsertContactsBatch, upsertDealsBatch } from "@/lib/crm-sync";
+import {
+  syncPipelinesAndStages,
+  upsertContactsBatch,
+  upsertDealsBatch,
+  upsertNotesBatch,
+  upsertActivitiesBatch,
+} from "@/lib/crm-sync";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -45,6 +51,11 @@ export async function POST() {
     (stateRow?.value as any) ?? { phase: "pipelines", cursor: null, counts: {} };
 
   const bump = (k: string, n: number) => (state.counts[k] = (state.counts[k] ?? 0) + n);
+  // Imports finished before the notes/activities phases existed resume there.
+  if (state.phase === "done" && !("notes" in state.counts)) {
+    state.phase = "notes";
+    state.cursor = null;
+  }
   const started = Date.now();
   // Persist the cursor after every page so a hard kill loses at most one
   // (idempotent) page — without this, a timeout retries the same chunk forever.
@@ -79,6 +90,30 @@ export async function POST() {
         const page = await pdGet(url);
         await upsertDealsBatch(db, page.data ?? []);
         bump("deals", (page.data ?? []).length);
+        state.cursor = page.additional_data?.next_cursor ?? null;
+        if (!state.cursor) state.phase = "notes";
+        await saveState();
+        if (!state.cursor) break;
+      }
+    } else if (state.phase === "notes") {
+      // v1 endpoint — start/limit pagination instead of cursors.
+      for (let i = 0; i < PAGES_PER_RUN && Date.now() - started < BUDGET_MS; i++) {
+        const start = state.cursor ? Number(state.cursor) : 0;
+        const page = await pdGet(`${V1}/notes?limit=500&start=${start}`);
+        await upsertNotesBatch(db, page.data ?? []);
+        bump("notes", (page.data ?? []).length);
+        const pag = page.additional_data?.pagination;
+        state.cursor = pag?.more_items_in_collection ? String(pag.next_start) : null;
+        if (!state.cursor) state.phase = "activities";
+        await saveState();
+        if (!state.cursor) break;
+      }
+    } else if (state.phase === "activities") {
+      for (let i = 0; i < PAGES_PER_RUN && Date.now() - started < BUDGET_MS; i++) {
+        const url = `${V2}/activities?limit=500${state.cursor ? `&cursor=${state.cursor}` : ""}`;
+        const page = await pdGet(url);
+        await upsertActivitiesBatch(db, page.data ?? []);
+        bump("activities", (page.data ?? []).length);
         state.cursor = page.additional_data?.next_cursor ?? null;
         if (!state.cursor) state.phase = "done";
         await saveState();
