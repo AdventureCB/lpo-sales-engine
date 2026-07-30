@@ -220,6 +220,12 @@ export function buildScoreboard(
         texts: total.texts,
         textsIn: total.textsIn,
         talk: formatTalk(total.talkS),
+        // Same numerator as the talk tile, same denominator as the
+        // conversations tile's "total" (outbound + inbound answered).
+        avgTalk:
+          total.convOut + total.convIn > 0
+            ? formatTalk(Math.round(total.talkS / (total.convOut + total.convIn)))
+            : "—",
         rate: total.dials > 0 ? `${Math.round((total.convOut / total.dials) * 100)}%` : "—",
         comm: `$${Math.round((commMtdCents.get(rep.id) ?? 0) / 100)}`,
       };

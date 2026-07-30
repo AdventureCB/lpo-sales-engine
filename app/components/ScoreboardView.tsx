@@ -31,6 +31,7 @@ interface ScoreboardData {
           texts: number;
           textsIn: number;
           talk: string;
+          avgTalk: string;
           rate: string;
           comm: string;
         }
@@ -55,6 +56,7 @@ const TILE_LABELS: [keyof ScoreboardData["ranges"][string]["tiles"][string], str
   ["texts", "Texts sent"],
   ["textsIn", "Texts received"],
   ["talk", "Talk time"],
+  ["avgTalk", "Avg talk/conv"],
   ["rate", "Connect rate"],
   ["comm", "Commission MTD"],
 ];
