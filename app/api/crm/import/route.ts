@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
 import { env } from "@/lib/env";
-import { syncPipelinesAndStages, upsertContact, upsertDeal } from "@/lib/crm-sync";
+import { syncPipelinesAndStages, upsertContactsBatch, upsertDealsBatch } from "@/lib/crm-sync";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -10,6 +10,7 @@ export const maxDuration = 60;
 const V1 = "https://api.pipedrive.com/v1";
 const V2 = "https://api.pipedrive.com/api/v2";
 const PAGES_PER_RUN = 8; // 500 rows/page — resumable, budget-friendly
+const BUDGET_MS = 40_000; // return well before Vercel's 60s kill
 
 async function pdGet(url: string): Promise<any> {
   const u = new URL(url);
@@ -44,6 +45,11 @@ export async function POST() {
     (stateRow?.value as any) ?? { phase: "pipelines", cursor: null, counts: {} };
 
   const bump = (k: string, n: number) => (state.counts[k] = (state.counts[k] ?? 0) + n);
+  const started = Date.now();
+  // Persist the cursor after every page so a hard kill loses at most one
+  // (idempotent) page — without this, a timeout retries the same chunk forever.
+  const saveState = () =>
+    db.from("crm_sync_state").upsert({ key: "import", value: state }, { onConflict: "key" });
 
   try {
     if (state.phase === "pipelines") {
@@ -57,28 +63,26 @@ export async function POST() {
       state.phase = "persons";
       state.cursor = null;
     } else if (state.phase === "persons") {
-      for (let i = 0; i < PAGES_PER_RUN; i++) {
+      for (let i = 0; i < PAGES_PER_RUN && Date.now() - started < BUDGET_MS; i++) {
         const url = `${V2}/persons?limit=500${state.cursor ? `&cursor=${state.cursor}` : ""}`;
         const page = await pdGet(url);
-        for (const p of page.data ?? []) await upsertContact(db, p);
+        await upsertContactsBatch(db, page.data ?? []);
         bump("persons", (page.data ?? []).length);
         state.cursor = page.additional_data?.next_cursor ?? null;
-        if (!state.cursor) {
-          state.phase = "deals";
-          break;
-        }
+        if (!state.cursor) state.phase = "deals";
+        await saveState();
+        if (!state.cursor) break;
       }
     } else if (state.phase === "deals") {
-      for (let i = 0; i < PAGES_PER_RUN; i++) {
+      for (let i = 0; i < PAGES_PER_RUN && Date.now() - started < BUDGET_MS; i++) {
         const url = `${V2}/deals?limit=500${state.cursor ? `&cursor=${state.cursor}` : ""}`;
         const page = await pdGet(url);
-        for (const d of page.data ?? []) await upsertDeal(db, d);
+        await upsertDealsBatch(db, page.data ?? []);
         bump("deals", (page.data ?? []).length);
         state.cursor = page.additional_data?.next_cursor ?? null;
-        if (!state.cursor) {
-          state.phase = "done";
-          break;
-        }
+        if (!state.cursor) state.phase = "done";
+        await saveState();
+        if (!state.cursor) break;
       }
     }
   } catch (e) {

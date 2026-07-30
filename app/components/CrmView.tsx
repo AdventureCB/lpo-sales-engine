@@ -161,24 +161,28 @@ export function CrmView() {
     setImporting(true);
     setImportMsg(null);
     try {
-      const r = await fetch("/api/crm/import", { method: "POST" });
-      const d = await r.json();
-      if (!r.ok) {
-        setImportMsg(d.error ?? `HTTP ${r.status}`);
-      } else {
+      // Each call imports a bounded, cursor-saved chunk — keep calling until
+      // the server reports done, so one click walks the whole account.
+      for (let i = 0; i < 200; i++) {
+        const r = await fetch("/api/crm/import", { method: "POST" });
+        const d = await r.json();
+        if (!r.ok) {
+          setImportMsg(`${d.error ?? `HTTP ${r.status}`} — progress is saved; click again to resume`);
+          return;
+        }
         const c = d.state?.counts ?? {};
-        setImportMsg(
-          d.done
-            ? `✓ Import complete — ${c.persons ?? 0} contacts, ${c.deals ?? 0} deals`
-            : `Chunk done (phase: ${d.state.phase}) — run again to continue`
-        );
+        if (d.done) {
+          setImportMsg(`✓ Import complete — ${c.persons ?? 0} contacts, ${c.deals ?? 0} deals`);
+          return;
+        }
+        setImportMsg(`Importing… (${d.state.phase}) ${c.persons ?? 0} contacts · ${c.deals ?? 0} deals`);
       }
-      await loadMeta();
-      await loadDeals();
     } catch (e) {
-      setImportMsg(String(e));
+      setImportMsg(`${String(e)} — progress is saved; click Import again to resume`);
     } finally {
       setImporting(false);
+      await loadMeta();
+      await loadDeals();
     }
   };
 
