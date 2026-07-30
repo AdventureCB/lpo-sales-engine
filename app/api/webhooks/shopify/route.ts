@@ -62,14 +62,25 @@ export async function POST(req: NextRequest) {
     }
   } else {
     // orders/refunded ships the full order — refresh the stored payload so the
-    // journey recompute (Phase 4) sees current refund state. Upsert covers
-    // refunds arriving for orders that predate webhook installation.
+    // journey recompute sees current refund state. Upsert covers refunds
+    // arriving for orders that predate webhook installation.
     const { error } = await db
       .from("sales_orders")
       .upsert(row, { onConflict: "shopify_order_id", ignoreDuplicates: false });
     if (error) {
       console.error("shopify orders/refunded upsert failed", error);
       return NextResponse.json({ error: "db error" }, { status: 500 });
+    }
+  }
+
+  // Journey engine: recompute this customer from scratch (idempotent; refund
+  // handling falls out of the same path). Never fail the webhook over it.
+  if (row.customer_email) {
+    try {
+      const { recomputeJourneysForEmail } = await import("@/lib/journeys");
+      await recomputeJourneysForEmail(db, row.customer_email);
+    } catch (e) {
+      console.error("journey recompute failed", e);
     }
   }
 

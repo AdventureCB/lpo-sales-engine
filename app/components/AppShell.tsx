@@ -8,7 +8,7 @@ const TABS = [
   { label: "Scoreboard", href: "/scoreboard", live: true },
   { label: "Lookup", href: "/lookup", live: true },
   { label: "CRM", href: "/crm", live: true, adminOnly: true },
-  { label: "Commissions", href: "/commissions", live: false },
+  { label: "Commissions", href: "/commissions", live: true, adminOnly: true },
 ];
 
 export function AppShell({
