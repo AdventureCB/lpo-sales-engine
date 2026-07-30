@@ -117,7 +117,12 @@ export async function POST() {
         state.cursor = page.additional_data?.next_cursor ?? null;
         if (!state.cursor) state.phase = "done";
         await saveState();
-        if (!state.cursor) break;
+        if (!state.cursor) {
+          // Deals carry no last-activity field from the v2 API — derive it
+          // from everything just imported.
+          await db.rpc("refresh_deal_last_activity");
+          break;
+        }
       }
     }
   } catch (e) {

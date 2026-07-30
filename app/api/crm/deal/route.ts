@@ -25,13 +25,18 @@ export async function GET(req: NextRequest) {
     .maybeSingle();
   if (error || !deal) return NextResponse.json({ error: "not found" }, { status: 404 });
 
+  // Quo logs calls/notes on the person, not the deal — pull the contact's
+  // activities into the deal timeline too, or most history is invisible.
+  const activityFilter = deal.contact_id
+    ? `deal_id.eq.${id},contact_id.eq.${deal.contact_id}`
+    : `deal_id.eq.${id}`;
   const [activities, calls, stages] = await Promise.all([
     db
       .from("crm_activities")
-      .select("id, type, subject, body, actor, due_at, done_at, occurred_at")
-      .eq("deal_id", id)
+      .select("id, type, subject, body, actor, due_at, done_at, occurred_at, deal_id")
+      .or(activityFilter)
       .order("occurred_at", { ascending: false })
-      .limit(50),
+      .limit(75),
     deal.pipedrive_deal_id
       ? db
           .from("call_events")
@@ -50,7 +55,7 @@ export async function GET(req: NextRequest) {
     ...(activities.data ?? []).map((a) => ({
       kind: a.type,
       at: a.occurred_at,
-      title: a.subject ?? a.type,
+      title: (a.subject ?? a.type) + (a.deal_id === id ? "" : " · (contact)"),
       body: a.body,
       actor: a.actor,
       done: Boolean(a.done_at),
