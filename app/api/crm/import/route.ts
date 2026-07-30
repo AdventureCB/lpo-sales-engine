@@ -8,6 +8,7 @@ import {
   upsertDealsBatch,
   upsertNotesBatch,
   upsertActivitiesBatch,
+  upsertDealFlowBatch,
 } from "@/lib/crm-sync";
 
 export const runtime = "nodejs";
@@ -51,9 +52,13 @@ export async function POST() {
     (stateRow?.value as any) ?? { phase: "pipelines", cursor: null, counts: {} };
 
   const bump = (k: string, n: number) => (state.counts[k] = (state.counts[k] ?? 0) + n);
-  // Imports finished before the notes/activities phases existed resume there.
+  // Imports finished before later phases existed resume at the missing one.
   if (state.phase === "done" && !("notes" in state.counts)) {
     state.phase = "notes";
+    state.cursor = null;
+  }
+  if (state.phase === "done" && !("history" in state.counts)) {
+    state.phase = "history";
     state.cursor = null;
   }
   const started = Date.now();
@@ -115,15 +120,51 @@ export async function POST() {
         await upsertActivitiesBatch(db, page.data ?? []);
         bump("activities", (page.data ?? []).length);
         state.cursor = page.additional_data?.next_cursor ?? null;
-        if (!state.cursor) state.phase = "done";
+        if (!state.cursor) state.phase = "history";
         await saveState();
-        if (!state.cursor) {
-          // Deals carry no last-activity field from the v2 API — derive it
-          // from everything just imported.
-          await db.rpc("refresh_deal_last_activity");
-          break;
-        }
+        if (!state.cursor) break;
       }
+    } else if (state.phase === "history") {
+      // Per-deal flow feed: synced emails + deal change log — the layers the
+      // bulk endpoints don't expose. One call per deal, newest deals first,
+      // cursor = last processed pipedrive_deal_id (descending).
+      const { data: stageRows } = await db.from("crm_stages").select("pipedrive_stage_id, name");
+      const stageNames = new Map((stageRows ?? []).map((s) => [s.pipedrive_stage_id, s.name]));
+      const below = state.cursor ? Number(state.cursor) : Number.MAX_SAFE_INTEGER;
+      const { data: dealsChunk, error: dcErr } = await db
+        .from("crm_deals")
+        .select("id, pipedrive_deal_id, contact_id")
+        .lt("pipedrive_deal_id", below)
+        .not("pipedrive_deal_id", "is", null)
+        .order("pipedrive_deal_id", { ascending: false })
+        .limit(500);
+      if (dcErr) throw new Error(dcErr.message);
+      if (!dealsChunk || dealsChunk.length === 0) {
+        state.phase = "done";
+        await db.rpc("refresh_deal_last_activity");
+      } else {
+        let processed = 0;
+        for (const deal of dealsChunk) {
+          if (Date.now() - started >= BUDGET_MS) break;
+          const items: any[] = [];
+          let start = 0;
+          for (let p = 0; p < 3; p++) {
+            const page = await pdGet(`${V1}/deals/${deal.pipedrive_deal_id}/flow?limit=100&start=${start}`);
+            items.push(...(page.data ?? []));
+            const pag = page.additional_data?.pagination;
+            if (!pag?.more_items_in_collection) break;
+            start = pag.next_start;
+          }
+          const n = await upsertDealFlowBatch(db, deal, items, stageNames);
+          bump("emails", n.emails);
+          bump("changes", n.changes);
+          state.cursor = String(deal.pipedrive_deal_id);
+          processed++;
+          if (processed % 20 === 0) await saveState();
+        }
+        bump("history", processed);
+      }
+      await saveState();
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

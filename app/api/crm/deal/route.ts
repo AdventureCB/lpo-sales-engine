@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
       .select("id, type, subject, body, actor, due_at, done_at, occurred_at, deal_id")
       .or(activityFilter)
       .order("occurred_at", { ascending: false })
-      .limit(75),
+      .limit(150),
     deal.pipedrive_deal_id
       ? db
           .from("call_events")

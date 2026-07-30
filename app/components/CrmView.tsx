@@ -171,15 +171,12 @@ export function CrmView() {
           return;
         }
         const c = d.state?.counts ?? {};
+        const progress = `${c.persons ?? 0} contacts · ${c.deals ?? 0} deals · ${c.notes ?? 0} notes · ${c.activities ?? 0} activities · ${c.emails ?? 0} emails · ${c.changes ?? 0} changes`;
         if (d.done) {
-          setImportMsg(
-            `✓ Import complete — ${c.persons ?? 0} contacts, ${c.deals ?? 0} deals, ${c.notes ?? 0} notes, ${c.activities ?? 0} activities`
-          );
+          setImportMsg(`✓ Import complete — ${progress}`);
           return;
         }
-        setImportMsg(
-          `Importing… (${d.state.phase}) ${c.persons ?? 0} contacts · ${c.deals ?? 0} deals · ${c.notes ?? 0} notes · ${c.activities ?? 0} activities`
-        );
+        setImportMsg(`Importing… (${d.state.phase}) ${progress}`);
       }
     } catch (e) {
       setImportMsg(`${String(e)} — progress is saved; click Import again to resume`);

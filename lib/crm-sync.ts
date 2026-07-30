@@ -205,6 +205,70 @@ export async function upsertActivitiesBatch(db: SupabaseClient, activities: any[
   if (error) throw new Error(`activities batch upsert: ${error.message}`);
 }
 
+/**
+ * Importer: one deal's flow feed → synced emails + deal-change log entries.
+ * Activities and notes in the feed are skipped (imported by their own phases).
+ */
+export async function upsertDealFlowBatch(
+  db: SupabaseClient,
+  deal: { id: string; contact_id: string | null },
+  items: any[],
+  stageNames: Map<number, string>
+): Promise<{ emails: number; changes: number }> {
+  const rows = new Map<string, Record<string, unknown>>();
+  const stageName = (v: any) => stageNames.get(Number(v)) ?? String(v ?? "?");
+  for (const it of items) {
+    const o = it?.data ?? {};
+    if (it?.object === "mailMessage") {
+      const from = (o.from ?? [])[0];
+      rows.set(`mail:${o.id}`, {
+        pd_key: `mail:${o.id}`,
+        deal_id: deal.id,
+        contact_id: deal.contact_id,
+        type: "email",
+        subject: o.subject || "(no subject)",
+        body: stripHtml(o.snippet) ?? null,
+        actor: from?.email_address ?? null,
+        occurred_at: o.message_time ?? o.add_time ?? new Date().toISOString(),
+      });
+    } else if (it?.object === "dealChange") {
+      let subject: string | null = null;
+      switch (o.field_key) {
+        case "stage_id":
+          subject = `Stage: ${stageName(o.old_value)} → ${stageName(o.new_value)}`;
+          break;
+        case "status":
+          subject = `Marked ${o.new_value}`;
+          break;
+        case "user_id":
+          subject = "Owner reassigned";
+          break;
+        case "value":
+          subject = `Value: ${o.old_value ?? 0} → ${o.new_value ?? 0}`;
+          break;
+      }
+      if (!subject) continue;
+      rows.set(`change:${o.id}`, {
+        pd_key: `change:${o.id}`,
+        deal_id: deal.id,
+        contact_id: deal.contact_id,
+        type: "system",
+        subject,
+        occurred_at: o.log_time ?? new Date().toISOString(),
+      });
+    }
+  }
+  if (rows.size > 0) {
+    const { error } = await db
+      .from("crm_activities")
+      .upsert([...rows.values()], { onConflict: "pd_key" });
+    if (error) throw new Error(`flow batch upsert: ${error.message}`);
+  }
+  let emails = 0;
+  for (const k of rows.keys()) if (k.startsWith("mail:")) emails++;
+  return { emails, changes: rows.size - emails };
+}
+
 function dealRowFromPipedrive(d: any, stageUuid: string | null, contactUuid: string | null) {
   const ownerId = typeof d.user_id === "object" ? d.user_id?.id ?? null : d.user_id ?? d.owner_id ?? null;
   const valueCents =
