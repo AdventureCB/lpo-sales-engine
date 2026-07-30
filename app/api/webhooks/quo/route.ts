@@ -69,6 +69,9 @@ export async function POST(req: NextRequest) {
         .maybeSingle();
       msgRepId = rep?.id ?? null;
     }
+    // Counterparty number — pairs replies to outbound texts for response rate.
+    const msgTo = Array.isArray(data.to) ? data.to[0] : data.to;
+    const peerPhone = (data.direction === "incoming" ? data.from : msgTo) ?? null;
     const { error } = await db.from("message_events").upsert(
       {
         quo_message_id: data.id,
@@ -77,6 +80,7 @@ export async function POST(req: NextRequest) {
         direction: data.direction ?? null,
         status: data.status ?? null,
         sent_at: data.createdAt ?? null,
+        peer_phone: peerPhone,
       },
       { onConflict: "quo_message_id", ignoreDuplicates: false }
     );

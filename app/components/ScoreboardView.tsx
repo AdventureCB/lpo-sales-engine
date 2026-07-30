@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { GroupedBarChart, type Series } from "./GroupedBarChart";
+import { ScoreboardAnalytics } from "./ScoreboardAnalytics";
 
 // Fixed categorical assignment (never cycled): Parker rust, Jackson blue —
 // the CVD-validated pair from the prototype. Extra reps get the fallbacks.
@@ -208,6 +209,8 @@ export function ScoreboardView() {
           <GroupedBarChart days={data.days} series={mkSeries(D.conv)} vbW={400} unit="conversations" onHover={setTip} />
         </div>
       </div>
+
+      <ScoreboardAnalytics onHover={setTip} />
 
       {tip && (
         <div
