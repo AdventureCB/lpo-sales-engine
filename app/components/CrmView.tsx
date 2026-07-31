@@ -68,6 +68,8 @@ export function CrmView() {
   const [sort, setSort] = useState("updated");
   const [dir, setDir] = useState<"asc" | "desc">("desc");
   const [importing, setImporting] = useState(false);
+  const [pdSyncing, setPdSyncing] = useState(false);
+  const [pdPending, setPdPending] = useState(0);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [sprintName, setSprintName] = useState("");
@@ -157,6 +159,40 @@ export function CrmView() {
     void loadDeals();
   }, [loadDeals]);
 
+  useEffect(() => {
+    const poll = () =>
+      fetch("/api/crm/pd-sync")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => d && setPdPending(d.pending ?? 0))
+        .catch(() => {});
+    void poll();
+    const iv = setInterval(poll, 60_000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const runPdSync = async () => {
+    setPdSyncing(true);
+    setImportMsg(null);
+    try {
+      const r = await fetch("/api/crm/pd-sync", { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) {
+        setImportMsg(d.error ?? `HTTP ${r.status}`);
+      } else {
+        setPdPending(d.pending ?? 0);
+        setImportMsg(
+          d.rateLimited
+            ? `Synced ${d.processed} — Pipedrive daily budget hit, ${d.pending} still queued (auto-retries)`
+            : `✓ Synced ${d.processed} to Pipedrive · ${d.pending} pending${d.failed ? ` · ${d.failed} failed` : ""}`
+        );
+      }
+    } catch (e) {
+      setImportMsg(String(e));
+    } finally {
+      setPdSyncing(false);
+    }
+  };
+
   const runImport = async () => {
     setImporting(true);
     setImportMsg(null);
@@ -215,6 +251,9 @@ export function CrmView() {
         <span className="panel-h" style={{ margin: 0 }}>Mirror</span>
         <button className="btn ghost" style={{ padding: "6px 12px", fontSize: 12.5 }} onClick={runImport} disabled={importing}>
           {importing ? "Importing…" : "⟳ Run import chunk"}
+        </button>
+        <button className="btn ghost" style={{ padding: "6px 12px", fontSize: 12.5 }} onClick={runPdSync} disabled={pdSyncing}>
+          {pdSyncing ? "Syncing…" : `⇅ Sync Pipedrive${pdPending > 0 ? ` (${pdPending})` : ""}`}
         </button>
         {meta?.mirror.importState && (
           <span style={{ fontSize: 12, color: "var(--text-3)" }}>

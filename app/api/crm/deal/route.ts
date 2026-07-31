@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
 import { envOptional } from "@/lib/env";
 import { updateDealStage, addDealNote, createActivity, updateActivity } from "@/lib/pipedrive";
+import { enqueuePdSync } from "@/lib/pd-sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -130,35 +131,48 @@ export async function POST(req: NextRequest) {
   const canWriteThrough = Boolean(envOptional("PIPEDRIVE_API_TOKEN")) && deal.pipedrive_deal_id;
 
   // Schedule an activity (call / task / meeting / email) with a due time.
+  // CRM row first; Pipedrive immediately if possible, else via the outbox.
   if (body.activity) {
     const { type, subject, dueAt } = body.activity;
     if (!["call", "task", "meeting", "email"].includes(type) || !subject?.trim()) {
       return NextResponse.json({ error: "activity type/subject invalid" }, { status: 400 });
     }
-    let pipedriveActivityId: number | null = null;
+    const { data: inserted, error } = await db
+      .from("crm_activities")
+      .insert({
+        deal_id: deal.id,
+        contact_id: deal.contact_id,
+        type,
+        subject: subject.trim(),
+        actor: user.email,
+        due_at: dueAt ?? null,
+        occurred_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+    if (error || !inserted) return NextResponse.json({ error: "db error" }, { status: 500 });
     if (canWriteThrough) {
       try {
-        pipedriveActivityId = await createActivity({
+        const pdId = await createActivity({
           dealId: deal.pipedrive_deal_id!,
           subject: subject.trim(),
           type,
           dueAtIso: dueAt ?? null,
         });
-      } catch (e) {
-        writeThroughError = e instanceof Error ? e.message : String(e);
+        if (pdId) {
+          await db.from("crm_activities").update({ pipedrive_activity_id: pdId }).eq("id", inserted.id);
+        }
+      } catch {
+        await enqueuePdSync(db, "activity_create", {
+          dealId: deal.pipedrive_deal_id,
+          subject: subject.trim(),
+          type,
+          dueAtIso: dueAt ?? null,
+          crmActivityId: inserted.id,
+        });
+        writeThroughError = "Pipedrive busy — queued, will sync automatically";
       }
     }
-    const { error } = await db.from("crm_activities").insert({
-      deal_id: deal.id,
-      contact_id: deal.contact_id,
-      type,
-      subject: subject.trim(),
-      actor: user.email,
-      due_at: dueAt ?? null,
-      occurred_at: new Date().toISOString(),
-      pipedrive_activity_id: pipedriveActivityId,
-    });
-    if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
   }
 
   // Mark a scheduled activity done (write-through to Pipedrive when linked).
@@ -177,8 +191,9 @@ export async function POST(req: NextRequest) {
     if (act.pipedrive_activity_id && canWriteThrough) {
       try {
         await updateActivity(act.pipedrive_activity_id, { done: 1 });
-      } catch (e) {
-        writeThroughError = e instanceof Error ? e.message : String(e);
+      } catch {
+        await enqueuePdSync(db, "activity_done", { pipedriveActivityId: act.pipedrive_activity_id });
+        writeThroughError = "Pipedrive busy — queued, will sync automatically";
       }
     }
   }
@@ -220,8 +235,9 @@ export async function POST(req: NextRequest) {
     if (canWriteThrough) {
       try {
         await addDealNote(deal.pipedrive_deal_id!, body.note.trim());
-      } catch (e) {
-        writeThroughError = e instanceof Error ? e.message : String(e);
+      } catch {
+        await enqueuePdSync(db, "note", { dealId: deal.pipedrive_deal_id, content: body.note.trim() });
+        writeThroughError = "Pipedrive busy — queued, will sync automatically";
       }
     }
   }
@@ -235,8 +251,12 @@ export async function POST(req: NextRequest) {
     if (canWriteThrough) {
       try {
         await updateDealStage(deal.pipedrive_deal_id!, { owner_id: body.ownerPipedriveId });
-      } catch (e) {
-        writeThroughError = e instanceof Error ? e.message : String(e);
+      } catch {
+        await enqueuePdSync(db, "deal_update", {
+          dealId: deal.pipedrive_deal_id,
+          fields: { owner_id: body.ownerPipedriveId },
+        });
+        writeThroughError = "Pipedrive busy — queued, will sync automatically";
       }
     }
     await db.from("crm_activities").insert({
@@ -277,8 +297,12 @@ export async function POST(req: NextRequest) {
           stage_id: pdStageId ?? undefined,
           status: body.status,
         });
-      } catch (e) {
-        writeThroughError = e instanceof Error ? e.message : String(e);
+      } catch {
+        await enqueuePdSync(db, "deal_update", {
+          dealId: deal.pipedrive_deal_id,
+          fields: { stage_id: pdStageId ?? undefined, status: body.status },
+        });
+        writeThroughError = "Pipedrive busy — queued, will sync automatically";
       }
     }
     await db.from("crm_activities").insert({
