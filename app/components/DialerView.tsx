@@ -115,6 +115,16 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [searching, setSearching] = useState(false);
 
   const [inCall, setInCall] = useState(false);
+  // How calls are placed: Quo desktop app (tel: handoff) or Quo web
+  // (clipboard handoff — my.quo.com has no dial URL). Sticky per machine.
+  const [dialMethod, setDialMethod] = useState<"desktop" | "web">("desktop");
+  useEffect(() => {
+    if (localStorage.getItem("dialMethod") === "web") setDialMethod("web");
+  }, []);
+  const pickDialMethod = (m: "desktop" | "web") => {
+    setDialMethod(m);
+    localStorage.setItem("dialMethod", m);
+  };
   const [awaitingDispo, setAwaitingDispo] = useState(false);
   const [callSec, setCallSec] = useState(0);
   const [autoAdv, setAutoAdv] = useState(true);
@@ -201,10 +211,15 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ dealId: lead.dealId, sprintId: lead.sprintId, crmDealId: lead.crmDealId }),
     }).catch(() => {});
-    // Quo desktop registers as the tel: handler (same handoff the Pipedrive
-    // integration uses). The companion webview blocks tel: navigation, so
-    // hand it to the OS natively there.
-    if (window.__TAURI__) {
+    if (dialMethod === "web") {
+      // Quo web (my.quo.com) has no dial deep-link, so the fastest handoff is
+      // clipboard: number is copied, rep pastes into the Quo tab. Tracking is
+      // unaffected — webhooks record the call wherever it's placed.
+      void navigator.clipboard?.writeText(lead.phone).catch(() => {});
+    } else if (window.__TAURI__) {
+      // Quo desktop registers as the tel: handler (same handoff the Pipedrive
+      // integration uses). The companion webview blocks tel: navigation, so
+      // hand it to the OS natively there.
       void window.__TAURI__.core
         .invoke("open_tel", { url: `tel:${lead.phone}` })
         .catch((e) => console.error("open_tel failed", e));
@@ -233,10 +248,11 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setAwaitingDispo(true);
   };
 
-  /** End the call for real: companion sends Quo's ⇧⌘H end-call shortcut. */
+  /** End the call for real: companion sends Quo's ⇧⌘H end-call shortcut.
+   * In web mode the call lives in the Quo browser tab — nothing to send. */
   const endCall = async () => {
     if (!inCall) return;
-    if (window.__TAURI__) {
+    if (window.__TAURI__ && dialMethod !== "web") {
       await window.__TAURI__.core.invoke("end_call").catch((e) => console.error("end_call", e));
     }
     hangUp();
@@ -650,6 +666,19 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                   </div>
                 )}
               </div>
+              {inCall && dialMethod === "web" && (
+                <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 8 }}>
+                  📋 Number copied — switch to the{" "}
+                  <a
+                    href="https://my.quo.com"
+                    target="quo-web"
+                    style={{ color: "var(--accent-hover)" }}
+                  >
+                    Quo web tab
+                  </a>
+                  , paste into the dialer (⌘V) and call
+                </div>
+              )}
               {awaitingDispo && (
                 <div className="dispo-row" style={{ display: "flex" }}>
                   {DISPOSITIONS.map(([key, num, label]) => (
@@ -709,12 +738,35 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
         </div>
       </div>
 
-      <div className="viewsub" style={{ marginTop: 18 }}>
-        Keyboard: <kbd>⏎</kbd> dial · <kbd>E</kbd> call ended · <kbd>V</kbd> VM left ·{" "}
-        <kbd>1–4</kbd> disposition · <kbd>S</kbd> skip ·{" "}
-        {typeof window !== "undefined" && window.__TAURI__
-          ? "🖥 companion mode — VM drops play into the call"
-          : "🌐 browser mode — VM drops log only (use the desktop app for audio)"}
+      <div className="viewsub" style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span>
+          Keyboard: <kbd>⏎</kbd> dial · <kbd>E</kbd> call ended · <kbd>V</kbd> VM left ·{" "}
+          <kbd>1–4</kbd> disposition · <kbd>S</kbd> skip ·{" "}
+          {typeof window !== "undefined" && window.__TAURI__
+            ? "🖥 companion mode — VM drops play into the call"
+            : "🌐 browser mode — VM drops log only (use the desktop app for audio)"}
+        </span>
+        <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+          Call via
+          <select
+            className="vmsel"
+            style={{ width: "auto", padding: "4px 8px", fontSize: 12.5 }}
+            value={dialMethod}
+            onChange={(e) => pickDialMethod(e.target.value as "desktop" | "web")}
+          >
+            <option value="desktop">Quo desktop app</option>
+            <option value="web">Quo web (copies number)</option>
+          </select>
+          {dialMethod === "web" && (
+            <button
+              className="btn ghost"
+              style={{ padding: "4px 10px", fontSize: 12.5 }}
+              onClick={() => window.open("https://my.quo.com", "quo-web")}
+            >
+              Open Quo web ↗
+            </button>
+          )}
+        </span>
       </div>
     </>
   );
