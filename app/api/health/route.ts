@@ -14,6 +14,8 @@ const REQUIRED_ENV = [
   "PIPEDRIVE_API_TOKEN",
   "KLAVIYO_PRIVATE_KEY",
   "CRON_SECRET",
+  "GOOGLE_CLIENT_ID",
+  "GOOGLE_CLIENT_SECRET",
 ] as const;
 
 /** Deploy check: reports which env vars are present (booleans only, never values). */
