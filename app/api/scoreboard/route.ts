@@ -36,20 +36,52 @@ export async function GET(req: NextRequest) {
       new Date(Date.parse(`${custom.start}T00:00:00Z`) - 86400_000).toISOString()
     : new Date(Date.now() - LOOKBACK_DAYS * 86400_000).toISOString();
 
-  const [repsRes, callsRes, messagesRes, journeysRes] = await Promise.all([
+  // Supabase caps every select at 1000 rows SILENTLY — the 40-day windows
+  // crossed that in July 2026 (dial counts visibly wobbled as upserts
+  // reshuffled which arbitrary 1000 came back). Always page these.
+  async function fetchAllPages<T>(build: (from: number, to: number) => any): Promise<T[]> {
+    const out: T[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await build(from, from + 999);
+      if (error) throw new Error(error.message);
+      out.push(...(data ?? []));
+      if (!data || data.length < 1000) return out;
+    }
+  }
+
+  let calls: any[], messages: any[];
+  const [repsRes, journeysRes] = await Promise.all([
     db.from("reps").select("id, name").eq("active", true).order("sort_order"),
-    db
-      .from("call_events")
-      .select("rep_id, direction, started_at, answered_at, duration_s, classification, disposition")
-      .gte("started_at", since),
-    db.from("message_events").select("rep_id, direction, sent_at").gte("sent_at", since),
     db
       .from("sales_journeys")
       .select("rep_id, state, confirmed_at, commission_amount_cents")
       .not("confirmed_at", "is", null),
   ]);
+  try {
+    [calls, messages] = await Promise.all([
+      fetchAllPages((from, to) =>
+        db
+          .from("call_events")
+          .select("rep_id, direction, started_at, answered_at, duration_s, classification, disposition")
+          .gte("started_at", since)
+          .order("started_at")
+          .range(from, to)
+      ),
+      fetchAllPages((from, to) =>
+        db
+          .from("message_events")
+          .select("rep_id, direction, sent_at")
+          .gte("sent_at", since)
+          .order("sent_at")
+          .range(from, to)
+      ),
+    ]);
+  } catch (e) {
+    console.error("scoreboard paged fetch failed", e);
+    return NextResponse.json({ error: "db error" }, { status: 500 });
+  }
 
-  const firstError = repsRes.error ?? callsRes.error ?? messagesRes.error ?? journeysRes.error;
+  const firstError = repsRes.error ?? journeysRes.error;
   if (firstError) {
     console.error("scoreboard query failed", firstError);
     return NextResponse.json({ error: "db error" }, { status: 500 });
@@ -59,8 +91,8 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(
     buildScoreboard(
       repsRes.data ?? [],
-      (callsRes.data ?? []) as any,
-      (messagesRes.data ?? []) as any,
+      calls as any,
+      messages as any,
       journeysRes.data ?? [],
       timeZone,
       new Date(),
