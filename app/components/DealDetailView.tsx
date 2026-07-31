@@ -32,6 +32,7 @@ export function DealDetailView({ dealId }: { dealId: string }) {
   const [schedSubject, setSchedSubject] = useState("");
   const [schedDue, setSchedDue] = useState("");
   const [sprintPick, setSprintPick] = useState("");
+  const [callHint, setCallHint] = useState(false);
   const [newSprintName, setNewSprintName] = useState("");
   const [newSprintOwner, setNewSprintOwner] = useState("");
 
@@ -323,15 +324,50 @@ export function DealDetailView({ dealId }: { dealId: string }) {
               <div style={{ fontSize: 17, fontWeight: 800 }}>{contact.name}</div>
               {contact.org_name && <div style={{ color: "var(--text-2)", fontSize: 13 }}>{contact.org_name}</div>}
               <div style={{ marginTop: 10 }}>
-                {phones.map((p, i) => (
-                  <div key={i} style={{ fontSize: 14, fontVariantNumeric: "tabular-nums", padding: "3px 0" }}>
-                    📞 {p.e164 ?? p.value}
-                    {p.primary && <span style={{ fontSize: 10, color: "var(--text-3)" }}> · primary</span>}
+                {phones.map((p, i) => {
+                  const num = p.e164 ?? p.value;
+                  return (
+                    <div key={i} style={{ fontSize: 14, fontVariantNumeric: "tabular-nums", padding: "3px 0" }}>
+                      📞{" "}
+                      <a
+                        href={`tel:${num}`}
+                        style={{ color: "var(--text-1)", textDecorationColor: "var(--text-3)" }}
+                        title={callHint ? "Number copied — paste in the Quo web tab" : "Call via Quo"}
+                        onClick={(e) => {
+                          // Same per-machine setting as the dialer: web mode
+                          // hands off via clipboard (Quo web has no dial URL).
+                          if (localStorage.getItem("dialMethod") === "web") {
+                            e.preventDefault();
+                            void navigator.clipboard?.writeText(num).catch(() => {});
+                            window.open("https://my.quo.com", "quo-web");
+                            setCallHint(true);
+                            setTimeout(() => setCallHint(false), 6000);
+                          }
+                        }}
+                      >
+                        {num}
+                      </a>
+                      {p.primary && <span style={{ fontSize: 10, color: "var(--text-3)" }}> · primary</span>}
+                    </div>
+                  );
+                })}
+                {callHint && (
+                  <div style={{ fontSize: 11.5, color: "var(--text-2)" }}>
+                    📋 Number copied — paste into the Quo web dialer (⌘V)
                   </div>
-                ))}
+                )}
                 {emails.map((e, i) => (
                   <div key={i} style={{ fontSize: 13, padding: "3px 0", color: "var(--text-2)" }}>
-                    ✉️ {e.value}
+                    ✉️{" "}
+                    <a
+                      href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(e.value)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ color: "var(--text-2)", textDecorationColor: "var(--text-3)" }}
+                      title="Compose in Gmail"
+                    >
+                      {e.value}
+                    </a>
                   </div>
                 ))}
                 {phones.length === 0 && emails.length === 0 && (
