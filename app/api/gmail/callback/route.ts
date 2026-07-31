@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
-import { exchangeCode, REDIRECT_PATH } from "@/lib/gmail";
+import { exchangeCode, redirectUri } from "@/lib/gmail";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,8 +20,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const redirectUri = new URL(REDIRECT_PATH, req.url).toString();
-    const tok = await exchangeCode(code, redirectUri);
+    const tok = await exchangeCode(code, redirectUri());
     const db = supabaseAdmin();
     const { error } = await db.from("gmail_accounts").upsert(
       {

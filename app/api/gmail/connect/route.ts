@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { getSessionUser } from "@/lib/auth";
-import { authUrl, gmailConfigured, REDIRECT_PATH } from "@/lib/gmail";
+import { authUrl, gmailConfigured, redirectUri } from "@/lib/gmail";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,8 +14,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Gmail integration not configured yet" }, { status: 503 });
   }
   const state = crypto.randomBytes(16).toString("hex");
-  const redirectUri = new URL(REDIRECT_PATH, req.url).toString();
-  const res = NextResponse.redirect(authUrl(redirectUri, state));
+  const res = NextResponse.redirect(authUrl(redirectUri(), state));
   res.cookies.set("gmail_oauth_state", state, {
     httpOnly: true,
     secure: true,

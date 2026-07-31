@@ -19,6 +19,13 @@ const SCOPE = "https://www.googleapis.com/auth/gmail.readonly https://www.google
 
 export const REDIRECT_PATH = "/api/gmail/callback";
 
+/** Canonical redirect URI — must byte-match the one registered in Google
+ * Cloud, regardless of which host (deployment URL, preview) served the app. */
+export function redirectUri(): string {
+  const base = envOptional("APP_URL") ?? "https://lpo-sales-engine.vercel.app";
+  return `${base}${REDIRECT_PATH}`;
+}
+
 export function gmailConfigured(): boolean {
   return Boolean(envOptional("GOOGLE_CLIENT_ID") && envOptional("GOOGLE_CLIENT_SECRET"));
 }

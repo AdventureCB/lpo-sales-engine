@@ -32,7 +32,9 @@ export async function middleware(req: NextRequest) {
   } = await supabase.auth.getUser();
 
   if (!user) {
-    if (pathname.startsWith("/api/")) {
+    // Gmail OAuth legs are browser navigations, not fetches — send the
+    // person to login instead of a bare 401.
+    if (pathname.startsWith("/api/") && !pathname.startsWith("/api/gmail/")) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
     const url = req.nextUrl.clone();
