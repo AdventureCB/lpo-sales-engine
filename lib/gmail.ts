@@ -13,7 +13,9 @@ import { normalizeEmail } from "./identity";
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
-const SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+// readonly powers the timeline sweep; send is granted up front so reps only
+// consent once — unused until the compose feature ships.
+const SCOPE = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send";
 
 export const REDIRECT_PATH = "/api/gmail/callback";
 
