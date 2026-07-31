@@ -16,6 +16,8 @@ const REQUIRED_ENV = [
   "CRON_SECRET",
   "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET",
+  "KLAVIYO_OAUTH_CLIENT_ID",
+  "KLAVIYO_OAUTH_CLIENT_SECRET",
 ] as const;
 
 /** Deploy check: reports which env vars are present (booleans only, never values).
@@ -24,10 +26,13 @@ const REQUIRED_ENV = [
 export async function GET() {
   const envStatus = Object.fromEntries(REQUIRED_ENV.map((k) => [k, Boolean(process.env[k])]));
   const cid = process.env.GOOGLE_CLIENT_ID ?? "";
+  const kid = process.env.KLAVIYO_OAUTH_CLIENT_ID ?? "";
   return NextResponse.json({
     ok: true,
     env: envStatus,
     googleClientIdPrefix: cid.slice(0, 20),
     googleClientIdLength: cid.length,
+    klaviyoClientIdPrefix: kid.slice(0, 8),
+    klaviyoClientIdLength: kid.length,
   });
 }
