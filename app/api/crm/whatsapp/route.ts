@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
-import { klaviyoAccessToken, kOauthFetch } from "@/lib/klaviyo-oauth";
-import { syncConversation } from "@/lib/whatsapp";
+import { klaviyoAccessToken } from "@/lib/klaviyo-oauth";
+import { discoverWaMetrics, sendWhatsApp, syncWhatsAppEvents } from "@/lib/whatsapp";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,16 +68,24 @@ export async function POST(req: NextRequest) {
   if (!token) return NextResponse.json({ error: "Klaviyo not connected" }, { status: 503 });
 
   if (body.refresh) {
-    // One live pull per profile per 10s, however many viewers/poll ticks.
-    const key = `wa_refresh:${body.profileId}`;
+    // One live event sweep per 10s total, however many viewers/poll ticks —
+    // the event queries cover every thread at once.
+    const key = "wa_refresh";
     const { data: last } = await db.from("crm_sync_state").select("value").eq("key", key).maybeSingle();
     const lastAt = (last?.value as any)?.at ?? 0;
     if (Date.now() - lastAt < 10_000) return NextResponse.json({ ok: true, throttled: true });
     await db.from("crm_sync_state").upsert({ key, value: { at: Date.now() } }, { onConflict: "key" });
-    const fresh = await syncConversation(db, token, body.profileId).catch((e) => {
+    const metrics = await discoverWaMetrics(db, token);
+    if (!metrics) return NextResponse.json({ ok: true, fresh: 0 });
+    const { data: crow } = await db.from("crm_sync_state").select("value").eq("key", "wa_cursor").maybeSingle();
+    const cursor: string = (crow?.value as any)?.after ?? new Date(Date.now() - 86400_000).toISOString();
+    const { fresh, newestAt } = await syncWhatsAppEvents(db, token, metrics, cursor).catch((e) => {
       console.error("wa refresh", e);
-      return 0;
+      return { fresh: 0, newestAt: null };
     });
+    if (newestAt) {
+      await db.from("crm_sync_state").upsert({ key: "wa_cursor", value: { after: newestAt } }, { onConflict: "key" });
+    }
     return NextResponse.json({ ok: true, fresh });
   }
 
@@ -86,30 +94,10 @@ export async function POST(req: NextRequest) {
   if (text.length > 1024) return NextResponse.json({ error: "WhatsApp messages max 1024 chars" }, { status: 400 });
 
   try {
-    await kOauthFetch(token, "/conversation-messages/", {
-      method: "POST",
-      body: JSON.stringify({
-        data: {
-          type: "conversation-message",
-          attributes: { channel: "whatsapp", body: text },
-          relationships: { profile: { data: { type: "profile", id: body.profileId } } },
-        },
-      }),
-    });
+    await sendWhatsApp(db, token, body.profileId, text, user.email);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    // Common until Klaviyo approves Conversations access for the account.
     return NextResponse.json({ error: msg }, { status: 502 });
   }
-
-  // Optimistic local echo; the next sync reconciles with Klaviyo's record.
-  await db.from("whatsapp_messages").insert({
-    klaviyo_message_id: `local:${crypto.randomUUID()}`,
-    profile_id: body.profileId,
-    direction: "outbound",
-    body: text,
-    sent_at: new Date().toISOString(),
-    raw: { sent_by: user.email },
-  });
   return NextResponse.json({ ok: true });
 }

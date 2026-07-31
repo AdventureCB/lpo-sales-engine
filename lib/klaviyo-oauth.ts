@@ -11,7 +11,7 @@ import { env, envOptional } from "./env";
 const AUTHORIZE_URL = "https://www.klaviyo.com/oauth/authorize";
 const TOKEN_URL = "https://a.klaviyo.com/oauth/token";
 const API = "https://a.klaviyo.com/api";
-const REVISION = "2025-04-15";
+const REVISION = "2026-07-15"; // Conversations endpoints require ≥2026-01-15
 
 export const KLAVIYO_SCOPES =
   "conversations:read conversations:write profiles:read events:read metrics:read";
