@@ -18,8 +18,16 @@ const REQUIRED_ENV = [
   "GOOGLE_CLIENT_SECRET",
 ] as const;
 
-/** Deploy check: reports which env vars are present (booleans only, never values). */
+/** Deploy check: reports which env vars are present (booleans only, never values).
+ * Exception: the OAuth client id IS public (it appears in every consent URL),
+ * so expose enough of it to debug mismatches. */
 export async function GET() {
   const envStatus = Object.fromEntries(REQUIRED_ENV.map((k) => [k, Boolean(process.env[k])]));
-  return NextResponse.json({ ok: true, env: envStatus });
+  const cid = process.env.GOOGLE_CLIENT_ID ?? "";
+  return NextResponse.json({
+    ok: true,
+    env: envStatus,
+    googleClientIdPrefix: cid.slice(0, 20),
+    googleClientIdLength: cid.length,
+  });
 }
