@@ -19,17 +19,18 @@ export async function POST(req: NextRequest) {
   if (!isAuthorizedCron(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  let body: { orders?: any[] };
+  let body: { orders?: any[]; emails?: string[] };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
   const orders = body.orders ?? [];
-  if (orders.length === 0) return NextResponse.json({ ok: true, ingested: 0 });
-
   const db = supabaseAdmin();
-  const emails = new Set<string>();
+  const emails = new Set<string>((body.emails ?? []).map((e) => e.toLowerCase()));
+  if (orders.length === 0 && emails.size === 0) {
+    return NextResponse.json({ ok: true, ingested: 0 });
+  }
   let ingested = 0;
   for (const order of orders) {
     if (!order?.id) continue;

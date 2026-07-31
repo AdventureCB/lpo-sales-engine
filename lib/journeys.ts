@@ -15,6 +15,7 @@ const DEPOSIT_MIN_CENTS = 49_900; // ≈$500 ±$1
 const DEPOSIT_MAX_CENTS = 50_100;
 const CONFIRM_THRESHOLD_CENTS = 500_000; // $5k cumulative eligible
 const WINDOW_DAYS = 180;
+const FOLLOW_ON_DAYS = 30; // orders this soon after a confirmation attach to it
 const COMMISSION_CENTS = 10_000; // $100 flat, earned at confirmation
 
 const MERCH_TITLE_RE = /hoodie|t-shirt|tee\b|sweatshirt|beanie|\bhat\b|sticker|merch/i;
@@ -174,49 +175,21 @@ export async function recomputeJourneysForEmail(db: SupabaseClient, emailRaw: st
     await db.from("sales_journeys").delete().in("id", staleIds).neq("state", "paid");
   }
 
-  // Walk oldest-first, building journeys.
-  let open: {
-    id: string | null;
-    depositAt: string;
+  // Walk oldest-first, building journeys in memory; insert at the end.
+  interface Pending {
+    state: "deposit_only" | "confirmed" | "walk_in" | "expired";
+    depositAt: string | null;
+    confirmedAt: string | null;
     cumulative: number;
     orderIds: string[];
     codeRep: string | null;
-  } | null = null;
+  }
+  const journeys: Pending[] = [];
+  const classify = (orderId: string, c: string) =>
+    db.from("sales_orders").update({ classification: c }).eq("id", orderId);
 
-  const finalize = async (
-    j: NonNullable<typeof open>,
-    state: "deposit_only" | "confirmed" | "walk_in" | "expired",
-    confirmedAt: string | null,
-    cumulative: number
-  ) => {
-    const codeRep = j.codeRep;
-    const ownerRep = await dealOwnerRep(db, email, reps);
-    const isConflict = Boolean(codeRep && ownerRep && codeRep !== ownerRep);
-    const repId = codeRep ?? ownerRep;
-    const commission = state === "confirmed" || state === "walk_in" ? COMMISSION_CENTS : 0;
-    const { data: journey, error } = await db
-      .from("sales_journeys")
-      .insert({
-        rep_id: isConflict ? null : repId,
-        code_rep_id: codeRep,
-        deal_owner_rep_id: ownerRep,
-        state,
-        is_conflict: isConflict,
-        deposit_started_at: state === "walk_in" ? null : j.depositAt,
-        confirmed_at: confirmedAt,
-        expires_at:
-          state === "deposit_only" || state === "expired"
-            ? new Date(Date.parse(j.depositAt) + WINDOW_DAYS * 86400_000).toISOString()
-            : null,
-        eligible_total_cents: cumulative,
-        commission_amount_cents: isConflict ? 0 : commission,
-        updated_at: new Date().toISOString(),
-      })
-      .select("id")
-      .single();
-    if (error) throw new Error(`journey insert: ${error.message}`);
-    await db.from("sales_orders").update({ journey_id: journey.id }).in("id", j.orderIds);
-  };
+  let open: Pending | null = null;
+  let lastClosed: Pending | null = null; // most recent confirmed/walk_in
 
   for (const order of orders) {
     const at = order.order_created_at ?? new Date().toISOString();
@@ -224,19 +197,20 @@ export async function recomputeJourneysForEmail(db: SupabaseClient, emailRaw: st
     const codeRep = attributeCodeRep(order, reps, codeRegistry);
 
     // Close an open journey whose window lapsed before this order.
-    if (open && Date.parse(at) > Date.parse(open.depositAt) + WINDOW_DAYS * 86400_000) {
-      await finalize(open, "expired", null, open.cumulative);
+    if (open && Date.parse(at) > Date.parse(open.depositAt!) + WINDOW_DAYS * 86400_000) {
+      open.state = "expired";
+      journeys.push(open);
       open = null;
     }
 
     if (!open && isDepositOrder(order, productTypes, eligible)) {
-      await db.from("sales_orders").update({ classification: "deposit" }).eq("id", order.id);
-      open = { id: null, depositAt: at, cumulative: eligible, orderIds: [order.id], codeRep };
+      await classify(order.id, "deposit");
+      open = { state: "deposit_only", depositAt: at, confirmedAt: null, cumulative: eligible, orderIds: [order.id], codeRep };
       continue;
     }
 
     if (eligible <= 0) {
-      await db.from("sales_orders").update({ classification: "other" }).eq("id", order.id);
+      await classify(order.id, "other");
       continue;
     }
 
@@ -245,27 +219,66 @@ export async function recomputeJourneysForEmail(db: SupabaseClient, emailRaw: st
       open.orderIds.push(order.id);
       open.codeRep = open.codeRep ?? codeRep;
       if (open.cumulative >= CONFIRM_THRESHOLD_CENTS) {
-        await db.from("sales_orders").update({ classification: "confirmation" }).eq("id", order.id);
-        await finalize(open, "confirmed", at, open.cumulative);
+        await classify(order.id, "confirmation");
+        open.state = "confirmed";
+        open.confirmedAt = at;
+        journeys.push(open);
+        lastClosed = open;
         open = null;
       } else {
-        await db.from("sales_orders").update({ classification: "other" }).eq("id", order.id);
+        await classify(order.id, "other");
       }
+    } else if (
+      lastClosed?.confirmedAt &&
+      Date.parse(at) - Date.parse(lastClosed.confirmedAt) <= FOLLOW_ON_DAYS * 86400_000
+    ) {
+      // Follow-on order shortly after a confirmed purchase (split checkout,
+      // add-ons) — attach to that journey; one purchase, one commission.
+      await classify(order.id, "other");
+      lastClosed.cumulative += eligible;
+      lastClosed.orderIds.push(order.id);
     } else if (eligible >= CONFIRM_THRESHOLD_CENTS) {
-      await db.from("sales_orders").update({ classification: "walk_in" }).eq("id", order.id);
-      await finalize(
-        { id: null, depositAt: at, cumulative: eligible, orderIds: [order.id], codeRep },
-        "walk_in",
-        at,
-        eligible
-      );
+      await classify(order.id, "walk_in");
+      const j: Pending = { state: "walk_in", depositAt: null, confirmedAt: at, cumulative: eligible, orderIds: [order.id], codeRep };
+      journeys.push(j);
+      lastClosed = j;
     } else {
-      await db.from("sales_orders").update({ classification: "other" }).eq("id", order.id);
+      await classify(order.id, "other");
     }
   }
 
   if (open) {
-    const state = Date.now() > Date.parse(open.depositAt) + WINDOW_DAYS * 86400_000 ? "expired" : "deposit_only";
-    await finalize(open, state, null, open.cumulative);
+    open.state =
+      Date.now() > Date.parse(open.depositAt!) + WINDOW_DAYS * 86400_000 ? "expired" : "deposit_only";
+    journeys.push(open);
+  }
+
+  const ownerRep = await dealOwnerRep(db, email, reps);
+  for (const j of journeys) {
+    const isConflict = Boolean(j.codeRep && ownerRep && j.codeRep !== ownerRep);
+    const repId = j.codeRep ?? ownerRep;
+    const commission = j.state === "confirmed" || j.state === "walk_in" ? COMMISSION_CENTS : 0;
+    const { data: journey, error } = await db
+      .from("sales_journeys")
+      .insert({
+        rep_id: isConflict ? null : repId,
+        code_rep_id: j.codeRep,
+        deal_owner_rep_id: ownerRep,
+        state: j.state,
+        is_conflict: isConflict,
+        deposit_started_at: j.depositAt,
+        confirmed_at: j.confirmedAt,
+        expires_at:
+          j.state === "deposit_only" || j.state === "expired"
+            ? new Date(Date.parse(j.depositAt!) + WINDOW_DAYS * 86400_000).toISOString()
+            : null,
+        eligible_total_cents: j.cumulative,
+        commission_amount_cents: isConflict ? 0 : commission,
+        updated_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+    if (error) throw new Error(`journey insert: ${error.message}`);
+    await db.from("sales_orders").update({ journey_id: journey.id }).in("id", j.orderIds);
   }
 }
