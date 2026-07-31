@@ -4,8 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 
 interface DealData {
   deal: any;
-  timeline: { kind: string; at: string | null; title: string; body: string | null; actor: string | null; done: boolean; due: string | null }[];
+  timeline: { id?: string; kind: string; at: string | null; title: string; body: string | null; actor: string | null; done: boolean; due: string | null }[];
   stages: { id: string; name: string; crm_pipelines: { name: string } | null }[];
+  sprints: { id: string; name: string; owner: string }[];
+  dealSprintIds: string[];
+  sprintOwners: string[];
 }
 
 const KIND_ICON: Record<string, string> = {
@@ -25,6 +28,12 @@ export function DealDetailView({ dealId }: { dealId: string }) {
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [warn, setWarn] = useState<string | null>(null);
+  const [schedType, setSchedType] = useState("call");
+  const [schedSubject, setSchedSubject] = useState("");
+  const [schedDue, setSchedDue] = useState("");
+  const [sprintPick, setSprintPick] = useState("");
+  const [newSprintName, setNewSprintName] = useState("");
+  const [newSprintOwner, setNewSprintOwner] = useState("");
 
   const load = useCallback(
     () =>
@@ -38,7 +47,7 @@ export function DealDetailView({ dealId }: { dealId: string }) {
     void load();
   }, [load]);
 
-  const update = async (fields: Record<string, string>) => {
+  const update = async (fields: Record<string, unknown>) => {
     setSaving(true);
     setWarn(null);
     const r = await fetch("/api/crm/deal", {
@@ -151,7 +160,136 @@ export function DealDetailView({ dealId }: { dealId: string }) {
                 Add note
               </button>
             </div>
+
+            <div className="panel-h" style={{ marginTop: 16 }}>Schedule activity</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <select className="vmsel" style={{ width: "auto" }} value={schedType} onChange={(e) => setSchedType(e.target.value)}>
+                <option value="call">📞 Call</option>
+                <option value="task">📋 Task</option>
+                <option value="meeting">📅 Meeting</option>
+                <option value="email">✉️ Email</option>
+              </select>
+              <input
+                className="vmsel"
+                style={{ flex: 1, minWidth: 160 }}
+                placeholder="What needs to happen?"
+                value={schedSubject}
+                onChange={(e) => setSchedSubject(e.target.value)}
+              />
+              <input
+                type="datetime-local"
+                className="vmsel"
+                style={{ width: "auto" }}
+                value={schedDue}
+                onChange={(e) => setSchedDue(e.target.value)}
+              />
+              <button
+                className="btn primary"
+                style={{ padding: "8px 14px", fontSize: 13 }}
+                disabled={!schedSubject.trim() || saving}
+                onClick={() => {
+                  void update({
+                    activity: {
+                      type: schedType,
+                      subject: schedSubject,
+                      dueAt: schedDue ? new Date(schedDue).toISOString() : null,
+                    },
+                  });
+                  setSchedSubject("");
+                  setSchedDue("");
+                }}
+              >
+                Schedule
+              </button>
+            </div>
+
+            <div className="panel-h" style={{ marginTop: 16 }}>Call sprint</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <select className="vmsel" style={{ width: "auto", minWidth: 180 }} value={sprintPick} onChange={(e) => setSprintPick(e.target.value)}>
+                <option value="">Add to sprint…</option>
+                {data.sprints.map((s) => (
+                  <option key={s.id} value={s.id} disabled={data.dealSprintIds.includes(s.id)}>
+                    {s.name} · {s.owner.split("@")[0]}{data.dealSprintIds.includes(s.id) ? " ✓ (already in)" : ""}
+                  </option>
+                ))}
+                <option value="__new">＋ New sprint…</option>
+              </select>
+              {sprintPick === "__new" && (
+                <>
+                  <input
+                    className="vmsel"
+                    style={{ width: "auto" }}
+                    placeholder="Sprint name"
+                    value={newSprintName}
+                    onChange={(e) => setNewSprintName(e.target.value)}
+                  />
+                  <select className="vmsel" style={{ width: "auto" }} value={newSprintOwner} onChange={(e) => setNewSprintOwner(e.target.value)}>
+                    <option value="">Rep…</option>
+                    {data.sprintOwners.map((o) => (
+                      <option key={o} value={o}>{o.split("@")[0]}</option>
+                    ))}
+                  </select>
+                </>
+              )}
+              <button
+                className="btn ghost"
+                style={{ padding: "8px 13px", fontSize: 13 }}
+                disabled={
+                  saving ||
+                  (sprintPick === "__new" ? !newSprintName.trim() || !newSprintOwner : !sprintPick)
+                }
+                onClick={() => {
+                  void update({
+                    sprint:
+                      sprintPick === "__new"
+                        ? { name: newSprintName, owner: newSprintOwner }
+                        : { sprintId: sprintPick },
+                  });
+                  setSprintPick("");
+                  setNewSprintName("");
+                }}
+              >
+                Add to sprint
+              </button>
+              {data.dealSprintIds.length > 0 && (
+                <span style={{ fontSize: 12, color: "var(--text-3)" }}>
+                  In {data.dealSprintIds.length} sprint{data.dealSprintIds.length === 1 ? "" : "s"} — shows in that rep’s dialer
+                </span>
+              )}
+            </div>
           </div>
+
+          {(() => {
+            const upcoming = data.timeline
+              .filter((t) => t.id && t.due && !t.done && t.kind !== "system")
+              .sort((a, b) => (a.due ?? "").localeCompare(b.due ?? ""));
+            if (upcoming.length === 0) return null;
+            return (
+              <div className="card" style={{ marginBottom: 18 }}>
+                <div className="panel-h">Upcoming</div>
+                {upcoming.map((t) => (
+                  <div className="stmt-row" key={t.id} style={{ alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
+                      <span>{KIND_ICON[t.kind] ?? "•"}</span>
+                      <b style={{ fontSize: 13 }}>{t.title}</b>
+                      <span style={{ fontSize: 12, color: Date.parse(t.due!) < Date.now() ? "var(--crit)" : "var(--text-3)" }}>
+                        {Date.parse(t.due!) < Date.now() ? "overdue · " : "due "}
+                        {fmtWhen(t.due)}
+                      </span>
+                    </div>
+                    <button
+                      className="btn ghost"
+                      style={{ padding: "4px 10px", fontSize: 12, flexShrink: 0 }}
+                      disabled={saving}
+                      onClick={() => update({ completeActivityId: t.id })}
+                    >
+                      ✓ Done
+                    </button>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
 
           <div className="card">
             <div className="panel-h">Timeline</div>

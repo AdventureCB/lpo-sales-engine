@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
 import { envOptional } from "@/lib/env";
-import { updateDealStage, addDealNote } from "@/lib/pipedrive";
+import { updateDealStage, addDealNote, createActivity, updateActivity } from "@/lib/pipedrive";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   const activityFilter = deal.contact_id
     ? `deal_id.eq.${id},contact_id.eq.${deal.contact_id}`
     : `deal_id.eq.${id}`;
-  const [activities, calls, stages] = await Promise.all([
+  const [activities, calls, stages, sprints, dealSprints, owners] = await Promise.all([
     db
       .from("crm_activities")
       .select("id, type, subject, body, actor, due_at, done_at, occurred_at, deal_id")
@@ -49,10 +49,18 @@ export async function GET(req: NextRequest) {
       .from("crm_stages")
       .select("id, name, pipeline_id, crm_pipelines ( name )")
       .order("sort_order"),
+    db
+      .from("crm_sprints")
+      .select("id, name, owner")
+      .eq("status", "active")
+      .order("created_at", { ascending: false }),
+    db.from("crm_sprint_items").select("sprint_id").eq("deal_id", id),
+    db.from("app_users").select("email, role").order("email"),
   ]);
 
   const timeline = [
     ...(activities.data ?? []).map((a) => ({
+      id: a.id,
       kind: a.type,
       at: a.occurred_at,
       title: (a.subject ?? a.type) + (a.deal_id === id ? "" : " · (contact)"),
@@ -72,7 +80,14 @@ export async function GET(req: NextRequest) {
     })),
   ].sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""));
 
-  return NextResponse.json({ deal, timeline, stages: stages.data ?? [] });
+  return NextResponse.json({
+    deal,
+    timeline,
+    stages: stages.data ?? [],
+    sprints: sprints.data ?? [],
+    dealSprintIds: (dealSprints.data ?? []).map((s) => s.sprint_id),
+    sprintOwners: (owners.data ?? []).map((u) => u.email),
+  });
 }
 
 /**
@@ -86,7 +101,16 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
 
-  let body: { id?: string; stageId?: string; status?: string; note?: string; ownerPipedriveId?: number };
+  let body: {
+    id?: string;
+    stageId?: string;
+    status?: string;
+    note?: string;
+    ownerPipedriveId?: number;
+    activity?: { type: string; subject: string; dueAt?: string | null };
+    completeActivityId?: string;
+    sprint?: { sprintId?: string; name?: string; owner?: string };
+  };
   try {
     body = await req.json();
   } catch {
@@ -97,13 +121,93 @@ export async function POST(req: NextRequest) {
   const db = supabaseAdmin();
   const { data: deal } = await db
     .from("crm_deals")
-    .select("id, pipedrive_deal_id")
+    .select("id, pipedrive_deal_id, contact_id")
     .eq("id", body.id)
     .maybeSingle();
   if (!deal) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   let writeThroughError: string | null = null;
   const canWriteThrough = Boolean(envOptional("PIPEDRIVE_API_TOKEN")) && deal.pipedrive_deal_id;
+
+  // Schedule an activity (call / task / meeting / email) with a due time.
+  if (body.activity) {
+    const { type, subject, dueAt } = body.activity;
+    if (!["call", "task", "meeting", "email"].includes(type) || !subject?.trim()) {
+      return NextResponse.json({ error: "activity type/subject invalid" }, { status: 400 });
+    }
+    let pipedriveActivityId: number | null = null;
+    if (canWriteThrough) {
+      try {
+        pipedriveActivityId = await createActivity({
+          dealId: deal.pipedrive_deal_id!,
+          subject: subject.trim(),
+          type,
+          dueAtIso: dueAt ?? null,
+        });
+      } catch (e) {
+        writeThroughError = e instanceof Error ? e.message : String(e);
+      }
+    }
+    const { error } = await db.from("crm_activities").insert({
+      deal_id: deal.id,
+      contact_id: deal.contact_id,
+      type,
+      subject: subject.trim(),
+      actor: user.email,
+      due_at: dueAt ?? null,
+      occurred_at: new Date().toISOString(),
+      pipedrive_activity_id: pipedriveActivityId,
+    });
+    if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+  }
+
+  // Mark a scheduled activity done (write-through to Pipedrive when linked).
+  if (body.completeActivityId) {
+    const { data: act } = await db
+      .from("crm_activities")
+      .select("id, pipedrive_activity_id")
+      .eq("id", body.completeActivityId)
+      .maybeSingle();
+    if (!act) return NextResponse.json({ error: "activity not found" }, { status: 404 });
+    const { error } = await db
+      .from("crm_activities")
+      .update({ done_at: new Date().toISOString() })
+      .eq("id", act.id);
+    if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+    if (act.pipedrive_activity_id && canWriteThrough) {
+      try {
+        await updateActivity(act.pipedrive_activity_id, { done: 1 });
+      } catch (e) {
+        writeThroughError = e instanceof Error ? e.message : String(e);
+      }
+    }
+  }
+
+  // Add this deal to a call sprint — existing, or created on the spot.
+  if (body.sprint) {
+    let sprintId = body.sprint.sprintId ?? null;
+    if (!sprintId && body.sprint.name?.trim() && body.sprint.owner?.trim()) {
+      const { data: created, error } = await db
+        .from("crm_sprints")
+        .insert({ name: body.sprint.name.trim(), owner: body.sprint.owner.trim() })
+        .select("id")
+        .single();
+      if (error || !created) return NextResponse.json({ error: "db error" }, { status: 500 });
+      sprintId = created.id;
+    }
+    if (!sprintId) return NextResponse.json({ error: "sprintId or name+owner required" }, { status: 400 });
+    const { count } = await db
+      .from("crm_sprint_items")
+      .select("*", { count: "exact", head: true })
+      .eq("sprint_id", sprintId);
+    const { error } = await db
+      .from("crm_sprint_items")
+      .upsert(
+        { sprint_id: sprintId, deal_id: deal.id, position: count ?? 0 },
+        { onConflict: "sprint_id,deal_id", ignoreDuplicates: true }
+      );
+    if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+  }
 
   if (body.note?.trim()) {
     const { error } = await db.from("crm_activities").insert({

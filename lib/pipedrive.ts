@@ -107,9 +107,30 @@ export async function getRecentPersonActivities(personId: number): Promise<Perso
 
 export async function updateActivity(
   id: number,
-  fields: { deal_id?: number; note?: string }
+  fields: { deal_id?: number; note?: string; done?: 0 | 1 }
 ): Promise<void> {
   await pd(V1, `/activities/${id}`, { method: "PUT", body: JSON.stringify(fields) });
+}
+
+/** Write-through for CRM-scheduled activities. due_date/due_time are UTC. */
+export async function createActivity(opts: {
+  dealId: number;
+  subject: string;
+  type: string;
+  dueAtIso?: string | null;
+}): Promise<number | null> {
+  const body: Record<string, unknown> = {
+    deal_id: opts.dealId,
+    subject: opts.subject,
+    type: opts.type,
+  };
+  if (opts.dueAtIso) {
+    const d = new Date(opts.dueAtIso);
+    body.due_date = d.toISOString().slice(0, 10);
+    body.due_time = d.toISOString().slice(11, 16);
+  }
+  const data = await pd(V1, "/activities", { method: "POST", body: JSON.stringify(body) });
+  return data?.id ?? null;
 }
 
 export async function addDealNote(dealId: number, content: string): Promise<void> {
