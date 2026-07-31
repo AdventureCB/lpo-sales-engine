@@ -32,9 +32,13 @@ export async function middleware(req: NextRequest) {
   } = await supabase.auth.getUser();
 
   if (!user) {
-    // Gmail OAuth legs are browser navigations, not fetches — send the
-    // person to login instead of a bare 401.
-    if (pathname.startsWith("/api/") && !pathname.startsWith("/api/gmail/")) {
+    // OAuth legs (Gmail, Klaviyo) are browser navigations, not fetches —
+    // send the person to login instead of a bare 401.
+    if (
+      pathname.startsWith("/api/") &&
+      !pathname.startsWith("/api/gmail/") &&
+      !pathname.startsWith("/api/klaviyo/")
+    ) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
     const url = req.nextUrl.clone();

@@ -7,6 +7,7 @@ const TABS = [
   { label: "🔥 Hot List", href: "/hot-list", live: true },
   { label: "Scoreboard", href: "/scoreboard", live: true },
   { label: "Lookup", href: "/lookup", live: true },
+  { label: "WhatsApp", href: "/whatsapp", live: true },
   { label: "CRM", href: "/crm", live: true, adminOnly: true },
   { label: "Commissions", href: "/commissions", live: true, adminOnly: true },
 ];
