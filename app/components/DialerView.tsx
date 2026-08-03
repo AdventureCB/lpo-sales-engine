@@ -115,15 +115,67 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [searching, setSearching] = useState(false);
 
   const [inCall, setInCall] = useState(false);
-  // How calls are placed: Quo desktop app (tel: handoff) or Quo web
-  // (clipboard handoff — my.quo.com has no dial URL). Sticky per machine.
-  const [dialMethod, setDialMethod] = useState<"desktop" | "web">("desktop");
+  // How calls are placed: Quo desktop app (tel: handoff), Quo web (clipboard
+  // handoff), or in-tab browser calling via Telnyx WebRTC. Sticky per machine.
+  const [dialMethod, setDialMethod] = useState<"desktop" | "web" | "browser">("desktop");
   useEffect(() => {
-    if (localStorage.getItem("dialMethod") === "web") setDialMethod("web");
+    const m = localStorage.getItem("dialMethod");
+    if (m === "web" || m === "browser") setDialMethod(m);
   }, []);
-  const pickDialMethod = (m: "desktop" | "web") => {
+  const pickDialMethod = (m: "desktop" | "web" | "browser") => {
     setDialMethod(m);
     localStorage.setItem("dialMethod", m);
+  };
+  const telnyxClientRef = useRef<any>(null);
+  const telnyxCallRef = useRef<any>(null);
+  const [browserCallState, setBrowserCallState] = useState<string | null>(null);
+
+  /** In-tab call via Telnyx WebRTC — the post-Quo path being piloted. */
+  const browserCall = async (phone: string) => {
+    setBrowserCallState("connecting");
+    try {
+      const r = await fetch("/api/telnyx/token");
+      if (!r.ok) {
+        const d = await r.json().catch(() => null);
+        throw new Error(d?.error ?? (r.status === 503 ? "Telnyx not configured yet" : `HTTP ${r.status}`));
+      }
+      const { token, callerNumber } = await r.json();
+      const { TelnyxRTC } = await import("@telnyx/webrtc");
+      if (telnyxClientRef.current) {
+        try { telnyxClientRef.current.disconnect(); } catch {}
+      }
+      const client = new TelnyxRTC({ login_token: token });
+      telnyxClientRef.current = client;
+      client.remoteElement = "telnyx-audio";
+      client.on("telnyx.ready", () => {
+        const call = client.newCall({
+          destinationNumber: phone,
+          callerNumber: callerNumber ?? undefined,
+          audio: true,
+          video: false,
+        });
+        telnyxCallRef.current = call;
+        setBrowserCallState("ringing");
+      });
+      client.on("telnyx.error", (e: any) => {
+        console.error("telnyx error", e);
+        setBrowserCallState(`error: ${e?.message ?? "connection failed"}`);
+      });
+      client.on("telnyx.notification", (n: any) => {
+        if (n?.type !== "callUpdate" || !n.call) return;
+        const s = n.call.state;
+        if (s === "active") setBrowserCallState("active");
+        if (s === "ringing" || s === "trying" || s === "requesting") setBrowserCallState("ringing");
+        if (s === "hangup" || s === "destroy") {
+          setBrowserCallState(null);
+          telnyxCallRef.current = null;
+          hangUp();
+        }
+      });
+      client.connect();
+    } catch (e) {
+      setBrowserCallState(`error: ${e instanceof Error ? e.message : String(e)}`);
+    }
   };
   const [awaitingDispo, setAwaitingDispo] = useState(false);
   const [callSec, setCallSec] = useState(0);
@@ -211,7 +263,9 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ dealId: lead.dealId, sprintId: lead.sprintId, crmDealId: lead.crmDealId }),
     }).catch(() => {});
-    if (dialMethod === "web") {
+    if (dialMethod === "browser") {
+      void browserCall(lead.phone);
+    } else if (dialMethod === "web") {
       // Quo web (my.quo.com) has no dial deep-link, so the fastest handoff is
       // clipboard: number is copied, rep pastes into the Quo tab. Tracking is
       // unaffected — webhooks record the call wherever it's placed.
@@ -252,7 +306,10 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
    * In web mode the call lives in the Quo browser tab — nothing to send. */
   const endCall = async () => {
     if (!inCall) return;
-    if (window.__TAURI__ && dialMethod !== "web") {
+    if (dialMethod === "browser") {
+      try { telnyxCallRef.current?.hangup(); } catch {}
+      setBrowserCallState(null);
+    } else if (window.__TAURI__ && dialMethod !== "web") {
       await window.__TAURI__.core.invoke("end_call").catch((e) => console.error("end_call", e));
     }
     hangUp();
@@ -666,6 +723,15 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                   </div>
                 )}
               </div>
+              <audio id="telnyx-audio" autoPlay />
+              {inCall && dialMethod === "browser" && browserCallState && (
+                <div style={{ fontSize: 12.5, color: browserCallState.startsWith("error") ? "var(--crit)" : "var(--text-2)", marginTop: 8 }}>
+                  {browserCallState === "connecting" && "🌐 Connecting…"}
+                  {browserCallState === "ringing" && "🌐 Ringing — in-browser call via Telnyx"}
+                  {browserCallState === "active" && "🌐 Live — talking through this tab"}
+                  {browserCallState.startsWith("error") && `🌐 ${browserCallState}`}
+                </div>
+              )}
               {inCall && dialMethod === "web" && (
                 <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 8 }}>
                   📋 Number copied — switch to the{" "}
@@ -756,6 +822,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
           >
             <option value="desktop">Quo desktop app</option>
             <option value="web">Quo web (copies number)</option>
+            <option value="browser">Browser call (Telnyx pilot)</option>
           </select>
           {dialMethod === "web" && (
             <button
