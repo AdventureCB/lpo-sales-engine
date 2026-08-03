@@ -55,6 +55,21 @@ export async function POST(req: NextRequest) {
   }
 
   const db = supabaseAdmin();
+
+  // Cost + quality reports annotate the call row rather than acting as
+  // lifecycle updates (they'd otherwise clobber the final status).
+  if (type === "call.cost" || type.includes("rtcp") || type.includes("quality")) {
+    const { data: existing } = await db
+      .from("call_events")
+      .select("id, raw")
+      .eq("quo_call_id", `tx:${p.call_session_id}`)
+      .maybeSingle();
+    if (existing) {
+      const raw = { ...(existing.raw ?? {}), [type === "call.cost" ? "cost" : "quality"]: p };
+      await db.from("call_events").update({ raw }).eq("id", existing.id);
+    }
+    return NextResponse.json({ ok: true, annotated: type });
+  }
   const durationS =
     p.answer_time && (p.end_time || p.hangup_time)
       ? Math.max(0, Math.round((Date.parse(p.end_time ?? p.hangup_time) - Date.parse(p.answer_time)) / 1000))
