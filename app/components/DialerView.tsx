@@ -177,10 +177,13 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const incomingRef = useRef<any>(null);
   const callerNumberRef = useRef<string | null>(null);
   const clientReadyRef = useRef<Promise<any> | null>(null);
+  // Visible registration state — "ready" is what makes inbound ring here.
+  const [telnyxConn, setTelnyxConn] = useState<string>("off");
 
   /** One persistent Telnyx client: dials out AND receives inbound rings. */
   const ensureTelnyxClient = (): Promise<any> => {
     if (clientReadyRef.current) return clientReadyRef.current;
+    setTelnyxConn("connecting…");
     clientReadyRef.current = (async () => {
       const r = await fetch("/api/telnyx/token");
       if (!r.ok) {
@@ -195,7 +198,17 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       client.remoteElement = "telnyx-audio";
       client.on("telnyx.error", (e: any) => {
         console.error("telnyx error", e);
+        setTelnyxConn(`error: ${e?.message ?? "unknown"}`);
         setBrowserCallState(`error: ${e?.message ?? "connection failed"}`);
+      });
+      client.on("telnyx.socket.close", () => {
+        setTelnyxConn("reconnecting…");
+        clientReadyRef.current = null;
+        setTimeout(() => {
+          if (localStorage.getItem("dialMethod") === "browser") {
+            ensureTelnyxClient().catch(() => {});
+          }
+        }, 5000);
       });
       client.on("telnyx.notification", (n: any) => {
         if (n?.type !== "callUpdate" || !n.call) return;
@@ -230,13 +243,15 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
         const t = setTimeout(() => reject(new Error("Telnyx connection timed out")), 15_000);
         client.on("telnyx.ready", () => {
           clearTimeout(t);
+          setTelnyxConn("ready");
           resolve();
         });
         client.connect();
       });
       return client;
     })();
-    clientReadyRef.current.catch(() => {
+    clientReadyRef.current.catch((e) => {
+      setTelnyxConn(`error: ${e instanceof Error ? e.message : String(e)}`);
       clientReadyRef.current = null; // allow retry after failure
     });
     return clientReadyRef.current;
@@ -1142,6 +1157,17 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
             >
               Open Quo web ↗
             </button>
+          )}
+          {dialMethod === "browser" && (
+            <span
+              style={{
+                fontSize: 11.5,
+                color: telnyxConn === "ready" ? "var(--ok, #0ca30c)" : telnyxConn.startsWith("error") ? "var(--crit)" : "var(--text-3)",
+              }}
+              title="Inbound calls ring here only while this shows ready"
+            >
+              {telnyxConn === "ready" ? "🟢 ready — inbound rings here" : `⚪ ${telnyxConn}`}
+            </span>
           )}
         </span>
       </div>
