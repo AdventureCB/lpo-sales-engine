@@ -1132,7 +1132,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
           >
             <option value="desktop">Quo desktop app</option>
             <option value="web">Quo web (copies number)</option>
-            <option value="browser">Browser call (Telnyx pilot)</option>
+            <option value="browser">In-app call (Telnyx pilot)</option>
           </select>
           {dialMethod === "web" && (
             <button
