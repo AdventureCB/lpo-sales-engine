@@ -146,7 +146,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       try {
         const call = telnyxCallRef.current;
         const pc =
-          call?.peerConnection ?? call?.session?.peerConnection ?? call?.peer?.instance ?? call?.pc ?? null;
+          call?.peer?.instance ?? call?.peerConnection ?? call?.session?.peerConnection ?? call?.pc ?? null;
         if (!pc?.getStats) {
           if (++misses === 3) setBrowserStats("stats unavailable in this SDK build");
           return;
@@ -200,6 +200,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       });
       client.on("telnyx.notification", (n: any) => {
         if (n?.type !== "callUpdate" || !n.call) return;
+        telnyxCallRef.current = n.call; // notifications carry the live call object
         const s = n.call.state;
         if (s === "active") {
           setBrowserCallState("active");
@@ -290,8 +291,9 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     pollRef.current = null;
   };
 
-  const dial = () => {
-    if (!lead?.phone || inCall || awaitingDispo || lead.callable === false) return;
+  const dial = (opts?: { redial?: boolean }) => {
+    if (!lead?.phone || inCall || (awaitingDispo && !opts?.redial) || lead.callable === false) return;
+    if (opts?.redial) setAwaitingDispo(false);
     dialStartRef.current = new Date().toISOString();
     setInCall(true);
     setCallSec(0);
@@ -434,6 +436,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       const tag = (document.activeElement as HTMLElement)?.tagName;
       if (["INPUT", "SELECT", "TEXTAREA"].includes(tag)) return;
       if (e.key === "Enter" && !inCall && !awaitingDispo) dial();
+      if ((e.key === "r" || e.key === "R") && awaitingDispo) dial({ redial: true });
       if ((e.key === "v" || e.key === "V") && inCall) dropVm();
       if ((e.key === "e" || e.key === "E") && inCall) void endCall();
       if ((e.key === "s" || e.key === "S") && !inCall && !awaitingDispo) skip();
@@ -738,7 +741,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
               <div className="dial-controls">
                 <button
                   className="btn primary big"
-                  onClick={dial}
+                  onClick={() => dial()}
                   disabled={inCall || awaitingDispo || lead.callable === false}
                 >
                   📞 Dial <kbd>⏎</kbd>
@@ -793,6 +796,9 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                       {label} <kbd>{num}</kbd>
                     </button>
                   ))}
+                  <button className="btn ghost" onClick={() => dial({ redial: true })} title="Call this contact again — no disposition logged yet">
+                    ↺ Redial <kbd>R</kbd>
+                  </button>
                 </div>
               )}
             </>
