@@ -152,6 +152,7 @@ export async function POST(req: NextRequest) {
       started_at: dialStartedAt,
       disposition,
       deal_id: dealId ?? null,
+      raw: body.quality ? { client_quality: body.quality } : null,
     });
     if (error && !/duplicate/i.test(error.message)) {
       return NextResponse.json({ error: "db error" }, { status: 500 });

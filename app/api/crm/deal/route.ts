@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
     deal.pipedrive_deal_id
       ? db
           .from("call_events")
-          .select("quo_call_id, direction, started_at, duration_s, classification, disposition, transcript:raw->>transcript")
+          .select("quo_call_id, direction, started_at, duration_s, classification, disposition, transcript:raw->>transcript, quality:raw->client_quality")
           .eq("deal_id", deal.pipedrive_deal_id)
           .order("started_at", { ascending: false })
           .limit(25)
@@ -76,6 +76,9 @@ export async function GET(req: NextRequest) {
       title: `${c.direction === "incoming" ? "Inbound" : "Outbound"} call · ${c.classification ?? "—"}${c.disposition ? ` · ${c.disposition}` : ""}`,
       body: [
         c.duration_s ? `${Math.round(c.duration_s / 60)}m ${c.duration_s % 60}s` : null,
+        c.quality
+          ? `📶 ${c.quality.avg_loss_pct ?? 0}% loss · ${c.quality.max_jitter_ms ?? 0}ms jitter`
+          : null,
         c.transcript ? `🎙 ${String(c.transcript).slice(0, 700)}${String(c.transcript).length > 700 ? "…" : ""}` : null,
       ]
         .filter(Boolean)
