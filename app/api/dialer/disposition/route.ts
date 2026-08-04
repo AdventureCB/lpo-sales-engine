@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
     sprintId?: string;
     crmDealId?: string;
     next?: { type?: string; subject?: string; dueAt?: string };
+    note?: string | null;
     quality?: { avg_loss_pct?: number; max_jitter_ms?: number; samples?: number; method?: string };
   };
   try {
@@ -56,23 +57,56 @@ export async function POST(req: NextRequest) {
     .limit(1)
     .maybeSingle();
 
+  // Resolve the CRM deal once — the note and next-step both hang off it.
+  const resolveCrmDeal = async (): Promise<{ id: string; contact_id: string | null } | null> => {
+    if (body.crmDealId) {
+      const { data } = await db.from("crm_deals").select("id, contact_id").eq("id", body.crmDealId).maybeSingle();
+      if (data) return data;
+    }
+    if (dealId) {
+      const { data } = await db
+        .from("crm_deals")
+        .select("id, contact_id")
+        .eq("pipedrive_deal_id", dealId)
+        .maybeSingle();
+      if (data) return data;
+    }
+    return null;
+  };
+
+  // Optional typed note — lands on the deal timeline + Pipedrive outbox.
+  const saveNote = async () => {
+    const text = body.note?.trim();
+    if (!text) return;
+    const deal = await resolveCrmDeal();
+    if (deal) {
+      await db.from("crm_activities").insert({
+        deal_id: deal.id,
+        contact_id: deal.contact_id,
+        type: "note",
+        subject: `📞 Call note (${disposition.replace("_", " ")})`,
+        body: text,
+        actor: user.email,
+        occurred_at: new Date().toISOString(),
+      });
+    }
+    if (dealId) {
+      await enqueuePdSync(db, "note", { dealId, content: `📞 Call note — ${text}` });
+    }
+  };
+
   // The rep's next step, scheduled in the same gesture as the disposition.
   const scheduleNext = async () => {
     const n = body.next;
     if (!n?.dueAt || !["call", "task", "meeting", "email"].includes(n.type ?? "")) return;
-    let crmDealId = body.crmDealId ?? null;
-    if (!crmDealId && dealId) {
-      const { data } = await db.from("crm_deals").select("id").eq("pipedrive_deal_id", dealId).maybeSingle();
-      crmDealId = data?.id ?? null;
-    }
-    if (!crmDealId) return;
-    const { data: deal } = await db.from("crm_deals").select("contact_id").eq("id", crmDealId).maybeSingle();
+    const deal = await resolveCrmDeal();
+    if (!deal) return;
     const subject = n.subject?.trim() || `Follow up (${disposition})`;
     const { data: inserted } = await db
       .from("crm_activities")
       .insert({
-        deal_id: crmDealId,
-        contact_id: deal?.contact_id ?? null,
+        deal_id: deal.id,
+        contact_id: deal.contact_id,
         type: n.type,
         subject,
         actor: user.email,
@@ -102,6 +136,7 @@ export async function POST(req: NextRequest) {
     if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
     // CRM row is saved — Pipedrive catches up via the outbox as budget allows.
     if (dealId) await enqueuePdSync(db, "disposition", { dealId, disposition, dialStartedAt });
+    await saveNote();
     await scheduleNext();
     return NextResponse.json({ ok: true, attached: true });
   }
@@ -122,6 +157,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "db error" }, { status: 500 });
     }
     if (dealId) await enqueuePdSync(db, "disposition", { dealId, disposition, dialStartedAt });
+    await saveNote();
     await scheduleNext();
     return NextResponse.json({ ok: true, attached: false, synthesized: true });
   }

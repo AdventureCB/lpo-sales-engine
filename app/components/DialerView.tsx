@@ -382,7 +382,11 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     hangUp();
   };
 
-  const sendDisposition = async (dispo: string, next: { type: string; subject: string; dueAt: string } | null) => {
+  const sendDisposition = async (
+    dispo: string,
+    next: { type: string; subject: string; dueAt: string } | null,
+    note: string | null
+  ) => {
     if (!lead?.phone || !dialStartRef.current) return;
     const q = qualityRef.current;
     const body = {
@@ -393,6 +397,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       sprintId: lead.sprintId,
       crmDealId: lead.crmDealId,
       next,
+      note,
       quality:
         q.samples > 0
           ? {
@@ -418,11 +423,14 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   // next touch in the same gesture — no separate trip to the deal page.
   const [pendingDispo, setPendingDispo] = useState<string | null>(null);
   const [nextType, setNextType] = useState("call");
+  const [dispoNote, setDispoNote] = useState("");
+  const [customDue, setCustomDue] = useState("");
+  const [showCustomDue, setShowCustomDue] = useState(false);
   const finalize = (dispo: string) => setPendingDispo(dispo);
 
-  const followUpAt = (preset: "tomorrow" | "3d" | "week"): string => {
+  const followUpAt = (days: number): string => {
     const d = new Date();
-    d.setDate(d.getDate() + (preset === "tomorrow" ? 1 : preset === "3d" ? 3 : 7));
+    d.setDate(d.getDate() + days);
     d.setHours(9, 0, 0, 0);
     return d.toISOString();
   };
@@ -431,13 +439,17 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     const dispo = pendingDispo;
     if (!dispo) return;
     setPendingDispo(null);
+    setShowCustomDue(false);
+    setCustomDue("");
     setAwaitingDispo(false);
     if (dispo === "connected") setSess((s) => ({ ...s, conn: s.conn + 1, talkS: s.talkS + callSecRef.current }));
     if (dispo === "vm_dropped") setSess((s) => ({ ...s, vm: s.vm + 1 }));
     void sendDisposition(
       dispo,
-      dueAt ? { type: nextType, subject: `Follow up (${dispo.replace("_", " ")})`, dueAt } : null
+      dueAt ? { type: nextType, subject: `Follow up (${dispo.replace("_", " ")})`, dueAt } : null,
+      dispoNote.trim() || null
     );
+    setDispoNote("");
     setCallSec(0);
     callSecRef.current = 0;
     if (autoAdv) setLeadIdx((i) => i + 1);
@@ -503,7 +515,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inCall, awaitingDispo, pendingDispo, nextType, lead?.dealId, autoAdv]);
+  }, [inCall, awaitingDispo, pendingDispo, nextType, dispoNote, lead?.dealId, autoAdv]);
 
   useEffect(() => () => stopTimers(), []);
 
@@ -857,20 +869,49 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                 </div>
               )}
               {awaitingDispo && pendingDispo && (
-                <div className="dispo-row" style={{ display: "flex", alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 12.5, color: "var(--text-2)" }}>Next step?</span>
-                  <select className="vmsel" style={{ width: "auto", padding: "6px 8px", fontSize: 12.5 }} value={nextType} onChange={(e) => setNextType(e.target.value)}>
-                    <option value="call">📞 Call</option>
-                    <option value="task">📋 Task</option>
-                    <option value="email">✉️ Email</option>
-                    <option value="meeting">📅 Meeting</option>
-                  </select>
-                  <button className="btn" onClick={() => completeDispo(followUpAt("tomorrow"))}>Tomorrow 9am</button>
-                  <button className="btn" onClick={() => completeDispo(followUpAt("3d"))}>In 3 days</button>
-                  <button className="btn" onClick={() => completeDispo(followUpAt("week"))}>Next week</button>
-                  <button className="btn ghost" onClick={() => completeDispo(null)}>
-                    No follow-up <kbd>⏎</kbd>
-                  </button>
+                <div style={{ marginTop: 10 }}>
+                  <input
+                    className="vmsel"
+                    style={{ width: "100%", marginBottom: 8 }}
+                    placeholder="Add a note about this call… (optional, saves to the deal)"
+                    value={dispoNote}
+                    onChange={(e) => setDispoNote(e.target.value)}
+                  />
+                  <div className="dispo-row" style={{ display: "flex", alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 12.5, color: "var(--text-2)" }}>Next step?</span>
+                    <select className="vmsel" style={{ width: "auto", padding: "6px 8px", fontSize: 12.5 }} value={nextType} onChange={(e) => setNextType(e.target.value)}>
+                      <option value="call">📞 Call</option>
+                      <option value="task">📋 Task</option>
+                      <option value="email">✉️ Email</option>
+                      <option value="meeting">📅 Meeting</option>
+                    </select>
+                    <button className="btn" onClick={() => completeDispo(followUpAt(7))}>1 week</button>
+                    <button className="btn" onClick={() => completeDispo(followUpAt(14))}>2 weeks</button>
+                    <button className="btn" onClick={() => completeDispo(followUpAt(30))}>1 month</button>
+                    <button className="btn" onClick={() => setShowCustomDue((v) => !v)}>📅 Custom…</button>
+                    <button className="btn ghost" onClick={() => completeDispo(null)}>
+                      No follow-up <kbd>⏎</kbd>
+                    </button>
+                  </div>
+                  {showCustomDue && (
+                    <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+                      <input
+                        type="datetime-local"
+                        className="vmsel"
+                        style={{ width: "auto" }}
+                        value={customDue}
+                        onChange={(e) => setCustomDue(e.target.value)}
+                      />
+                      <button
+                        className="btn primary"
+                        style={{ padding: "7px 14px", fontSize: 13 }}
+                        disabled={!customDue}
+                        onClick={() => completeDispo(new Date(customDue).toISOString())}
+                      >
+                        Schedule
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </>
