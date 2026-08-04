@@ -2,16 +2,39 @@ import Link from "next/link";
 import { UserChip } from "./UserChip";
 import { RefreshButton } from "./RefreshButton";
 
-const TABS = [
-  { label: "Dialer", href: "/dialer", live: true },
-  { label: "🔥 Hot List", href: "/hot-list", live: true },
-  { label: "Scoreboard", href: "/scoreboard", live: true },
-  { label: "Lookup", href: "/lookup", live: true },
-  { label: "WhatsApp", href: "/whatsapp", live: true },
-  { label: "Quality", href: "/quality", live: true, adminOnly: true },
-  { label: "CRM", href: "/crm", live: true, adminOnly: true },
-  { label: "Commissions", href: "/commissions", live: true, adminOnly: true },
-  { label: "⚙", href: "/settings", live: true, adminOnly: true },
+interface NavItem {
+  label: string;
+  href: string;
+  adminOnly?: boolean;
+}
+
+const SECTIONS: { header: string | null; items: NavItem[] }[] = [
+  {
+    header: "Phone",
+    items: [
+      { label: "📞 Dialer", href: "/dialer" },
+      { label: "🕘 Call log", href: "/call-log" },
+      { label: "💬 Text", href: "/texts" },
+    ],
+  },
+  {
+    header: "Sales",
+    items: [
+      { label: "🔥 Hot List", href: "/hot-list" },
+      { label: "Scoreboard", href: "/scoreboard" },
+      { label: "Lookup", href: "/lookup" },
+      { label: "WhatsApp", href: "/whatsapp" },
+    ],
+  },
+  {
+    header: "Admin",
+    items: [
+      { label: "Quality", href: "/quality", adminOnly: true },
+      { label: "CRM", href: "/crm", adminOnly: true },
+      { label: "Commissions", href: "/commissions", adminOnly: true },
+      { label: "⚙ Settings", href: "/settings", adminOnly: true },
+    ],
+  },
 ];
 
 export function AppShell({
@@ -23,39 +46,44 @@ export function AppShell({
   user?: { name: string; role: string } | null;
   children: React.ReactNode;
 }) {
+  const isAdmin = user?.role === "admin";
   return (
-    <>
-      <header className="app">
+    <div className="shell">
+      <aside className="sidenav">
         <div className="logo">
           <div className="mark">▲</div>
           <div>
             LPO SALES ENGINE<small>Lone Peak Overland</small>
           </div>
         </div>
-        <nav className="tabs">
-          {TABS.filter((t) => !("adminOnly" in t && t.adminOnly) || user?.role === "admin").map((t) =>
-            t.live ? (
-              <Link key={t.label} href={t.href} className={active === t.href ? "active" : ""}>
-                {t.label}
-              </Link>
-            ) : (
-              <a key={t.label} className="soon">
-                {t.label}
-                <small>SOON</small>
-              </a>
-            )
-          )}
+        <nav>
+          {SECTIONS.map((section) => {
+            const items = section.items.filter((t) => !t.adminOnly || isAdmin);
+            if (items.length === 0) return null;
+            return (
+              <div className="navsec" key={section.header ?? "main"}>
+                {section.header && <h5>{section.header}</h5>}
+                {items.map((t) => (
+                  <Link key={t.href} href={t.href} className={active === t.href ? "active" : ""}>
+                    {t.label}
+                  </Link>
+                ))}
+              </div>
+            );
+          })}
         </nav>
-        {user ? (
-          <UserChip name={user.name} role={user.role} />
-        ) : (
-          <div className="userchip">
-            <span>Team view</span>
-          </div>
-        )}
-        <RefreshButton />
-      </header>
+        <div className="sidefoot">
+          {user ? (
+            <UserChip name={user.name} role={user.role} />
+          ) : (
+            <div className="userchip">
+              <span>Team view</span>
+            </div>
+          )}
+          <RefreshButton />
+        </div>
+      </aside>
       <main>{children}</main>
-    </>
+    </div>
   );
 }

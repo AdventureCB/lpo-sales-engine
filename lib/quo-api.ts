@@ -128,6 +128,12 @@ export interface QuoMessage {
   userId: string | null;
   status: string;
   createdAt: string;
+  // Present on full message objects — used by the Text UI backfill.
+  body?: string | null;
+  text?: string | null;
+  from?: string | null;
+  to?: string[] | string | null;
+  phoneNumberId?: string | null;
 }
 
 /**

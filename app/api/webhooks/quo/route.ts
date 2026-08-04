@@ -84,6 +84,30 @@ export async function POST(req: NextRequest) {
       },
       { onConflict: "quo_message_id", ignoreDuplicates: false }
     );
+    // Full message (body included) for the Text conversation UI — separate
+    // from message_events, which stays metrics-only.
+    if (!error && peerPhone) {
+      await db
+        .from("sms_messages")
+        .upsert(
+          {
+            provider: "quo",
+            provider_message_id: data.id,
+            rep_id: msgRepId,
+            direction: data.direction ?? null,
+            status: data.status ?? null,
+            phone_number_id: data.phoneNumberId ?? null,
+            our_number: (data.direction === "incoming" ? msgTo : data.from) ?? null,
+            peer_phone: peerPhone,
+            body: data.body ?? data.text ?? null,
+            sent_at: data.createdAt ?? new Date().toISOString(),
+          },
+          { onConflict: "provider,provider_message_id", ignoreDuplicates: false }
+        )
+        .then(({ error: e }) => {
+          if (e) console.error("sms_messages upsert failed", e);
+        });
+    }
     if (!error && data.direction === "incoming" && type === "message.received") {
       const { enqueueEvent } = await import("@/lib/automations");
       await enqueueEvent(db, "inbound_sms", {
