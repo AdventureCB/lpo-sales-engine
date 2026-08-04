@@ -190,10 +190,13 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
         const d = await r.json().catch(() => null);
         throw new Error(d?.error ?? (r.status === 503 ? "Telnyx not configured yet" : `HTTP ${r.status}`));
       }
-      const { token, callerNumber } = await r.json();
+      const { token, login, password, callerNumber } = await r.json();
       callerNumberRef.current = callerNumber ?? null;
       const { TelnyxRTC } = await import("@telnyx/webrtc");
-      const client = new TelnyxRTC({ login_token: token });
+      // SIP login (per-rep, receives inbound) when provisioned; token otherwise.
+      const client = login
+        ? new TelnyxRTC({ login, password })
+        : new TelnyxRTC({ login_token: token });
       telnyxClientRef.current = client;
       client.remoteElement = "telnyx-audio";
       client.on("telnyx.error", (e: any) => {

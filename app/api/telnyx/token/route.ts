@@ -14,20 +14,32 @@ export async function GET() {
   try {
     const db = supabaseAdmin();
     const state = await ensureProvisioned(db);
-    // Reps with their own number/credential get their own identity: their
-    // caller ID out, and inbound to their number rings their browser.
+    // Reps with their own number get their own identity: their caller ID
+    // out, and — via their connection's SIP login — inbound rings them.
     let callerNumber = state.callerNumber;
-    let credentialId = state.credentialId;
     if (user.repId) {
       const { data: rep } = await db
         .from("reps")
-        .select("telnyx_number, telnyx_credential_id")
+        .select("telnyx_number")
         .eq("id", user.repId)
         .maybeSingle();
       if (rep?.telnyx_number) callerNumber = rep.telnyx_number;
-      if (rep?.telnyx_credential_id) credentialId = rep.telnyx_credential_id;
+      const { data: sip } = await db
+        .from("crm_sync_state")
+        .select("value")
+        .eq("key", `telnyx_sip:${user.repId}`)
+        .maybeSingle();
+      const creds = sip?.value as { login?: string; password?: string } | undefined;
+      if (creds?.login && creds?.password) {
+        return NextResponse.json({
+          configured: true,
+          login: creds.login,
+          password: creds.password,
+          callerNumber,
+        });
+      }
     }
-    const token = await webrtcToken(db, credentialId);
+    const token = await webrtcToken(db, state.credentialId);
     return NextResponse.json({ configured: true, token, callerNumber });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

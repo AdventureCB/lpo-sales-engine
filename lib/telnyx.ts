@@ -115,16 +115,26 @@ export async function provisionRepCalling(
     const existing = await tx(`/credential_connections?filter[connection_name][contains]=${slug}`);
     let conn = (existing.data ?? [])[0];
     if (!conn) {
+      const userName = `${slug.replace(/-/g, "")}${Math.random().toString(36).slice(2, 6)}`;
+      const password = crypto.randomUUID().replace(/-/g, "");
       const created = await tx("/credential_connections", {
         method: "POST",
         body: JSON.stringify({
           connection_name: slug,
-          user_name: `${slug.replace(/-/g, "")}${Math.random().toString(36).slice(2, 6)}`,
-          password: crypto.randomUUID().replace(/-/g, ""),
+          user_name: userName,
+          password,
           webhook_event_url: "https://lpo-sales-engine.vercel.app/api/webhooks/telnyx",
         }),
       });
       conn = created.data;
+      // The connection's own SIP login is what registers for INBOUND —
+      // token-credential registration proved not to bind to the connection.
+      await db
+        .from("crm_sync_state")
+        .upsert(
+          { key: `telnyx_sip:${rep.id}`, value: { login: userName, password } },
+          { onConflict: "key" }
+        );
     }
     connectionId = conn.id;
     // Same outbound voice profile as the shared connection.
