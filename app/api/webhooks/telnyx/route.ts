@@ -69,23 +69,29 @@ export async function POST(req: NextRequest) {
     if (mp3) {
       try {
         const { transcribeRecording } = await import("@/lib/telnyx");
-        const text = await transcribeRecording(mp3);
-        if (text?.trim()) {
+        const result = await transcribeRecording(mp3);
+        if (result?.text?.trim()) {
           const { data: existing } = await db
             .from("call_events")
             .select("id, raw, duration_s, classification")
             .eq("quo_call_id", `tx:${p.call_session_id}`)
             .maybeSingle();
           if (existing) {
+            // Speaker-attributed transcript (Deepgram) → the same turn-based
+            // classifier the Quo path uses; plain text → talk-length heuristic.
+            let classification = existing.classification;
+            if (!classification && result.utterances) {
+              const { classifyTranscript } = await import("@/lib/classify");
+              classification = classifyTranscript(result.utterances);
+            }
+            if (!classification) {
+              classification = (existing.duration_s ?? 0) >= 40 ? "conversation" : "screening";
+            }
             await db
               .from("call_events")
               .update({
-                raw: { ...(existing.raw ?? {}), transcript: text.trim() },
-                // Words were exchanged — classify by talk length when the
-                // transcript pipeline (not a human) is the only signal.
-                classification:
-                  existing.classification ??
-                  ((existing.duration_s ?? 0) >= 40 ? "conversation" : "screening"),
+                raw: { ...(existing.raw ?? {}), transcript: result.text.trim() },
+                classification,
               })
               .eq("id", existing.id);
           }

@@ -107,13 +107,50 @@ export async function startRecording(callControlId: string): Promise<void> {
   });
 }
 
-/** Transcribe a recording URL via Telnyx AI (Whisper). Returns plain text. */
-export async function transcribeRecording(mp3Url: string): Promise<string | null> {
+export interface TranscriptResult {
+  text: string;
+  // Speaker-attributed turns (dual-channel: 0 = rep leg, 1 = customer leg).
+  utterances: Array<{ speaker: "rep" | "contact"; text: string }> | null;
+}
+
+/**
+ * Transcribe a recording. Deepgram (multichannel — perfect speaker labels
+ * from the dual-channel recording) when DEEPGRAM_API_KEY is set; Telnyx AI
+ * Whisper (plain text) otherwise.
+ */
+export async function transcribeRecording(mp3Url: string): Promise<TranscriptResult | null> {
   const audio = await fetch(mp3Url);
   if (!audio.ok) throw new Error(`recording download ${audio.status}`);
-  const blob = await audio.blob();
+
+  const dgKey = envOptional("DEEPGRAM_API_KEY");
+  if (dgKey) {
+    const res = await fetch(
+      "https://api.deepgram.com/v1/listen?model=nova-2&multichannel=true&punctuate=true&smart_format=true&utterances=true",
+      {
+        method: "POST",
+        headers: { Authorization: `Token ${dgKey}`, "Content-Type": "audio/mpeg" },
+        body: await audio.arrayBuffer(),
+      }
+    );
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`deepgram ${res.status}: ${JSON.stringify(json).slice(0, 200)}`);
+    const utts = (json.results?.utterances ?? [])
+      .map((u: any) => ({
+        speaker: (u.channel === 0 ? "rep" : "contact") as "rep" | "contact",
+        text: String(u.transcript ?? "").trim(),
+        start: u.start ?? 0,
+      }))
+      .filter((u: any) => u.text)
+      .sort((a: any, b: any) => a.start - b.start);
+    if (utts.length === 0) return null;
+    const text = utts
+      .map((u: any) => `${u.speaker === "rep" ? "Rep" : "Customer"}: ${u.text}`)
+      .join("\n");
+    return { text, utterances: utts.map(({ speaker, text }: any) => ({ speaker, text })) };
+  }
+
   const form = new FormData();
-  form.append("file", blob, "call.mp3");
+  form.append("file", await audio.blob(), "call.mp3");
   form.append("model", "distil-whisper/distil-large-v2");
   const res = await fetch(`${API}/ai/audio/transcriptions`, {
     method: "POST",
@@ -122,7 +159,7 @@ export async function transcribeRecording(mp3Url: string): Promise<string | null
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`transcription ${res.status}: ${JSON.stringify(json).slice(0, 200)}`);
-  return json.text ?? null;
+  return json.text ? { text: json.text, utterances: null } : null;
 }
 
 /** Login token for the browser SDK. Tokens live 24h and Telnyx's mint
