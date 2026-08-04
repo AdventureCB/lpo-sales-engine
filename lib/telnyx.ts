@@ -99,12 +99,19 @@ export async function ensureProvisioned(db: SupabaseClient): Promise<TelnyxState
   return state;
 }
 
-/** Short-lived token the browser SDK logs in with. */
+/** Short-lived token the browser SDK logs in with. Telnyx occasionally
+ * throws transient 5xx (error 10007) — retry twice before surfacing. */
 export async function webrtcToken(credentialId: string): Promise<string> {
-  const res = await fetch(`${API}/telephony_credentials/${credentialId}/token`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${env("TELNYX_API_KEY")}` },
-  });
-  if (!res.ok) throw new Error(`telnyx token ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  return res.text();
+  let lastErr = "";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(`${API}/telephony_credentials/${credentialId}/token`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${env("TELNYX_API_KEY")}` },
+    });
+    if (res.ok) return res.text();
+    lastErr = `telnyx token ${res.status}: ${(await res.text()).slice(0, 200)}`;
+    if (res.status < 500) break; // 4xx won't heal on retry
+    await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
+  }
+  throw new Error(lastErr);
 }
