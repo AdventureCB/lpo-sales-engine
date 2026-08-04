@@ -99,19 +99,33 @@ export async function ensureProvisioned(db: SupabaseClient): Promise<TelnyxState
   return state;
 }
 
-/** Short-lived token the browser SDK logs in with. Telnyx occasionally
- * throws transient 5xx (error 10007) — retry twice before surfacing. */
-export async function webrtcToken(credentialId: string): Promise<string> {
+/** Login token for the browser SDK. Tokens live 24h and Telnyx's mint
+ * endpoint is intermittently flaky (5xx) — mint rarely, cache in
+ * crm_sync_state, and fall back to the cached token if a refresh fails. */
+export async function webrtcToken(db: SupabaseClient, credentialId: string): Promise<string> {
+  const { data: cached } = await db.from("crm_sync_state").select("value").eq("key", "telnyx_token").maybeSingle();
+  const val = cached?.value as { token?: string; mintedAt?: number } | undefined;
+  const ageMs = val?.mintedAt ? Date.now() - val.mintedAt : Infinity;
+  if (val?.token && ageMs < 20 * 3600_000) return val.token; // reuse for 20h
+
   let lastErr = "";
   for (let attempt = 0; attempt < 3; attempt++) {
     const res = await fetch(`${API}/telephony_credentials/${credentialId}/token`, {
       method: "POST",
       headers: { Authorization: `Bearer ${env("TELNYX_API_KEY")}` },
     });
-    if (res.ok) return res.text();
+    if (res.ok) {
+      const token = await res.text();
+      await db
+        .from("crm_sync_state")
+        .upsert({ key: "telnyx_token", value: { token, mintedAt: Date.now() } }, { onConflict: "key" });
+      return token;
+    }
     lastErr = `telnyx token ${res.status}: ${(await res.text()).slice(0, 200)}`;
     if (res.status < 500) break; // 4xx won't heal on retry
     await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
   }
+  // Mint failed — a stale-but-unexpired cached token beats an error.
+  if (val?.token && ageMs < 23 * 3600_000) return val.token;
   throw new Error(lastErr);
 }

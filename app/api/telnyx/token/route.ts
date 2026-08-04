@@ -14,7 +14,7 @@ export async function GET() {
   try {
     const db = supabaseAdmin();
     const state = await ensureProvisioned(db);
-    const token = await webrtcToken(state.credentialId);
+    const token = await webrtcToken(db, state.credentialId);
     return NextResponse.json({ configured: true, token, callerNumber: state.callerNumber });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
