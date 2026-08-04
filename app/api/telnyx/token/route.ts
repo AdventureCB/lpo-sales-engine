@@ -14,13 +14,20 @@ export async function GET() {
   try {
     const db = supabaseAdmin();
     const state = await ensureProvisioned(db);
-    const token = await webrtcToken(db, state.credentialId);
-    // Caller ID: the rep's own assigned number when set, else account default.
+    // Reps with their own number/credential get their own identity: their
+    // caller ID out, and inbound to their number rings their browser.
     let callerNumber = state.callerNumber;
+    let credentialId = state.credentialId;
     if (user.repId) {
-      const { data: rep } = await db.from("reps").select("telnyx_number").eq("id", user.repId).maybeSingle();
+      const { data: rep } = await db
+        .from("reps")
+        .select("telnyx_number, telnyx_credential_id")
+        .eq("id", user.repId)
+        .maybeSingle();
       if (rep?.telnyx_number) callerNumber = rep.telnyx_number;
+      if (rep?.telnyx_credential_id) credentialId = rep.telnyx_credential_id;
     }
+    const token = await webrtcToken(db, credentialId);
     return NextResponse.json({ configured: true, token, callerNumber });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

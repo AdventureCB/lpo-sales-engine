@@ -99,6 +99,75 @@ export async function ensureProvisioned(db: SupabaseClient): Promise<TelnyxState
   return state;
 }
 
+/**
+ * Per-rep calling identity: own credential connection + credential, with the
+ * rep's number pointed at it — inbound rings only that rep's browser.
+ * Idempotent; called when a number is assigned in Settings.
+ */
+export async function provisionRepCalling(
+  db: SupabaseClient,
+  rep: { id: string; telnyx_connection_id: string | null; telnyx_credential_id: string | null },
+  phoneNumber: string
+): Promise<void> {
+  const slug = `lpo-rep-${rep.id.slice(0, 8)}`;
+  let connectionId = rep.telnyx_connection_id;
+  if (!connectionId) {
+    const existing = await tx(`/credential_connections?filter[connection_name][contains]=${slug}`);
+    let conn = (existing.data ?? [])[0];
+    if (!conn) {
+      const created = await tx("/credential_connections", {
+        method: "POST",
+        body: JSON.stringify({
+          connection_name: slug,
+          user_name: `${slug.replace(/-/g, "")}${Math.random().toString(36).slice(2, 6)}`,
+          password: crypto.randomUUID().replace(/-/g, ""),
+          webhook_event_url: "https://lpo-sales-engine.vercel.app/api/webhooks/telnyx",
+        }),
+      });
+      conn = created.data;
+    }
+    connectionId = conn.id;
+    // Same outbound voice profile as the shared connection.
+    const ovps = await tx("/outbound_voice_profiles?filter[name][contains]=lpo-outbound");
+    const ovp = (ovps.data ?? [])[0];
+    if (ovp) {
+      await tx(`/credential_connections/${connectionId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ outbound: { outbound_voice_profile_id: ovp.id } }),
+      }).catch(() => {});
+    }
+  }
+
+  let credentialId = rep.telnyx_credential_id;
+  if (!credentialId) {
+    const creds = await tx(`/telephony_credentials?filter[name]=${slug}`);
+    let cred = (creds.data ?? [])[0];
+    if (!cred) {
+      const created = await tx("/telephony_credentials", {
+        method: "POST",
+        body: JSON.stringify({ name: slug, connection_id: connectionId }),
+      });
+      cred = created.data;
+    }
+    credentialId = cred.id;
+  }
+
+  // Point the number at the rep's connection so inbound rings their browser.
+  const nums = await tx(`/phone_numbers?filter[phone_number]=${encodeURIComponent(phoneNumber)}`);
+  const num = (nums.data ?? [])[0];
+  if (num && num.connection_id !== connectionId) {
+    await tx(`/phone_numbers/${num.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ connection_id: connectionId }),
+    });
+  }
+
+  await db
+    .from("reps")
+    .update({ telnyx_connection_id: connectionId, telnyx_credential_id: credentialId })
+    .eq("id", rep.id);
+}
+
 /** Start dual-channel recording on a live call (fired from call.answered). */
 export async function startRecording(callControlId: string): Promise<void> {
   await tx(`/calls/${callControlId}/actions/record_start`, {
@@ -166,7 +235,8 @@ export async function transcribeRecording(mp3Url: string): Promise<TranscriptRes
  * endpoint is intermittently flaky (5xx) — mint rarely, cache in
  * crm_sync_state, and fall back to the cached token if a refresh fails. */
 export async function webrtcToken(db: SupabaseClient, credentialId: string): Promise<string> {
-  const { data: cached } = await db.from("crm_sync_state").select("value").eq("key", "telnyx_token").maybeSingle();
+  const cacheKey = `telnyx_token:${credentialId}`;
+  const { data: cached } = await db.from("crm_sync_state").select("value").eq("key", cacheKey).maybeSingle();
   const val = cached?.value as { token?: string; mintedAt?: number } | undefined;
   const ageMs = val?.mintedAt ? Date.now() - val.mintedAt : Infinity;
   if (val?.token && ageMs < 20 * 3600_000) return val.token; // reuse for 20h
@@ -181,7 +251,7 @@ export async function webrtcToken(db: SupabaseClient, credentialId: string): Pro
       const token = await res.text();
       await db
         .from("crm_sync_state")
-        .upsert({ key: "telnyx_token", value: { token, mintedAt: Date.now() } }, { onConflict: "key" });
+        .upsert({ key: cacheKey, value: { token, mintedAt: Date.now() } }, { onConflict: "key" });
       return token;
     }
     lastErr = `telnyx token ${res.status}: ${(await res.text()).slice(0, 200)}`;

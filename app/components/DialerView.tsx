@@ -172,6 +172,84 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     }, 5000);
   };
 
+  // Inbound ringing/active call (to the rep's own number).
+  const [incoming, setIncoming] = useState<{ call: any; from: string; active: boolean } | null>(null);
+  const incomingRef = useRef<any>(null);
+  const callerNumberRef = useRef<string | null>(null);
+  const clientReadyRef = useRef<Promise<any> | null>(null);
+
+  /** One persistent Telnyx client: dials out AND receives inbound rings. */
+  const ensureTelnyxClient = (): Promise<any> => {
+    if (clientReadyRef.current) return clientReadyRef.current;
+    clientReadyRef.current = (async () => {
+      const r = await fetch("/api/telnyx/token");
+      if (!r.ok) {
+        const d = await r.json().catch(() => null);
+        throw new Error(d?.error ?? (r.status === 503 ? "Telnyx not configured yet" : `HTTP ${r.status}`));
+      }
+      const { token, callerNumber } = await r.json();
+      callerNumberRef.current = callerNumber ?? null;
+      const { TelnyxRTC } = await import("@telnyx/webrtc");
+      const client = new TelnyxRTC({ login_token: token });
+      telnyxClientRef.current = client;
+      client.remoteElement = "telnyx-audio";
+      client.on("telnyx.error", (e: any) => {
+        console.error("telnyx error", e);
+        setBrowserCallState(`error: ${e?.message ?? "connection failed"}`);
+      });
+      client.on("telnyx.notification", (n: any) => {
+        if (n?.type !== "callUpdate" || !n.call) return;
+        const c = n.call;
+        const s = c.state;
+        if (c.direction === "inbound") {
+          incomingRef.current = c;
+          if (s === "ringing") {
+            setIncoming({ call: c, from: c.options?.remoteCallerNumber ?? "unknown caller", active: false });
+          }
+          if (s === "active") setIncoming((prev) => (prev ? { ...prev, call: c, active: true } : prev));
+          if (s === "hangup" || s === "destroy") {
+            setIncoming(null);
+            incomingRef.current = null;
+          }
+          return;
+        }
+        telnyxCallRef.current = c; // notifications carry the live call object
+        if (s === "active") {
+          setBrowserCallState("active");
+          startStats();
+        }
+        if (s === "ringing" || s === "trying" || s === "requesting") setBrowserCallState("ringing");
+        if (s === "hangup" || s === "destroy") {
+          setBrowserCallState(null);
+          telnyxCallRef.current = null;
+          stopStats();
+          hangUp();
+        }
+      });
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error("Telnyx connection timed out")), 15_000);
+        client.on("telnyx.ready", () => {
+          clearTimeout(t);
+          resolve();
+        });
+        client.connect();
+      });
+      return client;
+    })();
+    clientReadyRef.current.catch(() => {
+      clientReadyRef.current = null; // allow retry after failure
+    });
+    return clientReadyRef.current;
+  };
+
+  // Browser mode keeps the connection warm so inbound calls ring the tab.
+  useEffect(() => {
+    if (dialMethod === "browser") {
+      ensureTelnyxClient().catch((e) => console.error("telnyx connect", e));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialMethod]);
+
   /** In-tab call via Telnyx WebRTC — the post-Quo path being piloted. */
   const browserCall = async (phone: string) => {
     setBrowserCallState("connecting");
@@ -191,50 +269,15 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
         hangUp();
         return;
       }
-      const r = await fetch("/api/telnyx/token");
-      if (!r.ok) {
-        const d = await r.json().catch(() => null);
-        throw new Error(d?.error ?? (r.status === 503 ? "Telnyx not configured yet" : `HTTP ${r.status}`));
-      }
-      const { token, callerNumber } = await r.json();
-      const { TelnyxRTC } = await import("@telnyx/webrtc");
-      if (telnyxClientRef.current) {
-        try { telnyxClientRef.current.disconnect(); } catch {}
-      }
-      const client = new TelnyxRTC({ login_token: token });
-      telnyxClientRef.current = client;
-      client.remoteElement = "telnyx-audio";
-      client.on("telnyx.ready", () => {
-        const call = client.newCall({
-          destinationNumber: phone,
-          callerNumber: callerNumber ?? undefined,
-          audio: true,
-          video: false,
-        });
-        telnyxCallRef.current = call;
-        setBrowserCallState("ringing");
+      const client = await ensureTelnyxClient();
+      const call = client.newCall({
+        destinationNumber: phone,
+        callerNumber: callerNumberRef.current ?? undefined,
+        audio: true,
+        video: false,
       });
-      client.on("telnyx.error", (e: any) => {
-        console.error("telnyx error", e);
-        setBrowserCallState(`error: ${e?.message ?? "connection failed"}`);
-      });
-      client.on("telnyx.notification", (n: any) => {
-        if (n?.type !== "callUpdate" || !n.call) return;
-        telnyxCallRef.current = n.call; // notifications carry the live call object
-        const s = n.call.state;
-        if (s === "active") {
-          setBrowserCallState("active");
-          startStats();
-        }
-        if (s === "ringing" || s === "trying" || s === "requesting") setBrowserCallState("ringing");
-        if (s === "hangup" || s === "destroy") {
-          setBrowserCallState(null);
-          telnyxCallRef.current = null;
-          stopStats();
-          hangUp();
-        }
-      });
-      client.connect();
+      telnyxCallRef.current = call;
+      setBrowserCallState("ringing");
     } catch (e) {
       setBrowserCallState(`error: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -249,6 +292,27 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const callSecRef = useRef(0);
 
   const lead = leads[leadIdx] ?? null;
+
+  // Manual dial: type any number, call it through the normal flow (synthetic
+  // lead at the front of the queue — dispositions/transcripts still log).
+  const [manualPhone, setManualPhone] = useState("");
+  const manualDial = () => {
+    const digits = manualPhone.replace(/[^\d+]/g, "");
+    const bare = digits.replace(/^\+?1/, "");
+    if (bare.length !== 10) return;
+    const e164 = `+1${bare}`;
+    const synthetic: Lead = {
+      dealId: 0,
+      title: `Manual dial ${e164}`,
+      personName: null,
+      phone: e164,
+      stageName: "manual",
+      hot: false,
+      hotReason: null,
+    };
+    setLeads((prev) => [...prev.slice(0, leadIdx), synthetic, ...prev.slice(leadIdx)]);
+    setManualPhone("");
+  };
 
   const loadQueues = useCallback(async (scope: OwnerScope) => {
     const r = await fetch(`/api/dialer/queues?owner=${scope}`);
@@ -324,12 +388,14 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     callSecRef.current = 0;
     setSess((s) => ({ ...s, dials: s.dials + 1 }));
     // Record the attempt — drives the shared pool's cooldown + fairness,
-    // and marks sprint items as called.
-    void fetch("/api/dialer/attempt", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dealId: lead.dealId, sprintId: lead.sprintId, crmDealId: lead.crmDealId }),
-    }).catch(() => {});
+    // and marks sprint items as called. Manual dials have no deal to log.
+    if (lead.dealId) {
+      void fetch("/api/dialer/attempt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dealId: lead.dealId, sprintId: lead.sprintId, crmDealId: lead.crmDealId }),
+      }).catch(() => {});
+    }
     if (dialMethod === "browser") {
       void browserCall(lead.phone);
     } else if (dialMethod === "web") {
@@ -390,7 +456,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     if (!lead?.phone || !dialStartRef.current) return;
     const q = qualityRef.current;
     const body = {
-      dealId: lead.dealId,
+      dealId: lead.dealId || undefined,
       phone: lead.phone,
       disposition: dispo,
       dialStartedAt: dialStartRef.current,
@@ -591,6 +657,64 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <>
+      {incoming && (
+        <div
+          className="card"
+          style={{
+            position: "sticky",
+            top: 8,
+            zIndex: 50,
+            marginBottom: 14,
+            border: `2px solid ${incoming.active ? "var(--ok, #0ca30c)" : "var(--accent)"}`,
+            display: "flex",
+            alignItems: "center",
+            gap: 14,
+            flexWrap: "wrap",
+          }}
+        >
+          <b style={{ fontSize: 14 }}>
+            {incoming.active ? "🟢 On inbound call" : "📳 Incoming call"} ·{" "}
+            <span style={{ fontVariantNumeric: "tabular-nums" }}>{incoming.from}</span>
+          </b>
+          {!incoming.active ? (
+            <>
+              <button
+                className="btn primary"
+                style={{ padding: "8px 16px", fontSize: 13.5 }}
+                onClick={() => {
+                  try { incoming.call.answer(); } catch (e) { console.error("answer", e); }
+                }}
+              >
+                ✅ Answer
+              </button>
+              <button
+                className="btn ghost"
+                style={{ padding: "8px 14px", fontSize: 13.5 }}
+                onClick={() => {
+                  try { incoming.call.hangup(); } catch {}
+                  setIncoming(null);
+                }}
+              >
+                Decline
+              </button>
+            </>
+          ) : (
+            <button
+              className="btn"
+              style={{ background: "var(--crit)", color: "#fff", padding: "8px 16px", fontSize: 13.5 }}
+              onClick={() => {
+                try { incoming.call.hangup(); } catch {}
+                setIncoming(null);
+              }}
+            >
+              ⏹ End call
+            </button>
+          )}
+          <span style={{ fontSize: 12, color: "var(--text-3)" }}>
+            Rings here because this number is assigned to you · call is recorded + transcribed automatically
+          </span>
+        </div>
+      )}
       <h2 className="viewtitle">Dial session</h2>
       <div className="viewsub">
         Queue: <b style={{ color: "var(--text-1)" }}>{queueLabel ?? activeQueue?.name ?? "—"}</b>
@@ -977,6 +1101,26 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
           {typeof window !== "undefined" && window.__TAURI__
             ? "🖥 companion mode — VM drops play into the call"
             : "🌐 browser mode — VM drops log only (use the desktop app for audio)"}
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <input
+            className="vmsel"
+            style={{ width: 150, padding: "4px 8px", fontSize: 12.5, fontVariantNumeric: "tabular-nums" }}
+            placeholder="⌨️ Dial a number…"
+            value={manualPhone}
+            onChange={(e) => setManualPhone(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") manualDial();
+            }}
+          />
+          <button
+            className="btn ghost"
+            style={{ padding: "4px 10px", fontSize: 12.5 }}
+            onClick={manualDial}
+            disabled={manualPhone.replace(/[^\d]/g, "").replace(/^1/, "").length !== 10}
+          >
+            → queue
+          </button>
         </span>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
           Call via

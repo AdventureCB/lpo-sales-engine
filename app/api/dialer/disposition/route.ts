@@ -127,7 +127,9 @@ export async function POST(req: NextRequest) {
   };
 
   if (call) {
+    // Webhook-created rows don't know the rep — the disposition does.
     const update: Record<string, unknown> = { disposition, deal_id: dealId ?? null };
+    if (user.repId) update.rep_id = user.repId;
     if (body.quality) {
       const { data: row } = await db.from("call_events").select("raw").eq("id", call.id).maybeSingle();
       update.raw = { ...((row?.raw as any) ?? {}), client_quality: body.quality };

@@ -45,10 +45,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
   if (!body.repId) return NextResponse.json({ error: "repId required" }, { status: 400 });
-  const { error } = await supabaseAdmin()
+  const db = supabaseAdmin();
+  const { error } = await db
     .from("reps")
     .update({ telnyx_number: body.telnyxNumber || null })
     .eq("id", body.repId);
   if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
-  return NextResponse.json({ ok: true });
+
+  // Assigning a number provisions the rep's calling identity (their own
+  // connection + credential, number routed to it) so inbound rings them.
+  let warn: string | null = null;
+  if (body.telnyxNumber) {
+    try {
+      const { data: rep } = await db
+        .from("reps")
+        .select("id, telnyx_connection_id, telnyx_credential_id")
+        .eq("id", body.repId)
+        .maybeSingle();
+      if (rep) {
+        const { provisionRepCalling } = await import("@/lib/telnyx");
+        await provisionRepCalling(db, rep, body.telnyxNumber);
+      }
+    } catch (e) {
+      warn = e instanceof Error ? e.message : String(e);
+      console.error("rep provisioning failed", e);
+    }
+  }
+  return NextResponse.json({ ok: true, warn });
 }
