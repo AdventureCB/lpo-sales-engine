@@ -70,17 +70,22 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ ok: true, annotated: type });
   }
+  // Telnyx hangup events carry start/end but no answer_time — use start→end
+  // as the duration and treat a normal clearing with real length as answered.
+  const endT = p.end_time ?? p.hangup_time ?? null;
   const durationS =
-    p.answer_time && (p.end_time || p.hangup_time)
-      ? Math.max(0, Math.round((Date.parse(p.end_time ?? p.hangup_time) - Date.parse(p.answer_time)) / 1000))
+    p.start_time && endT
+      ? Math.max(0, Math.round((Date.parse(endT) - Date.parse(p.start_time)) / 1000))
       : null;
+  const answered =
+    p.answer_time ?? (p.hangup_cause === "normal_clearing" && (durationS ?? 0) > 5 ? p.start_time : null);
   const row: Record<string, unknown> = {
     quo_call_id: `tx:${p.call_session_id}`,
     direction: p.direction === "incoming" ? "incoming" : "outgoing",
     status: type.replace("call.", ""),
     started_at: p.start_time ?? event?.data?.occurred_at ?? null,
-    answered_at: p.answer_time ?? null,
-    completed_at: p.end_time ?? p.hangup_time ?? null,
+    answered_at: answered,
+    completed_at: endT,
     duration_s: durationS,
     raw: { telnyx: true, data: { object: { participants: [p.from, p.to].filter(Boolean) } }, event },
   };

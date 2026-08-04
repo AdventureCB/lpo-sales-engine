@@ -141,10 +141,16 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   /** Poll WebRTC inbound stats — makes "it sounded choppy" measurable. */
   const startStats = () => {
     stopStats();
+    let misses = 0;
     statsRef.current.iv = setInterval(async () => {
       try {
-        const pc = telnyxCallRef.current?.peerConnection;
-        if (!pc?.getStats) return;
+        const call = telnyxCallRef.current;
+        const pc =
+          call?.peerConnection ?? call?.session?.peerConnection ?? call?.peer?.instance ?? call?.pc ?? null;
+        if (!pc?.getStats) {
+          if (++misses === 3) setBrowserStats("stats unavailable in this SDK build");
+          return;
+        }
         const stats: any[] = [];
         (await pc.getStats()).forEach((s: any) => stats.push(s));
         const inbound = stats.find((s) => s.type === "inbound-rtp" && (s.kind === "audio" || s.mediaType === "audio"));
