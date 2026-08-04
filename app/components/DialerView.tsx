@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ensurePhone, getPhoneState, newOutboundCall, setOutboundHandler, subscribePhone } from "./phoneClient";
 import { VmPanel, type VmDrop } from "./VmPanel";
 
 declare global {
@@ -126,7 +127,6 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setDialMethod(m);
     localStorage.setItem("dialMethod", m);
   };
-  const telnyxClientRef = useRef<any>(null);
   const telnyxCallRef = useRef<any>(null);
   const [browserCallState, setBrowserCallState] = useState<string | null>(null);
   const [browserStats, setBrowserStats] = useState<string | null>(null);
@@ -172,103 +172,45 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     }, 5000);
   };
 
-  // Inbound ringing/active call (to the rep's own number).
-  const [incoming, setIncoming] = useState<{ call: any; from: string; active: boolean } | null>(null);
-  const incomingRef = useRef<any>(null);
-  const callerNumberRef = useRef<string | null>(null);
-  const clientReadyRef = useRef<Promise<any> | null>(null);
-  // Visible registration state — "ready" is what makes inbound ring here.
+  // Softphone connection state comes from the app-wide singleton (survives
+  // navigation; PhoneDock renders the inbound banner on every page).
   const [telnyxConn, setTelnyxConn] = useState<string>("off");
+  useEffect(() => {
+    const sync = () => setTelnyxConn(getPhoneState().conn);
+    sync();
+    const unsub = subscribePhone(sync);
+    return unsub;
+  }, []);
 
-  /** One persistent Telnyx client: dials out AND receives inbound rings. */
-  const ensureTelnyxClient = (): Promise<any> => {
-    if (clientReadyRef.current) return clientReadyRef.current;
-    setTelnyxConn("connecting…");
-    clientReadyRef.current = (async () => {
-      const r = await fetch("/api/telnyx/token");
-      if (!r.ok) {
-        const d = await r.json().catch(() => null);
-        throw new Error(d?.error ?? (r.status === 503 ? "Telnyx not configured yet" : `HTTP ${r.status}`));
+  // The dialer owns OUTBOUND call state — register its handler with the
+  // singleton while mounted.
+  useEffect(() => {
+    setOutboundHandler((c: any, s: string) => {
+      telnyxCallRef.current = c; // notifications carry the live call object
+      if (s === "active") {
+        setBrowserCallState("active");
+        startStats();
       }
-      const { token, login, password, callerNumber } = await r.json();
-      callerNumberRef.current = callerNumber ?? null;
-      const { TelnyxRTC } = await import("@telnyx/webrtc");
-      // SIP login (per-rep, receives inbound) when provisioned; token otherwise.
-      const client = login
-        ? new TelnyxRTC({ login, password })
-        : new TelnyxRTC({ login_token: token });
-      telnyxClientRef.current = client;
-      client.remoteElement = "telnyx-audio";
-      client.on("telnyx.error", (e: any) => {
-        console.error("telnyx error", e);
-        setTelnyxConn(`error: ${e?.message ?? "unknown"}`);
-        setBrowserCallState(`error: ${e?.message ?? "connection failed"}`);
-      });
-      client.on("telnyx.socket.close", () => {
-        setTelnyxConn("reconnecting…");
-        clientReadyRef.current = null;
-        setTimeout(() => {
-          if (localStorage.getItem("dialMethod") === "browser") {
-            ensureTelnyxClient().catch(() => {});
-          }
-        }, 5000);
-      });
-      client.on("telnyx.notification", (n: any) => {
-        if (n?.type !== "callUpdate" || !n.call) return;
-        const c = n.call;
-        const s = c.state;
-        if (c.direction === "inbound") {
-          incomingRef.current = c;
-          if (s === "ringing") {
-            setIncoming({ call: c, from: c.options?.remoteCallerNumber ?? "unknown caller", active: false });
-          }
-          if (s === "active") setIncoming((prev) => (prev ? { ...prev, call: c, active: true } : prev));
-          if (s === "hangup" || s === "destroy") {
-            setIncoming(null);
-            incomingRef.current = null;
-          }
-          return;
-        }
-        telnyxCallRef.current = c; // notifications carry the live call object
-        if (s === "active") {
-          setBrowserCallState("active");
-          startStats();
-        }
-        if (s === "ringing" || s === "trying" || s === "requesting") setBrowserCallState("ringing");
-        if (s === "hangup" || s === "destroy") {
-          setBrowserCallState(null);
-          telnyxCallRef.current = null;
-          stopStats();
-          hangUp();
-        }
-      });
-      await new Promise<void>((resolve, reject) => {
-        const t = setTimeout(() => reject(new Error("Telnyx connection timed out")), 15_000);
-        client.on("telnyx.ready", () => {
-          clearTimeout(t);
-          setTelnyxConn("ready");
-          resolve();
-        });
-        client.connect();
-      });
-      return client;
-    })();
-    clientReadyRef.current.catch((e) => {
-      setTelnyxConn(`error: ${e instanceof Error ? e.message : String(e)}`);
-      clientReadyRef.current = null; // allow retry after failure
+      if (s === "ringing" || s === "trying" || s === "requesting") setBrowserCallState("ringing");
+      if (s === "hangup" || s === "destroy") {
+        setBrowserCallState(null);
+        telnyxCallRef.current = null;
+        stopStats();
+        hangUp();
+      }
     });
-    return clientReadyRef.current;
-  };
+    return () => setOutboundHandler(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Browser mode keeps the connection warm so inbound calls ring the tab.
+  // Browser mode keeps the connection warm so inbound calls ring anywhere.
   useEffect(() => {
     if (dialMethod === "browser") {
-      ensureTelnyxClient().catch((e) => console.error("telnyx connect", e));
+      ensurePhone().catch((e) => console.error("telnyx connect", e));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dialMethod]);
 
-  /** In-tab call via Telnyx WebRTC — the post-Quo path being piloted. */
+  /** In-app call via Telnyx WebRTC — the post-Quo path being piloted. */
   const browserCall = async (phone: string) => {
     setBrowserCallState("connecting");
     try {
@@ -287,13 +229,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
         hangUp();
         return;
       }
-      const client = await ensureTelnyxClient();
-      const call = client.newCall({
-        destinationNumber: phone,
-        callerNumber: callerNumberRef.current ?? undefined,
-        audio: true,
-        video: false,
-      });
+      const call = await newOutboundCall(phone);
       telnyxCallRef.current = call;
       setBrowserCallState("ringing");
     } catch (e) {
@@ -675,64 +611,6 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <>
-      {incoming && (
-        <div
-          className="card"
-          style={{
-            position: "sticky",
-            top: 8,
-            zIndex: 50,
-            marginBottom: 14,
-            border: `2px solid ${incoming.active ? "var(--ok, #0ca30c)" : "var(--accent)"}`,
-            display: "flex",
-            alignItems: "center",
-            gap: 14,
-            flexWrap: "wrap",
-          }}
-        >
-          <b style={{ fontSize: 14 }}>
-            {incoming.active ? "🟢 On inbound call" : "📳 Incoming call"} ·{" "}
-            <span style={{ fontVariantNumeric: "tabular-nums" }}>{incoming.from}</span>
-          </b>
-          {!incoming.active ? (
-            <>
-              <button
-                className="btn primary"
-                style={{ padding: "8px 16px", fontSize: 13.5 }}
-                onClick={() => {
-                  try { incoming.call.answer(); } catch (e) { console.error("answer", e); }
-                }}
-              >
-                ✅ Answer
-              </button>
-              <button
-                className="btn ghost"
-                style={{ padding: "8px 14px", fontSize: 13.5 }}
-                onClick={() => {
-                  try { incoming.call.hangup(); } catch {}
-                  setIncoming(null);
-                }}
-              >
-                Decline
-              </button>
-            </>
-          ) : (
-            <button
-              className="btn"
-              style={{ background: "var(--crit)", color: "#fff", padding: "8px 16px", fontSize: 13.5 }}
-              onClick={() => {
-                try { incoming.call.hangup(); } catch {}
-                setIncoming(null);
-              }}
-            >
-              ⏹ End call
-            </button>
-          )}
-          <span style={{ fontSize: 12, color: "var(--text-3)" }}>
-            Rings here because this number is assigned to you · call is recorded + transcribed automatically
-          </span>
-        </div>
-      )}
       <h2 className="viewtitle">Dial session</h2>
       <div className="viewsub">
         Queue: <b style={{ color: "var(--text-1)" }}>{queueLabel ?? activeQueue?.name ?? "—"}</b>
@@ -982,7 +860,6 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                   </div>
                 )}
               </div>
-              <audio id="telnyx-audio" autoPlay />
               {inCall && dialMethod === "browser" && browserCallState && (
                 <div style={{ fontSize: 12.5, color: browserCallState.startsWith("error") ? "var(--crit)" : "var(--text-2)", marginTop: 8 }}>
                   {browserCallState === "connecting" && "🌐 Connecting…"}

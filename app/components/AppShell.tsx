@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { UserChip } from "./UserChip";
 import { RefreshButton } from "./RefreshButton";
+import { PhoneDock } from "./PhoneDock";
 
 const TABS = [
   { label: "Dialer", href: "/dialer", live: true },
@@ -25,6 +26,7 @@ export function AppShell({
 }) {
   return (
     <>
+      <PhoneDock />
       <header className="app">
         <div className="logo">
           <div className="mark">▲</div>
