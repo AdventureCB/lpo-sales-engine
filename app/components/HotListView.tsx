@@ -230,8 +230,8 @@ export function HotListView({ isAdmin = false }: { isAdmin?: boolean }) {
                       <td><b>{f.deal_title ?? `Deal #${f.deal_id}`}</b></td>
                       <td style={{ whiteSpace: "nowrap" }}>{f.person_phone ?? "—"}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{f.owner_name ?? "—"}</td>
-                      <td style={{ fontSize: 12.5, color: "var(--text-2)" }}>{f.reason}</td>
-                      <td style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>{flagStatus(f)}</td>
+                      <td style={{ fontSize: 13.5, color: "var(--text-2)" }}>{f.reason}</td>
+                      <td style={{ whiteSpace: "nowrap", fontSize: 13.5 }}>{flagStatus(f)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -266,20 +266,20 @@ export function HotListView({ isAdmin = false }: { isAdmin?: boolean }) {
                         </span>
                         <b>{f.deal_title ?? `Deal #${f.deal_id}`}</b>
                         {f.person_phone && (
-                          <div style={{ fontSize: 12, color: "var(--text-2)", marginLeft: 18 }}>
+                          <div style={{ fontSize: 13, color: "var(--text-2)", marginLeft: 18 }}>
                             {f.person_phone}
                           </div>
                         )}
                       </td>
                       <td style={{ whiteSpace: "nowrap" }}>{f.owner_name ?? "—"}</td>
-                      <td style={{ fontSize: 12.5, color: "var(--text-2)" }}>{f.reason}</td>
+                      <td style={{ fontSize: 13.5, color: "var(--text-2)" }}>{f.reason}</td>
                       <td style={{ color: "var(--text-3)", whiteSpace: "nowrap" }}>
                         {fmtWhen(f.flagged_at)}
                       </td>
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                         <button
                           className="btn ghost"
-                          style={{ padding: "6px 10px", fontSize: 12 }}
+                          style={{ padding: "6px 10px", fontSize: 13 }}
                           onClick={(e) => {
                             e.stopPropagation();
                             dismiss(f.id);
@@ -293,17 +293,17 @@ export function HotListView({ isAdmin = false }: { isAdmin?: boolean }) {
                       <tr>
                         <td colSpan={5} style={{ background: "var(--surface-2)", padding: "10px 14px" }}>
                           {!dealEvents[f.deal_id] && (
-                            <span style={{ color: "var(--text-3)", fontSize: 12.5 }}>Loading…</span>
+                            <span style={{ color: "var(--text-3)", fontSize: 13.5 }}>Loading…</span>
                           )}
                           {dealEvents[f.deal_id]?.length === 0 && (
-                            <span style={{ color: "var(--text-3)", fontSize: 12.5 }}>
+                            <span style={{ color: "var(--text-3)", fontSize: 13.5 }}>
                               No stored events for this deal.
                             </span>
                           )}
                           {dealEvents[f.deal_id]?.map((e, i) => (
                             <div
                               key={i}
-                              style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "3px 0", fontSize: 12.5 }}
+                              style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "3px 0", fontSize: 13.5 }}
                             >
                               <span style={{ color: "var(--text-3)", whiteSpace: "nowrap", minWidth: 110 }}>
                                 {fmtWhen(e.occurred_at)}
@@ -352,13 +352,13 @@ export function HotListView({ isAdmin = false }: { isAdmin?: boolean }) {
         <div className="card">
           <div className="panel-h">Live signal feed</div>
           {data.feed.length === 0 && (
-            <div style={{ color: "var(--text-3)", fontSize: 13 }}>No signals yet.</div>
+            <div style={{ color: "var(--text-3)", fontSize: 14 }}>No signals yet.</div>
           )}
           {data.feed.map((s, i) => (
             <div className="stmt-row" style={{ alignItems: "flex-start" }} key={i}>
               <div>
-                <b style={{ fontSize: 13 }}>{s.person_email ?? "unknown"}</b>
-                <div style={{ fontSize: 12, color: "var(--text-3)" }}>
+                <b style={{ fontSize: 14 }}>{s.person_email ?? "unknown"}</b>
+                <div style={{ fontSize: 13, color: "var(--text-3)" }}>
                   {TYPE_LABEL[s.type] ?? s.type.replace("_", " ")}
                   {eventDetail(s) && (
                     <span style={{ color: "var(--text-2)" }}> — {eventDetail(s)}</span>
@@ -367,7 +367,7 @@ export function HotListView({ isAdmin = false }: { isAdmin?: boolean }) {
               </div>
               <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 10 }}>
                 <SourceChip source={s.source} />
-                <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 3 }}>
+                <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 3 }}>
                   {fmtWhen(s.occurred_at)}
                 </div>
               </div>

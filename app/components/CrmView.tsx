@@ -249,21 +249,21 @@ export function CrmView() {
 
       <div className="card" style={{ padding: "10px 14px", marginBottom: 16, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <span className="panel-h" style={{ margin: 0 }}>Mirror</span>
-        <button className="btn ghost" style={{ padding: "6px 12px", fontSize: 12.5 }} onClick={runImport} disabled={importing}>
+        <button className="btn ghost" style={{ padding: "6px 12px", fontSize: 13.5 }} onClick={runImport} disabled={importing}>
           {importing ? "Importing…" : "⟳ Run import chunk"}
         </button>
-        <button className="btn ghost" style={{ padding: "6px 12px", fontSize: 12.5 }} onClick={runPdSync} disabled={pdSyncing}>
+        <button className="btn ghost" style={{ padding: "6px 12px", fontSize: 13.5 }} onClick={runPdSync} disabled={pdSyncing}>
           {pdSyncing ? "Syncing…" : `⇅ Sync Pipedrive${pdPending > 0 ? ` (${pdPending})` : ""}`}
         </button>
         {meta?.mirror.importState && (
-          <span style={{ fontSize: 12, color: "var(--text-3)" }}>
+          <span style={{ fontSize: 13, color: "var(--text-3)" }}>
             phase: {meta.mirror.importState.phase} ·{" "}
             {Object.entries(meta.mirror.importState.counts ?? {})
               .map(([k, v]) => `${k}: ${v}`)
               .join(" · ")}
           </span>
         )}
-        {importMsg && <span style={{ fontSize: 12, color: "var(--text-2)" }}>{importMsg}</span>}
+        {importMsg && <span style={{ fontSize: 13, color: "var(--text-2)" }}>{importMsg}</span>}
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
@@ -302,7 +302,7 @@ export function CrmView() {
 
       {selected.size > 0 && (
         <div className="card" style={{ padding: "10px 14px", marginBottom: 14, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <b style={{ fontSize: 13.5 }}>⚡ {selected.size} selected</b>
+          <b style={{ fontSize: 14.5 }}>⚡ {selected.size} selected</b>
           <input
             className="vmsel"
             style={{ width: 200 }}
@@ -316,20 +316,20 @@ export function CrmView() {
             <option value="cainen@lonepeakoverland.com">Cainen</option>
             <option value="kyle@lonepeakoverland.com">Kyle</option>
           </select>
-          <button className="btn primary" style={{ padding: "8px 14px", fontSize: 13 }} onClick={createSprint} disabled={!sprintName.trim()}>
+          <button className="btn primary" style={{ padding: "8px 14px", fontSize: 14 }} onClick={createSprint} disabled={!sprintName.trim()}>
             Create sprint
           </button>
-          <button className="btn ghost" style={{ padding: "8px 12px", fontSize: 13 }} onClick={() => setSelected(new Set())}>
+          <button className="btn ghost" style={{ padding: "8px 12px", fontSize: 14 }} onClick={() => setSelected(new Set())}>
             Clear
           </button>
-          <span style={{ color: "var(--text-3)", fontSize: 12 }}>or</span>
+          <span style={{ color: "var(--text-3)", fontSize: 13 }}>or</span>
           <select className="vmsel" style={{ width: "auto" }} value={assignOwner} onChange={(e) => setAssignOwner(e.target.value)}>
             <option value="">Assign owner…</option>
             <option value="24081760">→ Parker</option>
             <option value="24391245">→ Jackson</option>
             <option value="24723797">→ Cainen</option>
           </select>
-          <button className="btn ghost" style={{ padding: "8px 14px", fontSize: 13 }} onClick={bulkAssign} disabled={!assignOwner}>
+          <button className="btn ghost" style={{ padding: "8px 14px", fontSize: 14 }} onClick={bulkAssign} disabled={!assignOwner}>
             Assign {selected.size}
           </button>
         </div>
@@ -383,7 +383,7 @@ export function CrmView() {
                 </td>
                 <td style={{ whiteSpace: "nowrap" }}>
                   {d.crm_stages?.name ?? "—"}
-                  <div style={{ fontSize: 11, color: "var(--text-3)" }}>{d.crm_stages?.crm_pipelines?.name}</div>
+                  <div style={{ fontSize: 12, color: "var(--text-3)" }}>{d.crm_stages?.crm_pipelines?.name}</div>
                 </td>
                 <td className="money">{d.value_cents != null ? `$${Math.round(d.value_cents / 100).toLocaleString()}` : "—"}</td>
                 <td style={{ color: "var(--text-3)", whiteSpace: "nowrap" }}>{fmtDate(d.last_activity_at)}</td>
@@ -392,7 +392,7 @@ export function CrmView() {
                 <td style={{ whiteSpace: "nowrap" }}>
                   {d.crm_contacts?.name ?? "—"}
                   {d.crm_contacts?.phones?.[0] && (
-                    <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+                    <div style={{ fontSize: 12, color: "var(--text-3)" }}>
                       {d.crm_contacts.phones[0].e164 ?? d.crm_contacts.phones[0].value}
                     </div>
                   )}
@@ -404,13 +404,13 @@ export function CrmView() {
       </div>
 
       <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 12 }}>
-        <button className="btn ghost" style={{ padding: "6px 12px", fontSize: 12.5 }} disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
+        <button className="btn ghost" style={{ padding: "6px 12px", fontSize: 13.5 }} disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
           ← Prev
         </button>
-        <span style={{ fontSize: 13, color: "var(--text-2)" }}>
+        <span style={{ fontSize: 14, color: "var(--text-2)" }}>
           {total.toLocaleString()} deals · page {page + 1} / {Math.max(1, Math.ceil(total / 50))}
         </span>
-        <button className="btn ghost" style={{ padding: "6px 12px", fontSize: 12.5 }} disabled={(page + 1) * 50 >= total} onClick={() => setPage((p) => p + 1)}>
+        <button className="btn ghost" style={{ padding: "6px 12px", fontSize: 13.5 }} disabled={(page + 1) * 50 >= total} onClick={() => setPage((p) => p + 1)}>
           Next →
         </button>
       </div>

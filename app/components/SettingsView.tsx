@@ -59,13 +59,13 @@ export function SettingsView() {
         {reps.map((r) => (
           <div className="stmt-row" key={r.id} style={{ alignItems: "center" }}>
             <div>
-              <b style={{ fontSize: 13.5 }}>
+              <b style={{ fontSize: 14.5 }}>
                 {r.name}
                 {r.active === false && (
-                  <span style={{ fontSize: 10.5, color: "var(--text-3)", fontWeight: 600 }}> · admin</span>
+                  <span style={{ fontSize: 11.5, color: "var(--text-3)", fontWeight: 600 }}> · admin</span>
                 )}
               </b>
-              <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>
+              <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>
                 Quo: {r.quo_phone_number ?? "—"} (unchanged until port)
               </div>
             </div>
@@ -86,7 +86,7 @@ export function SettingsView() {
           </div>
         ))}
         {numbers.length === 0 && (
-          <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 8 }}>
+          <div style={{ fontSize: 13.5, color: "var(--text-3)", marginTop: 8 }}>
             No Telnyx numbers on the account yet — buy numbers in the Telnyx portal (or port the Quo
             numbers at migration) and they appear here.
           </div>

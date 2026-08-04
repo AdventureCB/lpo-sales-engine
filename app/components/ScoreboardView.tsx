@@ -161,7 +161,7 @@ export function ScoreboardView() {
             />
             <button
               className="btn primary"
-              style={{ padding: "8px 14px", fontSize: 13 }}
+              style={{ padding: "8px 14px", fontSize: 14 }}
               onClick={applyCustom}
               disabled={customLoading || !customStart || !customEnd}
             >

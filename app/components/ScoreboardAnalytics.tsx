@@ -79,7 +79,7 @@ function TrendChart({
   const y = (s: number) => padT + plotH - (s / 60 / yMax) * plotH;
 
   if (points.length === 0) {
-    return <div style={{ fontSize: 13, color: "var(--text-3)", padding: "24px 0" }}>No data yet.</div>;
+    return <div style={{ fontSize: 14, color: "var(--text-3)", padding: "24px 0" }}>No data yet.</div>;
   }
   return (
     <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet">
@@ -279,7 +279,7 @@ export function ScoreboardAnalytics({ onHover }: { onHover: (tip: Tip) => void }
           <h3>Text response rate</h3>
           <div className="sub">% of outbound texts answered within 48h, by week</div>
           {weeks.length === 0 ? (
-            <div style={{ fontSize: 13, color: "var(--text-3)", padding: "24px 0" }}>
+            <div style={{ fontSize: 14, color: "var(--text-3)", padding: "24px 0" }}>
               Tracking starts now — texts sent from today on are paired with replies.
             </div>
           ) : (
@@ -352,7 +352,7 @@ export function ScoreboardAnalytics({ onHover }: { onHover: (tip: Tip) => void }
           Conversation minutes invested per journey — before the $500 deposit, and from deposit to the confirmed build
         </div>
         {jt.length === 0 ? (
-          <div style={{ fontSize: 13, color: "var(--text-3)" }}>No journeys with matched calls yet.</div>
+          <div style={{ fontSize: 14, color: "var(--text-3)" }}>No journeys with matched calls yet.</div>
         ) : (
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 6 }}>
             {talkReps.map((rep, i) => {
@@ -362,16 +362,16 @@ export function ScoreboardAnalytics({ onHover }: { onHover: (tip: Tip) => void }
                 <div key={rep} style={{ background: "var(--surface-2)", borderRadius: 9, padding: "10px 14px", minWidth: 220, flex: 1 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 6 }}>
                     <span className="sw" style={{ background: colorFor(rep, reps.indexOf(rep) === -1 ? i : reps.indexOf(rep)) }} />
-                    <b style={{ fontSize: 13 }}>{rep.split(" ")[0]}</b>
+                    <b style={{ fontSize: 14 }}>{rep.split(" ")[0]}</b>
                   </div>
                   <div style={{ display: "flex", gap: 18 }}>
                     <div>
                       <div style={{ fontSize: 19, fontWeight: 800 }}>{dep ? fmtTalk(Math.round(dep.avgS)) : "—"}</div>
-                      <div style={{ fontSize: 11, color: "var(--text-3)" }}>avg → deposit{dep ? ` (${dep.n})` : ""}</div>
+                      <div style={{ fontSize: 12, color: "var(--text-3)" }}>avg → deposit{dep ? ` (${dep.n})` : ""}</div>
                     </div>
                     <div>
                       <div style={{ fontSize: 19, fontWeight: 800 }}>{conf ? fmtTalk(Math.round(conf.avgS)) : "—"}</div>
-                      <div style={{ fontSize: 11, color: "var(--text-3)" }}>avg → confirmation{conf ? ` (${conf.n})` : ""}</div>
+                      <div style={{ fontSize: 12, color: "var(--text-3)" }}>avg → confirmation{conf ? ` (${conf.n})` : ""}</div>
                     </div>
                   </div>
                 </div>
@@ -430,24 +430,24 @@ export function ScoreboardAnalytics({ onHover }: { onHover: (tip: Tip) => void }
           Contacts with over 15 minutes of lifetime conversation time · attributed to the rep with the most talk time
         </div>
         {data.leaders.length === 0 && (
-          <div style={{ fontSize: 13, color: "var(--text-3)" }}>No contacts over 15 minutes yet.</div>
+          <div style={{ fontSize: 14, color: "var(--text-3)" }}>No contacts over 15 minutes yet.</div>
         )}
         {[...leadersByRep.entries()].map(([rep, rows]) => (
           <div key={rep} style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-3)", margin: "8px 0 4px" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-3)", margin: "8px 0 4px" }}>
               {rep} · {rows.length}
             </div>
             {rows.map((l) => (
               <div className="stmt-row" key={l.peer_phone}>
                 <div style={{ minWidth: 0 }}>
-                  <b style={{ fontSize: 13.5 }}>{l.contact_name?.trim() || l.peer_phone}</b>
+                  <b style={{ fontSize: 14.5 }}>{l.contact_name?.trim() || l.peer_phone}</b>
                   {l.contact_name && (
-                    <span style={{ fontSize: 12, color: "var(--text-3)", marginLeft: 8, fontVariantNumeric: "tabular-nums" }}>
+                    <span style={{ fontSize: 13, color: "var(--text-3)", marginLeft: 8, fontVariantNumeric: "tabular-nums" }}>
                       {l.peer_phone}
                     </span>
                   )}
                 </div>
-                <div style={{ fontSize: 12.5, color: "var(--text-2)", flexShrink: 0, marginLeft: 10, fontVariantNumeric: "tabular-nums" }}>
+                <div style={{ fontSize: 13.5, color: "var(--text-2)", flexShrink: 0, marginLeft: 10, fontVariantNumeric: "tabular-nums" }}>
                   <b style={{ color: "var(--text-1)" }}>{fmtTalk(l.talk_s)}</b> · {l.calls} call{l.calls === 1 ? "" : "s"} · last{" "}
                   {new Date(l.last_call).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                 </div>

@@ -95,19 +95,19 @@ export function PhoneDock() {
             }}
           >
             <div style={{ fontSize: 34, marginBottom: 10 }}>📳</div>
-            <div style={{ fontSize: 12, color: "var(--text-3)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+            <div style={{ fontSize: 13, color: "var(--text-3)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
               Incoming call
             </div>
             <div style={{ fontSize: 22, fontWeight: 800, marginTop: 6 }}>{who}</div>
             {callerInfo?.name && (
-              <div style={{ fontSize: 13, color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
+              <div style={{ fontSize: 14, color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
                 {incoming.from}
               </div>
             )}
             {callerInfo?.crmDealId && (
               <button
                 className="btn ghost"
-                style={{ fontSize: 12.5, padding: "6px 14px", marginTop: 10 }}
+                style={{ fontSize: 13.5, padding: "6px 14px", marginTop: 10 }}
                 onClick={() => {
                   setMinimized(true);
                   router.push(`/crm/deal/${callerInfo.crmDealId}`);
@@ -148,11 +148,11 @@ export function PhoneDock() {
             maxWidth: "92vw",
           }}
         >
-          <b style={{ fontSize: 13.5 }}>📳 Ringing · {who}</b>
-          <button className="btn primary" style={{ padding: "7px 16px", fontSize: 13 }} onClick={answerIncoming}>
+          <b style={{ fontSize: 14.5 }}>📳 Ringing · {who}</b>
+          <button className="btn primary" style={{ padding: "7px 16px", fontSize: 14 }} onClick={answerIncoming}>
             ✅ Answer
           </button>
-          <button className="btn ghost" style={{ padding: "7px 12px", fontSize: 13 }} onClick={endIncoming}>
+          <button className="btn ghost" style={{ padding: "7px 12px", fontSize: 14 }} onClick={endIncoming}>
             Decline
           </button>
         </div>
@@ -178,14 +178,14 @@ export function PhoneDock() {
             maxWidth: "92vw",
           }}
         >
-          <b style={{ fontSize: 13.5 }}>🟢 On call · {who}</b>
-          <span style={{ fontSize: 11.5, color: "var(--warn, #d9a234)" }} title="Recording disclosure is the rep's responsibility — say it on the call">
+          <b style={{ fontSize: 14.5 }}>🟢 On call · {who}</b>
+          <span style={{ fontSize: 12.5, color: "var(--warn, #d9a234)" }} title="Recording disclosure is the rep's responsibility — say it on the call">
             📼 recorded — disclose
           </span>
           {callerInfo?.crmDealId && (
             <button
               className="btn ghost"
-              style={{ fontSize: 12, padding: "5px 10px" }}
+              style={{ fontSize: 13, padding: "5px 10px" }}
               onClick={() => router.push(`/crm/deal/${callerInfo.crmDealId}`)}
             >
               📋 deal
@@ -193,7 +193,7 @@ export function PhoneDock() {
           )}
           <button
             className="btn"
-            style={{ background: "var(--crit)", color: "#fff", padding: "7px 14px", fontSize: 13 }}
+            style={{ background: "var(--crit)", color: "#fff", padding: "7px 14px", fontSize: 14 }}
             onClick={endIncoming}
           >
             ⏹ End call

@@ -118,7 +118,7 @@ export function CallLogView() {
               padding: "11px 16px",
               borderBottom: i < shown.length - 1 ? "1px solid var(--border-soft)" : "none",
               cursor: c.crmDealId ? "pointer" : "default",
-              fontSize: 13.5,
+              fontSize: 14.5,
             }}
             title={c.crmDealId ? `Open deal: ${c.dealTitle}` : undefined}
           >
@@ -130,7 +130,7 @@ export function CallLogView() {
                 {c.contactName ?? c.peer ?? "Unknown"}
               </b>
               {c.contactName && c.peer && (
-                <span style={{ color: "var(--text-3)", marginLeft: 8, fontSize: 12 }}>{c.peer}</span>
+                <span style={{ color: "var(--text-3)", marginLeft: 8, fontSize: 13 }}>{c.peer}</span>
               )}
             </span>
             <span style={{ color: "var(--text-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -139,14 +139,14 @@ export function CallLogView() {
             <span style={{ color: "var(--text-2)", fontVariantNumeric: "tabular-nums" }}>
               {c.missed ? "missed" : fmtDur(c.durationS)}
             </span>
-            <span style={{ color: "var(--text-3)", fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <span style={{ color: "var(--text-3)", fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {c.disposition
                 ? DISPO_LABEL[c.disposition] ?? c.disposition
                 : c.classification ?? c.status ?? ""}
               {c.hasTranscript && " · 📝"}
               {c.quality?.avg_loss_pct != null && ` · 📶 ${c.quality.avg_loss_pct}%`}
             </span>
-            <span style={{ color: "var(--text-3)", fontSize: 12.5, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ color: "var(--text-3)", fontSize: 13.5, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
               {fmtWhen(c.at)}
             </span>
           </div>

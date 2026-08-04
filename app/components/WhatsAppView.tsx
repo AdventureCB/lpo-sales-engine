@@ -109,13 +109,13 @@ export function WhatsAppView({ isAdmin }: { isAdmin: boolean }) {
         <div className="viewsub">Two-way WhatsApp via the Klaviyo Conversations API.</div>
         <div className="card" style={{ maxWidth: 520 }}>
           <b style={{ fontSize: 14 }}>Not connected yet</b>
-          <div style={{ fontSize: 13, color: "var(--text-2)", margin: "8px 0 12px" }}>
+          <div style={{ fontSize: 14, color: "var(--text-2)", margin: "8px 0 12px" }}>
             {isAdmin
               ? "Connect the Klaviyo account once for the whole team."
               : "An admin needs to connect the Klaviyo account."}
           </div>
           {isAdmin && (
-            <a className="btn primary" style={{ textDecoration: "none", padding: "9px 16px", fontSize: 13.5 }} href="/api/klaviyo/connect">
+            <a className="btn primary" style={{ textDecoration: "none", padding: "9px 16px", fontSize: 14.5 }} href="/api/klaviyo/connect">
               Connect Klaviyo
             </a>
           )}
@@ -136,7 +136,7 @@ export function WhatsAppView({ isAdmin }: { isAdmin: boolean }) {
         <div className="card" style={{ maxWidth: 320, minWidth: 260 }}>
           <div className="panel-h">Conversations</div>
           {threads.length === 0 && (
-            <div style={{ fontSize: 13, color: "var(--text-3)" }}>
+            <div style={{ fontSize: 14, color: "var(--text-3)" }}>
               No WhatsApp conversations yet — they appear when a customer messages.
             </div>
           )}
@@ -153,12 +153,12 @@ export function WhatsAppView({ isAdmin }: { isAdmin: boolean }) {
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                <b style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <b style={{ fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {t.contactName ?? "Unknown contact"}
                 </b>
-                <span style={{ fontSize: 10.5, color: "var(--text-3)", flexShrink: 0 }}>{fmtWhen(t.lastAt)}</span>
+                <span style={{ fontSize: 11.5, color: "var(--text-3)", flexShrink: 0 }}>{fmtWhen(t.lastAt)}</span>
               </div>
-              <div style={{ fontSize: 12, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <div style={{ fontSize: 13, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {t.lastDirection === "inbound" ? "" : "You: "}
                 {t.lastBody}
               </div>
@@ -168,7 +168,7 @@ export function WhatsAppView({ isAdmin }: { isAdmin: boolean }) {
 
         <div className="card" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 420 }}>
           {!active ? (
-            <div style={{ margin: "auto", color: "var(--text-3)", fontSize: 13 }}>Pick a conversation</div>
+            <div style={{ margin: "auto", color: "var(--text-3)", fontSize: 14 }}>Pick a conversation</div>
           ) : (
             <>
               <div className="panel-h">{activeThread?.contactName ?? "Conversation"}</div>
@@ -183,16 +183,16 @@ export function WhatsAppView({ isAdmin }: { isAdmin: boolean }) {
                       borderRadius: 12,
                       padding: "7px 11px",
                       maxWidth: "75%",
-                      fontSize: 13.5,
+                      fontSize: 14.5,
                     }}
                   >
                     {m.body}
-                    <div style={{ fontSize: 10, opacity: 0.7, marginTop: 3 }}>{fmtWhen(m.sent_at)}</div>
+                    <div style={{ fontSize: 11, opacity: 0.7, marginTop: 3 }}>{fmtWhen(m.sent_at)}</div>
                   </div>
                 ))}
                 <div ref={bottomRef} />
               </div>
-              {error && <div style={{ fontSize: 12, color: "var(--crit)", marginBottom: 6 }}>{error}</div>}
+              {error && <div style={{ fontSize: 13, color: "var(--crit)", marginBottom: 6 }}>{error}</div>}
               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                 <input
                   className="vmsel"
@@ -205,7 +205,7 @@ export function WhatsAppView({ isAdmin }: { isAdmin: boolean }) {
                     if (e.key === "Enter") void send();
                   }}
                 />
-                <button className="btn primary" style={{ padding: "8px 16px", fontSize: 13 }} onClick={send} disabled={sending || !draft.trim()}>
+                <button className="btn primary" style={{ padding: "8px 16px", fontSize: 14 }} onClick={send} disabled={sending || !draft.trim()}>
                   {sending ? "…" : "Send"}
                 </button>
               </div>

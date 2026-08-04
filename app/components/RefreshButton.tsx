@@ -22,7 +22,7 @@ export function RefreshButton() {
   return (
     <button
       className="btn ghost"
-      style={{ padding: "5px 10px", fontSize: 13 }}
+      style={{ padding: "5px 10px", fontSize: 14 }}
       onClick={() => window.location.reload()}
       title="Refresh (⌘R)"
     >

@@ -122,15 +122,15 @@ export function DealDetailView({ dealId }: { dealId: string }) {
               </select>
               {d.status === "open" ? (
                 <>
-                  <button className="btn ghost" style={{ padding: "8px 13px", fontSize: 13 }} onClick={() => update({ status: "won" })} disabled={saving}>
+                  <button className="btn ghost" style={{ padding: "8px 13px", fontSize: 14 }} onClick={() => update({ status: "won" })} disabled={saving}>
                     ✓ Won
                   </button>
-                  <button className="btn ghost" style={{ padding: "8px 13px", fontSize: 13 }} onClick={() => update({ status: "lost" })} disabled={saving}>
+                  <button className="btn ghost" style={{ padding: "8px 13px", fontSize: 14 }} onClick={() => update({ status: "lost" })} disabled={saving}>
                     ✗ Lost
                   </button>
                 </>
               ) : (
-                <button className="btn ghost" style={{ padding: "8px 13px", fontSize: 13 }} onClick={() => update({ status: "open" })} disabled={saving}>
+                <button className="btn ghost" style={{ padding: "8px 13px", fontSize: 14 }} onClick={() => update({ status: "open" })} disabled={saving}>
                   Reopen
                 </button>
               )}
@@ -151,7 +151,7 @@ export function DealDetailView({ dealId }: { dealId: string }) {
               />
               <button
                 className="btn primary"
-                style={{ padding: "8px 14px", fontSize: 13 }}
+                style={{ padding: "8px 14px", fontSize: 14 }}
                 disabled={!note.trim() || saving}
                 onClick={() => {
                   void update({ note });
@@ -186,7 +186,7 @@ export function DealDetailView({ dealId }: { dealId: string }) {
               />
               <button
                 className="btn primary"
-                style={{ padding: "8px 14px", fontSize: 13 }}
+                style={{ padding: "8px 14px", fontSize: 14 }}
                 disabled={!schedSubject.trim() || saving}
                 onClick={() => {
                   void update({
@@ -234,7 +234,7 @@ export function DealDetailView({ dealId }: { dealId: string }) {
               )}
               <button
                 className="btn ghost"
-                style={{ padding: "8px 13px", fontSize: 13 }}
+                style={{ padding: "8px 13px", fontSize: 14 }}
                 disabled={
                   saving ||
                   (sprintPick === "__new" ? !newSprintName.trim() || !newSprintOwner : !sprintPick)
@@ -253,7 +253,7 @@ export function DealDetailView({ dealId }: { dealId: string }) {
                 Add to sprint
               </button>
               {data.dealSprintIds.length > 0 && (
-                <span style={{ fontSize: 12, color: "var(--text-3)" }}>
+                <span style={{ fontSize: 13, color: "var(--text-3)" }}>
                   In {data.dealSprintIds.length} sprint{data.dealSprintIds.length === 1 ? "" : "s"} — shows in that rep’s dialer
                 </span>
               )}
@@ -272,15 +272,15 @@ export function DealDetailView({ dealId }: { dealId: string }) {
                   <div className="stmt-row" key={t.id} style={{ alignItems: "center" }}>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
                       <span>{KIND_ICON[t.kind] ?? "•"}</span>
-                      <b style={{ fontSize: 13 }}>{t.title}</b>
-                      <span style={{ fontSize: 12, color: Date.parse(t.due!) < Date.now() ? "var(--crit)" : "var(--text-3)" }}>
+                      <b style={{ fontSize: 14 }}>{t.title}</b>
+                      <span style={{ fontSize: 13, color: Date.parse(t.due!) < Date.now() ? "var(--crit)" : "var(--text-3)" }}>
                         {Date.parse(t.due!) < Date.now() ? "overdue · " : "due "}
                         {fmtWhen(t.due)}
                       </span>
                     </div>
                     <button
                       className="btn ghost"
-                      style={{ padding: "4px 10px", fontSize: 12, flexShrink: 0 }}
+                      style={{ padding: "4px 10px", fontSize: 13, flexShrink: 0 }}
                       disabled={saving}
                       onClick={() => update({ completeActivityId: t.id })}
                     >
@@ -295,7 +295,7 @@ export function DealDetailView({ dealId }: { dealId: string }) {
           <div className="card">
             <div className="panel-h">Timeline</div>
             {data.timeline.length === 0 && (
-              <div style={{ color: "var(--text-3)", fontSize: 13 }}>No activity yet.</div>
+              <div style={{ color: "var(--text-3)", fontSize: 14 }}>No activity yet.</div>
             )}
             {/* Pending scheduled items live in Upcoming, not the timeline —
                 they land here once completed. */}
@@ -304,14 +304,14 @@ export function DealDetailView({ dealId }: { dealId: string }) {
                 <div style={{ display: "flex", gap: 8 }}>
                   <span>{KIND_ICON[t.kind] ?? "•"}</span>
                   <div>
-                    <b style={{ fontSize: 13 }}>{t.title}</b>
+                    <b style={{ fontSize: 14 }}>{t.title}</b>
                     {t.body && (
-                      <div style={{ fontSize: 12.5, color: "var(--text-2)", maxWidth: 480 }}>{t.body}</div>
+                      <div style={{ fontSize: 13.5, color: "var(--text-2)", maxWidth: 480 }}>{t.body}</div>
                     )}
-                    {t.actor && <div style={{ fontSize: 11, color: "var(--text-3)" }}>{t.actor}</div>}
+                    {t.actor && <div style={{ fontSize: 12, color: "var(--text-3)" }}>{t.actor}</div>}
                   </div>
                 </div>
-                <div style={{ fontSize: 11, color: "var(--text-3)", flexShrink: 0, marginLeft: 10 }}>
+                <div style={{ fontSize: 12, color: "var(--text-3)", flexShrink: 0, marginLeft: 10 }}>
                   {fmtWhen(t.at)}
                 </div>
               </div>
@@ -324,7 +324,7 @@ export function DealDetailView({ dealId }: { dealId: string }) {
           {contact ? (
             <>
               <div style={{ fontSize: 17, fontWeight: 800 }}>{contact.name}</div>
-              {contact.org_name && <div style={{ color: "var(--text-2)", fontSize: 13 }}>{contact.org_name}</div>}
+              {contact.org_name && <div style={{ color: "var(--text-2)", fontSize: 14 }}>{contact.org_name}</div>}
               <div style={{ marginTop: 10 }}>
                 {phones.map((p, i) => {
                   const num = p.e164 ?? p.value;
@@ -349,17 +349,17 @@ export function DealDetailView({ dealId }: { dealId: string }) {
                       >
                         {num}
                       </a>
-                      {p.primary && <span style={{ fontSize: 10, color: "var(--text-3)" }}> · primary</span>}
+                      {p.primary && <span style={{ fontSize: 11, color: "var(--text-3)" }}> · primary</span>}
                     </div>
                   );
                 })}
                 {callHint && (
-                  <div style={{ fontSize: 11.5, color: "var(--text-2)" }}>
+                  <div style={{ fontSize: 12.5, color: "var(--text-2)" }}>
                     📋 Number copied — paste into the Quo web dialer (⌘V)
                   </div>
                 )}
                 {emails.map((e, i) => (
-                  <div key={i} style={{ fontSize: 13, padding: "3px 0", color: "var(--text-2)" }}>
+                  <div key={i} style={{ fontSize: 14, padding: "3px 0", color: "var(--text-2)" }}>
                     ✉️{" "}
                     <a
                       href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(e.value)}`}
@@ -373,15 +373,15 @@ export function DealDetailView({ dealId }: { dealId: string }) {
                   </div>
                 ))}
                 {phones.length === 0 && emails.length === 0 && (
-                  <div style={{ color: "var(--text-3)", fontSize: 13 }}>No contact details.</div>
+                  <div style={{ color: "var(--text-3)", fontSize: 14 }}>No contact details.</div>
                 )}
               </div>
             </>
           ) : (
-            <div style={{ color: "var(--text-3)", fontSize: 13 }}>No linked contact.</div>
+            <div style={{ color: "var(--text-3)", fontSize: 14 }}>No linked contact.</div>
           )}
           <div className="panel-h" style={{ marginTop: 16 }}>Record</div>
-          <div style={{ fontSize: 12.5, color: "var(--text-3)", lineHeight: 1.8 }}>
+          <div style={{ fontSize: 13.5, color: "var(--text-3)", lineHeight: 1.8 }}>
             Created {fmtWhen(d.pd_add_time ?? d.created_at)}<br />
             Stage changed {fmtWhen(d.stage_changed_at)}<br />
             Last activity {fmtWhen(d.last_activity_at)}<br />

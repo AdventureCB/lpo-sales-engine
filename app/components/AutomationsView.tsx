@@ -311,19 +311,19 @@ export function AutomationsView() {
           </div>
           {triggerType === "signal_received" && metricId && (
             <div style={{ background: "var(--surface-2)", borderRadius: 9, padding: 10, marginBottom: 10 }}>
-              <div style={{ fontSize: 11, color: "var(--text-3)", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 6 }}>
+              <div style={{ fontSize: 12, color: "var(--text-3)", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 6 }}>
                 Available data fields {sampleLoading ? "(loading sample…)" : "(from the latest real event — click to copy a template token)"}
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {sample && Object.keys(sample).length === 0 && !sampleLoading && (
-                  <span style={{ fontSize: 12, color: "var(--text-3)" }}>No recent events for this metric.</span>
+                  <span style={{ fontSize: 13, color: "var(--text-3)" }}>No recent events for this metric.</span>
                 )}
                 {sample &&
                   Object.entries(sample).slice(0, 20).map(([k, v]) => (
                     <button
                       key={k}
                       className="btn ghost"
-                      style={{ padding: "3px 8px", fontSize: 11.5 }}
+                      style={{ padding: "3px 8px", fontSize: 12.5 }}
                       title={`Example: ${String(typeof v === "object" ? JSON.stringify(v) : v).slice(0, 80)}`}
                       onClick={() => insertToken(k)}
                     >
@@ -359,19 +359,19 @@ export function AutomationsView() {
                       <option key={k} value={k}>{k}</option>
                     ))}
                   </select>
-                  <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>equals</span>
+                  <span style={{ fontSize: 13.5, color: "var(--text-3)" }}>equals</span>
                   <input
                     style={{ flex: 1 }}
                     value={f.value}
                     placeholder={String((sample as any)?.[f.field] ?? "value")}
                     onChange={(e) => setFilters((prev) => prev.map((x, idx) => (idx === i ? { ...x, value: e.target.value } : x)))}
                   />
-                  <button className="btn ghost" style={{ padding: "2px 8px", fontSize: 11 }} onClick={() => setFilters((prev) => prev.filter((_, idx) => idx !== i))}>✕</button>
+                  <button className="btn ghost" style={{ padding: "2px 8px", fontSize: 12 }} onClick={() => setFilters((prev) => prev.filter((_, idx) => idx !== i))}>✕</button>
                 </div>
               ))}
               <button
                 className="btn ghost"
-                style={{ padding: "4px 10px", fontSize: 12 }}
+                style={{ padding: "4px 10px", fontSize: 13 }}
                 onClick={() => setFilters((prev) => [...prev, { field: "", value: "" }])}
                 disabled={!sample || Object.keys(sample).length === 0}
                 title={!sample || Object.keys(sample).length === 0 ? "Needs a recent event to know the available fields" : ""}
@@ -384,10 +384,10 @@ export function AutomationsView() {
           {actions.map((a, i) => (
             <div key={i} style={{ background: "var(--surface-2)", borderRadius: 9, padding: 12, marginBottom: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                <b style={{ fontSize: 13 }}>
+                <b style={{ fontSize: 14 }}>
                   {i + 1}. {ACTION_TYPES.find(([k]) => k === a.type)?.[1] ?? a.type}
                 </b>
-                <button className="btn ghost" style={{ padding: "2px 8px", fontSize: 11 }} onClick={() => removeAction(i)}>✕</button>
+                <button className="btn ghost" style={{ padding: "2px 8px", fontSize: 12 }} onClick={() => removeAction(i)}>✕</button>
               </div>
 
               {a.type === "create_deal" && (
@@ -427,7 +427,7 @@ export function AutomationsView() {
                     {a.owner_strategy === "round_robin" && (
                       <div style={{ display: "flex", gap: 10, paddingBottom: 8 }}>
                         {REPS.map(([id, label]) => (
-                          <label key={id} style={{ fontSize: 12.5, display: "flex", gap: 4, alignItems: "center", color: "var(--text-2)" }}>
+                          <label key={id} style={{ fontSize: 13.5, display: "flex", gap: 4, alignItems: "center", color: "var(--text-2)" }}>
                             <input type="checkbox" checked={(a.owner_pool ?? []).includes(id)} onChange={() => togglePoolRep(i, id)} />
                             {label}
                           </label>
@@ -436,11 +436,11 @@ export function AutomationsView() {
                     )}
                   </div>
                   <div style={{ display: "flex", gap: 14, marginTop: 8 }}>
-                    <label style={{ fontSize: 12.5, display: "flex", gap: 5, alignItems: "center", color: "var(--text-2)" }}>
+                    <label style={{ fontSize: 13.5, display: "flex", gap: 5, alignItems: "center", color: "var(--text-2)" }}>
                       <input type="checkbox" checked={a.enrich_phone_from_klaviyo} onChange={(e) => setActionField(i, "enrich_phone_from_klaviyo", e.target.checked)} />
                       Enrich missing phone from Klaviyo
                     </label>
-                    <label style={{ fontSize: 12.5, display: "flex", gap: 5, alignItems: "center", color: "var(--text-2)" }}>
+                    <label style={{ fontSize: 13.5, display: "flex", gap: 5, alignItems: "center", color: "var(--text-2)" }}>
                       <input type="checkbox" checked={a.skip_if_open_deal} onChange={(e) => setActionField(i, "skip_if_open_deal", e.target.checked)} />
                       Skip if an open deal exists
                     </label>
@@ -473,7 +473,7 @@ export function AutomationsView() {
                       value={a.body_template}
                       onChange={(e) => setActionField(i, "body_template", e.target.value)}
                       rows={3}
-                      style={{ width: "100%", background: "var(--surface-1)", border: "1px solid var(--border)", borderRadius: 8, padding: 8, color: "var(--text-1)", fontSize: 13 }}
+                      style={{ width: "100%", background: "var(--surface-1)", border: "1px solid var(--border)", borderRadius: 8, padding: 8, color: "var(--text-1)", fontSize: 14 }}
                     />
                   </div>
                 </>
@@ -506,7 +506,7 @@ export function AutomationsView() {
                     value={a.body_template}
                     onChange={(e) => setActionField(i, "body_template", e.target.value)}
                     rows={2}
-                    style={{ width: "100%", background: "var(--surface-1)", border: "1px solid var(--border)", borderRadius: 8, padding: 8, color: "var(--text-1)", fontSize: 13 }}
+                    style={{ width: "100%", background: "var(--surface-1)", border: "1px solid var(--border)", borderRadius: 8, padding: 8, color: "var(--text-1)", fontSize: 14 }}
                   />
                 </div>
               )}
@@ -526,13 +526,13 @@ export function AutomationsView() {
                 <option key={k} value={k}>{label}</option>
               ))}
             </select>
-            <button className="btn ghost" style={{ padding: "8px 12px", fontSize: 13 }} onClick={() => setActions((prev) => [...prev, newAction(addActionType)])}>
+            <button className="btn ghost" style={{ padding: "8px 12px", fontSize: 14 }} onClick={() => setActions((prev) => [...prev, newAction(addActionType)])}>
               ＋ Add action
             </button>
           </div>
 
           <button className="btn primary" onClick={create} disabled={!name.trim()}>Create (disabled)</button>
-          {builderMsg && <span style={{ fontSize: 12.5, color: "var(--text-2)", marginLeft: 10 }}>{builderMsg}</span>}
+          {builderMsg && <span style={{ fontSize: 13.5, color: "var(--text-2)", marginLeft: 10 }}>{builderMsg}</span>}
         </div>
       )}
 
@@ -550,20 +550,20 @@ export function AutomationsView() {
               </div>
               <div style={{ flex: 1, minWidth: 240 }}>
                 <b>{a.name}</b>
-                <div style={{ fontSize: 12, color: "var(--text-3)" }}>
+                <div style={{ fontSize: 13, color: "var(--text-3)" }}>
                   {describeTrigger(a.trigger)} → {a.actions.map((x) => x.type).join(", ")}
                   {" · "}{rs.length} recent runs
                   {rs.some((r) => r.status === "error") && <span style={{ color: "var(--crit)" }}> · ⚠ errors</span>}
                 </div>
               </div>
-              <button className="btn ghost" style={{ padding: "5px 10px", fontSize: 12 }} onClick={() => remove(a)}>
+              <button className="btn ghost" style={{ padding: "5px 10px", fontSize: 13 }} onClick={() => remove(a)}>
                 🗑
               </button>
             </div>
             {rs.length > 0 && (
               <div style={{ marginTop: 10, borderTop: "1px solid var(--border-soft)", paddingTop: 8 }}>
                 {rs.slice(0, 5).map((r, i) => (
-                  <div key={i} style={{ fontSize: 12, color: r.status === "error" ? "var(--crit)" : "var(--text-3)", padding: "2px 0" }}>
+                  <div key={i} style={{ fontSize: 13, color: r.status === "error" ? "var(--crit)" : "var(--text-3)", padding: "2px 0" }}>
                     {new Date(r.ran_at).toLocaleString("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}{" "}
                     · {r.status} · {(r.detail?.results ?? [r.detail?.reason ?? ""]).join(" | ")}
                   </div>

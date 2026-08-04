@@ -773,7 +773,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
           {searchResults && (
             <div className="queue-list" style={{ marginBottom: 12 }}>
               {searchResults.length === 0 && (
-                <div style={{ fontSize: 12.5, color: "var(--text-3)", padding: "4px 2px" }}>
+                <div style={{ fontSize: 13.5, color: "var(--text-3)", padding: "4px 2px" }}>
                   No deals match.
                 </div>
               )}
@@ -787,7 +787,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                 >
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
                     {r.title}
-                    <span style={{ display: "block", fontSize: 11, color: "var(--text-3)", fontWeight: 500 }}>
+                    <span style={{ display: "block", fontSize: 12, color: "var(--text-3)", fontWeight: 500 }}>
                       {r.stageName} · {r.status}
                       {r.callable === false ? " · 🔒" : ""}
                     </span>
@@ -921,7 +921,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                         gap: 8,
                         alignItems: "baseline",
                         padding: "5px 0",
-                        fontSize: 13,
+                        fontSize: 14,
                         borderBottom: i < activities.length - 1 ? "1px solid var(--border-soft)" : "none",
                       }}
                     >
@@ -931,7 +931,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                       <span style={{ color: "var(--text-1)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {a.subject ?? a.type}
                       </span>
-                      <span style={{ color: "var(--text-3)", fontSize: 12, whiteSpace: "nowrap" }}>
+                      <span style={{ color: "var(--text-3)", fontSize: 13, whiteSpace: "nowrap" }}>
                         {a.done ? "✓ " : "due "}
                         {(a.due_date ?? a.add_time ?? "").slice(0, 10)}
                       </span>
@@ -974,7 +974,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                 )}
               </div>
               {inCall && dialMethod === "browser" && browserCallState && (
-                <div style={{ fontSize: 12.5, color: browserCallState.startsWith("error") ? "var(--crit)" : "var(--text-2)", marginTop: 8 }}>
+                <div style={{ fontSize: 13.5, color: browserCallState.startsWith("error") ? "var(--crit)" : "var(--text-2)", marginTop: 8 }}>
                   {browserCallState === "connecting" && "🌐 Connecting…"}
                   {browserCallState === "ringing" && "🌐 Ringing — in-browser call via Telnyx"}
                   {browserCallState === "active" && (
@@ -989,7 +989,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                 </div>
               )}
               {inCall && dialMethod === "web" && (
-                <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 8 }}>
+                <div style={{ fontSize: 13.5, color: "var(--text-2)", marginTop: 8 }}>
                   📋 Number copied — switch to the{" "}
                   <a
                     href="https://my.quo.com"
@@ -1003,7 +1003,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
               )}
               {awaitingDispo && !pendingDispo && isManualNoDeal && manualDealStage === "ask" && (
                 <div className="dispo-row" style={{ display: "flex", alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 12.5, color: "var(--text-2)" }}>
+                  <span style={{ fontSize: 13.5, color: "var(--text-2)" }}>
                     No deal matches {lead.phone} — add one?
                   </span>
                   <button className="btn primary" onClick={() => setManualDealStage("form")}>
@@ -1035,7 +1035,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                     value={mdTitle}
                     onChange={(e) => setMdTitle(e.target.value)}
                   />
-                  {mdError && <div style={{ color: "var(--crit)", fontSize: 12.5 }}>{mdError}</div>}
+                  {mdError && <div style={{ color: "var(--crit)", fontSize: 13.5 }}>{mdError}</div>}
                   <div style={{ display: "flex", gap: 8 }}>
                     <button
                       className="btn primary"
@@ -1072,8 +1072,8 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                     onChange={(e) => setDispoNote(e.target.value)}
                   />
                   <div className="dispo-row" style={{ display: "flex", alignItems: "center", flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 12.5, color: "var(--text-2)" }}>Next step?</span>
-                    <select className="vmsel" style={{ width: "auto", padding: "6px 8px", fontSize: 12.5 }} value={nextType} onChange={(e) => setNextType(e.target.value)}>
+                    <span style={{ fontSize: 13.5, color: "var(--text-2)" }}>Next step?</span>
+                    <select className="vmsel" style={{ width: "auto", padding: "6px 8px", fontSize: 13.5 }} value={nextType} onChange={(e) => setNextType(e.target.value)}>
                       <option value="call">📞 Call</option>
                       <option value="task">📋 Task</option>
                       <option value="email">✉️ Email</option>
@@ -1098,7 +1098,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                       />
                       <button
                         className="btn primary"
-                        style={{ padding: "7px 14px", fontSize: 13 }}
+                        style={{ padding: "7px 14px", fontSize: 14 }}
                         disabled={!customDue}
                         onClick={() => completeDispo(new Date(customDue).toISOString())}
                       >
@@ -1141,7 +1141,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                     {l.hot ? "🔥 hot" : l.stageName}
                     <button
                       className="btn ghost"
-                      style={{ padding: "1px 7px", fontSize: 11, lineHeight: 1.4 }}
+                      style={{ padding: "1px 7px", fontSize: 12, lineHeight: 1.4 }}
                       title="Skip — remove from this session (recorded)"
                       onClick={() => skipUpcoming(l.dealId)}
                     >
@@ -1168,7 +1168,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
         </span>
         <button
           className="btn ghost"
-          style={{ padding: "4px 12px", fontSize: 12.5 }}
+          style={{ padding: "4px 12px", fontSize: 13.5 }}
           onClick={() => {
             setKeypadNum("");
             setKeypadOpen(true);
@@ -1182,7 +1182,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
           Call via
           <select
             className="vmsel"
-            style={{ width: "auto", padding: "4px 8px", fontSize: 12.5 }}
+            style={{ width: "auto", padding: "4px 8px", fontSize: 13.5 }}
             value={dialMethod}
             onChange={(e) => pickDialMethod(e.target.value as "desktop" | "web")}
           >
@@ -1193,7 +1193,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
           {dialMethod === "web" && (
             <button
               className="btn ghost"
-              style={{ padding: "4px 10px", fontSize: 12.5 }}
+              style={{ padding: "4px 10px", fontSize: 13.5 }}
               onClick={() => window.open("https://my.quo.com", "quo-web")}
             >
               Open Quo web ↗
@@ -1202,7 +1202,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
           {dialMethod === "browser" && (
             <span
               style={{
-                fontSize: 11.5,
+                fontSize: 12.5,
                 color: telnyxConn === "ready" ? "var(--ok, #0ca30c)" : telnyxConn.startsWith("error") ? "var(--crit)" : "var(--text-3)",
               }}
               title="Inbound calls ring here only while this shows ready"
@@ -1239,11 +1239,11 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
-              <b style={{ fontSize: 13.5 }}>⌨️ Manual dial</b>
+              <b style={{ fontSize: 14.5 }}>⌨️ Manual dial</b>
               {!inCall && (
                 <button
                   className="btn ghost"
-                  style={{ marginLeft: "auto", padding: "2px 9px", fontSize: 13 }}
+                  style={{ marginLeft: "auto", padding: "2px 9px", fontSize: 14 }}
                   onClick={() => setKeypadOpen(false)}
                 >
                   ✕

@@ -90,24 +90,24 @@ export function QualityView() {
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                 <b style={{ fontSize: 14 }}>{r.rep}</b>
-                <span style={{ fontSize: 12, fontWeight: 700, color: g.color }}>{g.label}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: g.color }}>{g.label}</span>
               </div>
               <div style={{ display: "flex", gap: 16, marginTop: 8 }}>
                 <div>
                   <div style={{ fontSize: 19, fontWeight: 800 }}>{r.avgLossPct}%</div>
-                  <div style={{ fontSize: 11, color: "var(--text-3)" }}>avg loss</div>
+                  <div style={{ fontSize: 12, color: "var(--text-3)" }}>avg loss</div>
                 </div>
                 <div>
                   <div style={{ fontSize: 19, fontWeight: 800 }}>{r.avgMaxJitterMs}ms</div>
-                  <div style={{ fontSize: 11, color: "var(--text-3)" }}>avg peak jitter</div>
+                  <div style={{ fontSize: 12, color: "var(--text-3)" }}>avg peak jitter</div>
                 </div>
                 <div>
                   <div style={{ fontSize: 19, fontWeight: 800 }}>{r.avgMos ?? "—"}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-3)" }}>avg MOS</div>
+                  <div style={{ fontSize: 12, color: "var(--text-3)" }}>avg MOS</div>
                 </div>
                 <div>
                   <div style={{ fontSize: 19, fontWeight: 800 }}>{r.calls}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-3)" }}>calls</div>
+                  <div style={{ fontSize: 12, color: "var(--text-3)" }}>calls</div>
                 </div>
               </div>
             </div>
@@ -118,19 +118,19 @@ export function QualityView() {
       {active && (
         <div className="card">
           <div className="panel-h">{active.rep} — last 50 measured calls</div>
-          {!calls && <div style={{ fontSize: 13, color: "var(--text-3)" }}>Loading…</div>}
+          {!calls && <div style={{ fontSize: 14, color: "var(--text-3)" }}>Loading…</div>}
           {calls?.map((c, i) => {
             const g = grade(c.avgLossPct ?? 0, c.maxJitterMs ?? 0);
             return (
               <div className="stmt-row" key={i} style={{ alignItems: "center" }}>
-                <div style={{ fontSize: 12.5 }}>
+                <div style={{ fontSize: 13.5 }}>
                   {fmtWhen(c.at)}
                   <span style={{ color: "var(--text-3)" }}>
                     {" "}· {c.durationS ? `${Math.floor(c.durationS / 60)}m ${c.durationS % 60}s` : "—"}
                     {c.disposition ? ` · ${c.disposition.replace("_", " ")}` : ""}
                   </span>
                 </div>
-                <div style={{ fontSize: 12.5, fontVariantNumeric: "tabular-nums", display: "flex", gap: 12, alignItems: "center" }}>
+                <div style={{ fontSize: 13.5, fontVariantNumeric: "tabular-nums", display: "flex", gap: 12, alignItems: "center" }}>
                   <span>{c.avgLossPct ?? 0}% loss</span>
                   <span>{c.maxJitterMs ?? 0}ms jitter</span>
                   <span>{c.mos ? `MOS ${c.mos}` : ""}</span>
@@ -139,7 +139,7 @@ export function QualityView() {
               </div>
             );
           })}
-          {calls?.length === 0 && <div style={{ fontSize: 13, color: "var(--text-3)" }}>No measured calls.</div>}
+          {calls?.length === 0 && <div style={{ fontSize: 14, color: "var(--text-3)" }}>No measured calls.</div>}
         </div>
       )}
     </>

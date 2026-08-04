@@ -48,7 +48,7 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 8,
   padding: "8px 10px",
   color: "var(--text-1)",
-  fontSize: 12.5,
+  fontSize: 13.5,
 };
 
 export function VmPanel({
@@ -235,10 +235,10 @@ export function VmPanel({
       {!busy && (
         <>
           <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-            <button className="btn ghost" style={{ flex: 1, justifyContent: "center", fontSize: 12.5, padding: 8 }} onClick={preview} disabled={!selected?.url}>
+            <button className="btn ghost" style={{ flex: 1, justifyContent: "center", fontSize: 13.5, padding: 8 }} onClick={preview} disabled={!selected?.url}>
               ▶ Preview
             </button>
-            <button className="btn ghost" style={{ flex: 1, justifyContent: "center", fontSize: 12.5, padding: 8 }} onClick={startRec}>
+            <button className="btn ghost" style={{ flex: 1, justifyContent: "center", fontSize: 13.5, padding: 8 }} onClick={startRec}>
               ⏺ Record new
             </button>
           </div>
@@ -246,7 +246,7 @@ export function VmPanel({
             <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
               <button
                 className="btn ghost"
-                style={{ flex: 1, justifyContent: "center", fontSize: 12, padding: 6 }}
+                style={{ flex: 1, justifyContent: "center", fontSize: 13, padding: 6 }}
                 onClick={() => {
                   setRenaming(true);
                   setRenameVal(selected.name);
@@ -259,7 +259,7 @@ export function VmPanel({
                 style={{
                   flex: 1,
                   justifyContent: "center",
-                  fontSize: 12,
+                  fontSize: 13,
                   padding: 6,
                   ...(confirmingDelete ? { background: "var(--crit)", color: "#fff", boxShadow: "none" } : {}),
                 }}
@@ -278,10 +278,10 @@ export function VmPanel({
                 onKeyDown={(e) => e.key === "Enter" && renameSelected()}
                 autoFocus
               />
-              <button className="btn primary" style={{ fontSize: 12, padding: "6px 10px" }} onClick={renameSelected}>
+              <button className="btn primary" style={{ fontSize: 13, padding: "6px 10px" }} onClick={renameSelected}>
                 Save
               </button>
-              <button className="btn ghost" style={{ fontSize: 12, padding: "6px 10px" }} onClick={() => setRenaming(false)}>
+              <button className="btn ghost" style={{ fontSize: 13, padding: "6px 10px" }} onClick={() => setRenaming(false)}>
                 ✕
               </button>
             </div>
@@ -292,16 +292,16 @@ export function VmPanel({
       {phase === "countdown" && (
         <div style={{ marginTop: 10, textAlign: "center", background: "var(--surface-2)", borderRadius: 9, padding: "18px 12px" }}>
           <div style={{ fontSize: 34, fontWeight: 800, color: "var(--accent-hover)" }}>{countdown}</div>
-          <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 4 }}>Recording starts…</div>
+          <div style={{ fontSize: 13, color: "var(--text-3)", marginTop: 4 }}>Recording starts…</div>
         </div>
       )}
 
       {phase === "recording" && (
         <div style={{ marginTop: 10, background: "var(--surface-2)", border: "1px solid rgba(208,59,59,.45)", borderRadius: 9, padding: "12px" }}>
-          <div style={{ fontSize: 13, color: "var(--crit)", fontWeight: 650 }}>
+          <div style={{ fontSize: 14, color: "var(--crit)", fontWeight: 650 }}>
             ● Recording {String(Math.floor(recSec / 60)).padStart(2, "0")}:{String(recSec % 60).padStart(2, "0")}
           </div>
-          <button className="btn primary" style={{ width: "100%", justifyContent: "center", fontSize: 12.5, padding: "8px 12px", marginTop: 10 }} onClick={stopRec}>
+          <button className="btn primary" style={{ width: "100%", justifyContent: "center", fontSize: 13.5, padding: "8px 12px", marginTop: 10 }} onClick={stopRec}>
             ⏹ Stop recording
           </button>
         </div>
@@ -309,10 +309,10 @@ export function VmPanel({
 
       {phase === "naming" && (
         <div style={{ marginTop: 10, background: "var(--surface-2)", borderRadius: 9, padding: 12 }}>
-          <div style={{ fontSize: 12.5, color: "var(--text-2)", marginBottom: 8 }}>
+          <div style={{ fontSize: 13.5, color: "var(--text-2)", marginBottom: 8 }}>
             Take recorded ({recSec}s) — listen, then name it to save.
           </div>
-          <button className="btn ghost" style={{ width: "100%", justifyContent: "center", fontSize: 12.5, padding: 7, marginBottom: 8 }} onClick={playTake}>
+          <button className="btn ghost" style={{ width: "100%", justifyContent: "center", fontSize: 13.5, padding: 7, marginBottom: 8 }} onClick={playTake}>
             ▶ Play take
           </button>
           <input
@@ -324,18 +324,18 @@ export function VmPanel({
             autoFocus
           />
           <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-            <button className="btn primary" style={{ flex: 1, justifyContent: "center", fontSize: 12.5, padding: "8px 12px" }} onClick={saveTake} disabled={!recName.trim()}>
+            <button className="btn primary" style={{ flex: 1, justifyContent: "center", fontSize: 13.5, padding: "8px 12px" }} onClick={saveTake} disabled={!recName.trim()}>
               💾 Save
             </button>
-            <button className="btn ghost" style={{ flex: 1, justifyContent: "center", fontSize: 12.5, padding: "8px 12px" }} onClick={discardTake}>
+            <button className="btn ghost" style={{ flex: 1, justifyContent: "center", fontSize: 13.5, padding: "8px 12px" }} onClick={discardTake}>
               Discard
             </button>
           </div>
         </div>
       )}
 
-      {phase === "saving" && <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 8 }}>Uploading…</div>}
-      {status && <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 8 }}>{status}</div>}
+      {phase === "saving" && <div style={{ fontSize: 13, color: "var(--text-3)", marginTop: 8 }}>Uploading…</div>}
+      {status && <div style={{ fontSize: 13, color: "var(--text-3)", marginTop: 8 }}>{status}</div>}
       <AudioSetup />
     </div>
   );
@@ -365,14 +365,14 @@ function AudioSetup() {
   if (!inTauri) return null; // browser — audio setup is companion-only
   if (bridgeError) {
     return (
-      <div style={{ marginTop: 12, borderTop: "1px solid var(--border-soft)", paddingTop: 10, fontSize: 12, color: "var(--crit)" }}>
+      <div style={{ marginTop: 12, borderTop: "1px solid var(--border-soft)", paddingTop: 10, fontSize: 13, color: "var(--crit)" }}>
         Companion bridge error: {bridgeError}
       </div>
     );
   }
   if (!state) {
     return (
-      <div style={{ marginTop: 12, borderTop: "1px solid var(--border-soft)", paddingTop: 10, fontSize: 12, color: "var(--text-3)" }}>
+      <div style={{ marginTop: 12, borderTop: "1px solid var(--border-soft)", paddingTop: 10, fontSize: 13, color: "var(--text-3)" }}>
         Checking audio devices…
       </div>
     );
@@ -391,13 +391,13 @@ function AudioSetup() {
 
   return (
     <div style={{ marginTop: 12, borderTop: "1px solid var(--border-soft)", paddingTop: 10 }}>
-      <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>
+      <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>
         BlackHole {state.blackhole ? "✓" : "✗ not installed"} · Mic+VM device{" "}
         {state.aggregate ? "✓" : "✗ missing"}
       </div>
       <button
         className="btn ghost"
-        style={{ width: "100%", justifyContent: "center", fontSize: 12.5, padding: 8, marginTop: 8 }}
+        style={{ width: "100%", justifyContent: "center", fontSize: 13.5, padding: 8, marginTop: 8 }}
         onClick={runSetup}
         disabled={!state.blackhole}
         title={
@@ -408,7 +408,7 @@ function AudioSetup() {
       >
         {state.aggregate ? "⚙️ Recreate Mic + VM device (new headset?)" : "⚙️ Create Mic + VM device"}
       </button>
-      {msg && <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 6 }}>{msg}</div>}
+      {msg && <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 6 }}>{msg}</div>}
     </div>
   );
 }

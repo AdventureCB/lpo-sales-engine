@@ -101,21 +101,21 @@ export function CommissionsView() {
             <div style={{ display: "flex", gap: 18, marginTop: 8, flexWrap: "wrap" }}>
               <div>
                 <div style={{ fontSize: 20, fontWeight: 800 }}>{s.confirmed}</div>
-                <div style={{ fontSize: 11, color: "var(--text-3)" }}>Confirmed</div>
+                <div style={{ fontSize: 12, color: "var(--text-3)" }}>Confirmed</div>
               </div>
               <div>
                 <div style={{ fontSize: 20, fontWeight: 800 }}>${Math.round(s.commissionCents / 100)}</div>
-                <div style={{ fontSize: 11, color: "var(--text-3)" }}>Commission</div>
+                <div style={{ fontSize: 12, color: "var(--text-3)" }}>Commission</div>
               </div>
               <div>
                 <div style={{ fontSize: 20, fontWeight: 800 }}>{fmtTalk(s.avgTalkToDepositS)}</div>
-                <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+                <div style={{ fontSize: 12, color: "var(--text-3)" }}>
                   Avg talk → deposit{s.depositSample ? ` (${s.depositSample})` : ""}
                 </div>
               </div>
               <div>
                 <div style={{ fontSize: 20, fontWeight: 800 }}>{fmtTalk(s.avgTalkToConfirmS)}</div>
-                <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+                <div style={{ fontSize: 12, color: "var(--text-3)" }}>
                   Avg talk → confirm{s.confirmSample ? ` (${s.confirmSample})` : ""}
                 </div>
               </div>
@@ -129,11 +129,11 @@ export function CommissionsView() {
 
       {conflicts.length > 0 && (
         <div className="card" style={{ marginBottom: 18, borderColor: "var(--crit)" }}>
-          <b style={{ fontSize: 13, color: "var(--crit)" }}>
+          <b style={{ fontSize: 14, color: "var(--crit)" }}>
             ⚠ {conflicts.length} attribution conflict{conflicts.length === 1 ? "" : "s"} — commission held
           </b>
           {conflicts.slice(0, 5).map((j) => (
-            <div key={j.id} style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 4 }}>
+            <div key={j.id} style={{ fontSize: 13.5, color: "var(--text-2)", marginTop: 4 }}>
               {j.customer}: code says <b>{j.codeRep?.split(" ")[0] ?? "?"}</b>, deal owner is{" "}
               <b>{j.ownerRep?.split(" ")[0] ?? "?"}</b>
             </div>
@@ -160,15 +160,15 @@ export function CommissionsView() {
         <div className="card" style={{ marginBottom: 10 }} key={j.id}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
             <b style={{ fontSize: 14 }}>{j.customer}</b>
-            <span style={{ fontSize: 12, fontWeight: 700, color: STATE_COLOR[j.state] ?? "var(--text-2)" }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: STATE_COLOR[j.state] ?? "var(--text-2)" }}>
               {STATE_LABEL[j.state] ?? j.state}
             </span>
-            {j.is_conflict && <span style={{ fontSize: 12, color: "var(--crit)" }}>⚠ conflict</span>}
-            <span style={{ fontSize: 12, color: "var(--text-3)", marginLeft: "auto" }}>
+            {j.is_conflict && <span style={{ fontSize: 13, color: "var(--crit)" }}>⚠ conflict</span>}
+            <span style={{ fontSize: 13, color: "var(--text-3)", marginLeft: "auto" }}>
               {j.rep ? j.rep.split(" ")[0] : j.is_conflict ? "held" : "unattributed"}
             </span>
           </div>
-          <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 6, display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 13.5, color: "var(--text-2)", marginTop: 6, display: "flex", gap: 16, flexWrap: "wrap" }}>
             <span>
               {j.orders.map((o) => `${o.number} (${o.classification ?? "?"})`).join(" · ") || "no orders linked"}
             </span>
@@ -177,7 +177,7 @@ export function CommissionsView() {
             {j.confirmed_at && <span>Confirmed {fmtDate(j.confirmed_at)}</span>}
             {j.state === "deposit_only" && <span>Expires {fmtDate(j.expires_at)}</span>}
           </div>
-          <div style={{ fontSize: 12.5, marginTop: 6, display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 13.5, marginTop: 6, display: "flex", gap: 16, flexWrap: "wrap" }}>
             <span>
               🗣 <b>{fmtTalk(j.talkToDepositS)}</b> <span style={{ color: "var(--text-3)" }}>talk → deposit</span>
             </span>

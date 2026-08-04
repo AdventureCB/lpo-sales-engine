@@ -137,7 +137,7 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
       <div className="viewsub" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         Team text conversations — sends through Quo until the Telnyx cutover.
         {isAdmin && (
-          <button className="btn ghost" style={{ padding: "3px 10px", fontSize: 12 }} onClick={runBackfill} disabled={backfilling}>
+          <button className="btn ghost" style={{ padding: "3px 10px", fontSize: 13 }} onClick={runBackfill} disabled={backfilling}>
             {backfilling ? "Importing…" : "⤓ Import Quo history"}
           </button>
         )}
@@ -171,7 +171,7 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
               />
               <button
                 className="btn primary"
-                style={{ padding: "6px 12px", fontSize: 13 }}
+                style={{ padding: "6px 12px", fontSize: 14 }}
                 disabled={newNum.replace(/[^\d]/g, "").replace(/^1/, "").length !== 10}
                 onClick={startNew}
               >
@@ -198,13 +198,13 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
                 }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-                  <b style={{ fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <b style={{ fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {t.awaitingReply && <span style={{ color: "var(--accent)" }}>● </span>}
                     {t.contactName ?? t.phone}
                   </b>
-                  <span style={{ color: "var(--text-3)", fontSize: 11.5, whiteSpace: "nowrap" }}>{fmtWhen(t.lastAt)}</span>
+                  <span style={{ color: "var(--text-3)", fontSize: 12.5, whiteSpace: "nowrap" }}>{fmtWhen(t.lastAt)}</span>
                 </div>
-                <div style={{ color: "var(--text-3)", fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>
+                <div style={{ color: "var(--text-3)", fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>
                   {t.lastDirection === "outgoing" && "→ "}
                   {t.lastBody ?? "(no text)"}
                 </div>
@@ -225,12 +225,12 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
               <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border-soft)", display: "flex", alignItems: "center", gap: 10 }}>
                 <b style={{ fontSize: 14 }}>{activeThread?.contactName ?? active}</b>
                 {activeThread?.contactName && (
-                  <span style={{ color: "var(--text-3)", fontSize: 12.5 }}>{active}</span>
+                  <span style={{ color: "var(--text-3)", fontSize: 13.5 }}>{active}</span>
                 )}
                 {activeThread?.crmDealId && (
                   <button
                     className="btn ghost"
-                    style={{ marginLeft: "auto", padding: "4px 10px", fontSize: 12 }}
+                    style={{ marginLeft: "auto", padding: "4px 10px", fontSize: 13 }}
                     onClick={() => router.push(`/crm/deal/${activeThread.crmDealId}`)}
                   >
                     📋 {activeThread.dealTitle ?? "Open deal"}
@@ -254,8 +254,8 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
                       padding: "8px 12px",
                     }}
                   >
-                    <div style={{ fontSize: 13.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.body ?? "(no text)"}</div>
-                    <div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 3, textAlign: m.direction === "outgoing" ? "right" : "left" }}>
+                    <div style={{ fontSize: 14.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.body ?? "(no text)"}</div>
+                    <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 3, textAlign: m.direction === "outgoing" ? "right" : "left" }}>
                       {m.direction === "outgoing" && m.rep ? `${m.rep} · ` : ""}
                       {fmtWhen(m.at)}
                       {m.direction === "outgoing" && m.status === "failed" && (
@@ -267,7 +267,7 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
               </div>
               <div style={{ padding: 10, borderTop: "1px solid var(--border-soft)" }}>
                 {sendError && (
-                  <div style={{ color: "var(--crit)", fontSize: 12.5, marginBottom: 6 }}>{sendError}</div>
+                  <div style={{ color: "var(--crit)", fontSize: 13.5, marginBottom: 6 }}>{sendError}</div>
                 )}
                 <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
                   <textarea

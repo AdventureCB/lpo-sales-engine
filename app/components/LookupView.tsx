@@ -133,7 +133,7 @@ export function LookupView() {
             <div style={{ fontSize: 20, fontWeight: 800 }}>
               {result.profile.name ?? result.profile.email}
             </div>
-            <div style={{ color: "var(--text-2)", fontSize: 13.5, marginTop: 3 }}>
+            <div style={{ color: "var(--text-2)", fontSize: 14.5, marginTop: 3 }}>
               {result.profile.email}
               {locStr && <> · {locStr}</>}
             </div>
@@ -145,12 +145,12 @@ export function LookupView() {
                 <option value="24391245">Owner: Jackson</option>
                 <option value="24723797">Owner: Cainen</option>
               </select>
-              <button className="btn primary" style={{ padding: "8px 14px", fontSize: 13 }} onClick={createDeal} disabled={creatingDeal}>
+              <button className="btn primary" style={{ padding: "8px 14px", fontSize: 14 }} onClick={createDeal} disabled={creatingDeal}>
                 {creatingDeal ? "Creating…" : "＋ Create deal"}
               </button>
             </div>
             {dealMsg && (
-              <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 8 }}>
+              <div style={{ fontSize: 13.5, color: "var(--text-2)", marginTop: 8 }}>
                 {dealMsg.text}
                 {dealMsg.link && (
                   <>
@@ -162,7 +162,7 @@ export function LookupView() {
 
             <div className="panel-h" style={{ marginTop: 18 }}>Phone numbers</div>
             {result.profile.phones.length === 0 && (
-              <div style={{ color: "var(--text-3)", fontSize: 13 }}>
+              <div style={{ color: "var(--text-3)", fontSize: 14 }}>
                 No phone anywhere on this profile.
               </div>
             )}
@@ -181,11 +181,11 @@ export function LookupView() {
                   <div style={{ fontSize: 16, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
                     {p.e164 ?? p.raw}
                   </div>
-                  <div style={{ fontSize: 11, color: "var(--text-3)" }}>{p.source}</div>
+                  <div style={{ fontSize: 12, color: "var(--text-3)" }}>{p.source}</div>
                 </div>
                 <button
                   className="btn ghost"
-                  style={{ padding: "5px 11px", fontSize: 12 }}
+                  style={{ padding: "5px 11px", fontSize: 13 }}
                   onClick={() => copy(p.e164 ?? p.raw)}
                 >
                   {copied === (p.e164 ?? p.raw) ? "✓ Copied" : "Copy"}
@@ -197,19 +197,19 @@ export function LookupView() {
           <div className="card">
             <div className="panel-h">Recent activity</div>
             {(result.events ?? []).length === 0 && (
-              <div style={{ color: "var(--text-3)", fontSize: 13 }}>No events.</div>
+              <div style={{ color: "var(--text-3)", fontSize: 14 }}>No events.</div>
             )}
             {(result.events ?? []).map((e, i) => (
               <div className="stmt-row" style={{ alignItems: "flex-start" }} key={i}>
                 <div>
-                  <b style={{ fontSize: 13 }}>{e.metric}</b>
-                  <div style={{ fontSize: 12, color: "var(--text-3)" }}>
+                  <b style={{ fontSize: 14 }}>{e.metric}</b>
+                  <div style={{ fontSize: 13, color: "var(--text-3)" }}>
                     {Object.entries(e.detail)
                       .map(([k, v]) => (k === "Subject" ? `“${v}”` : `${k.replace(/^\$/, "")}: ${v}`))
                       .join(" · ")}
                   </div>
                 </div>
-                <div style={{ fontSize: 11, color: "var(--text-3)", flexShrink: 0, marginLeft: 10 }}>
+                <div style={{ fontSize: 12, color: "var(--text-3)", flexShrink: 0, marginLeft: 10 }}>
                   {fmtWhen(e.datetime)}
                 </div>
               </div>
