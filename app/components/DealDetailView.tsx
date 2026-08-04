@@ -297,7 +297,9 @@ export function DealDetailView({ dealId }: { dealId: string }) {
             {data.timeline.length === 0 && (
               <div style={{ color: "var(--text-3)", fontSize: 13 }}>No activity yet.</div>
             )}
-            {data.timeline.map((t, i) => (
+            {/* Pending scheduled items live in Upcoming, not the timeline —
+                they land here once completed. */}
+            {data.timeline.filter((t) => !(t.due && !t.done)).map((t, i) => (
               <div className="stmt-row" style={{ alignItems: "flex-start" }} key={i}>
                 <div style={{ display: "flex", gap: 8 }}>
                   <span>{KIND_ICON[t.kind] ?? "•"}</span>

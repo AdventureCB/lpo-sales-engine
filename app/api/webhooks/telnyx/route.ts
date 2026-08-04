@@ -126,6 +126,13 @@ export async function POST(req: NextRequest) {
       : null;
   const answered =
     p.answer_time ?? (p.hangup_cause === "normal_clearing" && (durationS ?? 0) > 5 ? p.start_time : null);
+  // Preserve annotations other writers put on raw (client_quality from the
+  // disposition, transcript, cost) — lifecycle upserts must merge, not replace.
+  const { data: prior } = await db
+    .from("call_events")
+    .select("raw")
+    .eq("quo_call_id", `tx:${p.call_session_id}`)
+    .maybeSingle();
   const row: Record<string, unknown> = {
     quo_call_id: `tx:${p.call_session_id}`,
     direction: p.direction === "incoming" ? "incoming" : "outgoing",
@@ -134,7 +141,12 @@ export async function POST(req: NextRequest) {
     answered_at: answered,
     completed_at: endT,
     duration_s: durationS,
-    raw: { telnyx: true, data: { object: { participants: [p.from, p.to].filter(Boolean) } }, event },
+    raw: {
+      ...((prior?.raw as any) ?? {}),
+      telnyx: true,
+      data: { object: { participants: [p.from, p.to].filter(Boolean) } },
+      event,
+    },
   };
   const { error } = await db
     .from("call_events")
