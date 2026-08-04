@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useReducer, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   answerIncoming,
   endIncoming,
@@ -16,6 +17,7 @@ import {
  * answered = slim banner so the rep can keep working.
  */
 export function PhoneDock() {
+  const router = useRouter();
   const [, rerender] = useReducer((x) => x + 1, 0);
   const [callerInfo, setCallerInfo] = useState<{
     phone: string;
@@ -101,9 +103,7 @@ export function PhoneDock() {
               <button
                 className="btn ghost"
                 style={{ fontSize: 12.5, padding: "6px 14px", marginTop: 10 }}
-                onClick={() => {
-                  window.location.href = `/crm/deal/${callerInfo.crmDealId}`;
-                }}
+                onClick={() => router.push(`/crm/deal/${callerInfo.crmDealId}`)}
               >
                 📋 {callerInfo.dealTitle ?? "Open deal"}
               </button>
@@ -145,9 +145,7 @@ export function PhoneDock() {
             <button
               className="btn ghost"
               style={{ fontSize: 12, padding: "5px 10px" }}
-              onClick={() => {
-                window.location.href = `/crm/deal/${callerInfo.crmDealId}`;
-              }}
+              onClick={() => router.push(`/crm/deal/${callerInfo.crmDealId}`)}
             >
               📋 deal
             </button>
