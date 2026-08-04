@@ -25,6 +25,9 @@ export function PhoneDock() {
     crmDealId: string | null;
     dealTitle: string | null;
   } | null>(null);
+  // Ringing starts as a centered modal; opening the deal collapses it to a
+  // banner so the page stays usable.
+  const [minimized, setMinimized] = useState(false);
 
   useEffect(() => {
     const unsub = subscribePhone(rerender);
@@ -41,8 +44,10 @@ export function PhoneDock() {
     const from = incoming?.from;
     if (!from) {
       setCallerInfo(null);
+      setMinimized(false);
       return;
     }
+    setMinimized(false);
     if (callerInfo?.phone === from) return;
     setCallerInfo({ phone: from, name: null, crmDealId: null, dealTitle: null });
     fetch(`/api/crm/contact-by-phone?phone=${encodeURIComponent(from)}`)
@@ -66,7 +71,7 @@ export function PhoneDock() {
     <>
       <audio id="telnyx-audio" autoPlay />
 
-      {incoming && !incoming.active && (
+      {incoming && !incoming.active && !minimized && (
         <div
           style={{
             position: "fixed",
@@ -103,7 +108,10 @@ export function PhoneDock() {
               <button
                 className="btn ghost"
                 style={{ fontSize: 12.5, padding: "6px 14px", marginTop: 10 }}
-                onClick={() => router.push(`/crm/deal/${callerInfo.crmDealId}`)}
+                onClick={() => {
+                  setMinimized(true);
+                  router.push(`/crm/deal/${callerInfo.crmDealId}`);
+                }}
               >
                 📋 {callerInfo.dealTitle ?? "Open deal"}
               </button>
@@ -117,6 +125,36 @@ export function PhoneDock() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {incoming && !incoming.active && minimized && (
+        <div
+          style={{
+            position: "fixed",
+            top: 14,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 1000,
+            background: "var(--surface-1)",
+            border: "2px solid var(--accent)",
+            borderRadius: 12,
+            padding: "10px 16px",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            boxShadow: "0 8px 30px rgba(0,0,0,0.45)",
+            flexWrap: "wrap",
+            maxWidth: "92vw",
+          }}
+        >
+          <b style={{ fontSize: 13.5 }}>📳 Ringing · {who}</b>
+          <button className="btn primary" style={{ padding: "7px 16px", fontSize: 13 }} onClick={answerIncoming}>
+            ✅ Answer
+          </button>
+          <button className="btn ghost" style={{ padding: "7px 12px", fontSize: 13 }} onClick={endIncoming}>
+            Decline
+          </button>
         </div>
       )}
 
