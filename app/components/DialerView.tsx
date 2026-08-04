@@ -171,6 +171,21 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const browserCall = async (phone: string) => {
     setBrowserCallState("connecting");
     try {
+      // Pre-flight: surface mic problems BEFORE the call instead of a
+      // mysterious drop at answer time (blocked mic rings fine, then dies).
+      try {
+        const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mic.getTracks().forEach((t) => t.stop());
+      } catch (me: any) {
+        const blocked = me?.name === "NotAllowedError" || me?.name === "PermissionDeniedError";
+        setBrowserCallState(
+          blocked
+            ? "error: microphone blocked — click the mic/camera icon by the address bar, choose Allow, reload, and dial again"
+            : `error: microphone unavailable (${me?.name ?? "unknown"}) — check input device in system settings`
+        );
+        hangUp();
+        return;
+      }
       const r = await fetch("/api/telnyx/token");
       if (!r.ok) {
         const d = await r.json().catch(() => null);
