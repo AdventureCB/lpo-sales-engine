@@ -37,6 +37,24 @@ export interface CreateDealResult {
   phoneEnriched?: boolean;
 }
 
+function pdClient() {
+  if (!envOptional("PIPEDRIVE_API_TOKEN")) throw new Error("Pipedrive unavailable");
+  const token = env("PIPEDRIVE_API_TOKEN");
+  return async (path: string, method = "GET", body?: unknown) => {
+    const u = new URL(`https://api.pipedrive.com/v1${path}`);
+    u.searchParams.set("api_token", token);
+    const res = await fetch(u, {
+      method,
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.status === 429) throw new Error("Pipedrive daily budget exhausted");
+    if (!res.ok || json.success === false) throw new Error(`Pipedrive ${path} ${res.status}`);
+    return json.data;
+  };
+}
+
 /**
  * Source-agnostic deal creation from an email (Klaviyo profile, Shopify
  * customer, automation signal — anything). Finds or creates the Pipedrive
@@ -57,22 +75,7 @@ export async function createDealFromEmail(
 ): Promise<CreateDealResult> {
   const email = normalizeEmail(opts.email);
   if (!email) throw new Error("valid email required");
-  if (!envOptional("PIPEDRIVE_API_TOKEN")) throw new Error("Pipedrive unavailable");
-
-  const token = env("PIPEDRIVE_API_TOKEN");
-  const pd = async (path: string, method = "GET", body?: unknown) => {
-    const u = new URL(`https://api.pipedrive.com/v1${path}`);
-    u.searchParams.set("api_token", token);
-    const res = await fetch(u, {
-      method,
-      headers: body ? { "Content-Type": "application/json" } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const json = await res.json().catch(() => ({}));
-    if (res.status === 429) throw new Error("Pipedrive daily budget exhausted");
-    if (!res.ok || json.success === false) throw new Error(`Pipedrive ${path} ${res.status}`);
-    return json.data;
-  };
+  const pd = pdClient();
 
   const search = await pd(
     `/persons/search?term=${encodeURIComponent(email)}&fields=email&exact_match=true&limit=1`
@@ -135,4 +138,80 @@ export async function createDealFromEmail(
     title,
     phoneEnriched: Boolean(phone),
   };
+}
+
+/**
+ * Deal creation from a phone number — the manual-dial "no deal matched" path.
+ * Finds or creates the Pipedrive person by phone; if that person already has
+ * an open deal, links to it instead of creating a duplicate.
+ */
+export async function createDealFromPhone(
+  db: SupabaseClient,
+  opts: {
+    phone: string;
+    name?: string | null;
+    email?: string | null;
+    title?: string | null;
+    ownerPipedriveId?: number | null;
+    pipedriveStageId?: number | null;
+  }
+): Promise<CreateDealResult> {
+  const phone = normalizePhone(opts.phone);
+  if (!phone) throw new Error("valid phone required");
+  const pd = pdClient();
+
+  const digits = phone.replace(/\D/g, "").replace(/^1/, "");
+  const search = await pd(
+    `/persons/search?term=${encodeURIComponent(digits)}&fields=phone&limit=1`
+  );
+  let personId: number | null = search?.items?.[0]?.item?.id ?? null;
+
+  if (personId) {
+    const deals = await pd(`/persons/${personId}/deals?status=open&limit=1`);
+    const open = (deals ?? [])[0];
+    if (open) {
+      await upsertDeal(db, open);
+      const { data: mirrored } = await db
+        .from("crm_deals")
+        .select("id")
+        .eq("pipedrive_deal_id", open.id)
+        .maybeSingle();
+      return {
+        created: false,
+        skippedReason: "linked to this person's existing open deal",
+        pipedriveDealId: open.id,
+        crmDealId: mirrored?.id,
+        title: open.title,
+      };
+    }
+  }
+
+  const displayName = opts.name?.trim() || phone;
+  const email = opts.email ? normalizeEmail(opts.email) : null;
+  if (!personId) {
+    const person = await pd("/persons", "POST", {
+      name: displayName,
+      phone: [{ value: phone, primary: true }],
+      ...(email ? { email: [{ value: email, primary: true }] } : {}),
+      ...(opts.ownerPipedriveId ? { owner_id: opts.ownerPipedriveId } : {}),
+    });
+    personId = person.id;
+    await upsertContact(db, person).catch(() => {});
+  }
+
+  const title = opts.title?.trim() || `Phone Lead - ${displayName}`;
+  const deal = await pd("/deals", "POST", {
+    title,
+    person_id: personId,
+    ...(opts.pipedriveStageId ? { stage_id: opts.pipedriveStageId } : {}),
+    ...(opts.ownerPipedriveId ? { user_id: opts.ownerPipedriveId } : {}),
+  });
+  await upsertDeal(db, deal);
+  const { data: mirrored } = await db
+    .from("crm_deals")
+    .select("id")
+    .eq("pipedrive_deal_id", deal.id)
+    .maybeSingle();
+
+  return { created: true, pipedriveDealId: deal.id, crmDealId: mirrored?.id, title };
 }

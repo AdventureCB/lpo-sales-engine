@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
-import { createDealFromEmail } from "@/lib/deal-create";
+import { createDealFromEmail, createDealFromPhone } from "@/lib/deal-create";
 
 export const runtime = "nodejs";
 
@@ -15,6 +15,7 @@ export async function POST(req: NextRequest) {
 
   let body: {
     email?: string;
+    phone?: string;
     name?: string;
     title?: string;
     ownerPipedriveId?: number;
@@ -25,20 +26,32 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
-  if (!body.email) return NextResponse.json({ error: "email required" }, { status: 400 });
+  if (!body.email && !body.phone) {
+    return NextResponse.json({ error: "email or phone required" }, { status: 400 });
+  }
 
   // Sales reps create deals owned by themselves; admins choose.
   const ownerPipedriveId =
     user.role === "admin" ? body.ownerPipedriveId ?? null : user.pipedriveUserId;
 
   try {
-    const result = await createDealFromEmail(supabaseAdmin(), {
-      email: body.email,
-      name: body.name ?? null,
-      title: body.title ?? null,
-      ownerPipedriveId,
-      pipedriveStageId: body.pipedriveStageId ?? 44, // Intake default
-    });
+    // Phone path (manual dial): the caller may have no email at all.
+    const result = body.phone
+      ? await createDealFromPhone(supabaseAdmin(), {
+          phone: body.phone,
+          name: body.name ?? null,
+          email: body.email ?? null,
+          title: body.title ?? null,
+          ownerPipedriveId,
+          pipedriveStageId: body.pipedriveStageId ?? 44, // Intake default
+        })
+      : await createDealFromEmail(supabaseAdmin(), {
+          email: body.email!,
+          name: body.name ?? null,
+          title: body.title ?? null,
+          ownerPipedriveId,
+          pipedriveStageId: body.pipedriveStageId ?? 44, // Intake default
+        });
     return NextResponse.json(result);
   } catch (e) {
     return NextResponse.json(

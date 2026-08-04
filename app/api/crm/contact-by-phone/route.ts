@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
 
   const { data: deal } = await db
     .from("crm_deals")
-    .select("id, title, status")
+    .select("id, title, status, pipedrive_deal_id")
     .eq("contact_id", contact.id)
     .order("status", { ascending: true }) // "open" sorts before "won"/"lost"
     .order("updated_at", { ascending: false })
@@ -32,6 +32,8 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     contact: { id: contact.id, name: contact.name },
-    deal: deal ? { crmDealId: deal.id, title: deal.title } : null,
+    deal: deal
+      ? { crmDealId: deal.id, title: deal.title, pipedriveDealId: deal.pipedrive_deal_id }
+      : null,
   });
 }

@@ -88,6 +88,15 @@ function fmtClock(sec: number) {
   return `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`;
 }
 
+/** Progressive (555) 123-4567 formatting for the keypad display. */
+function fmtDialed(digits: string) {
+  const n = digits.replace(/^1/, "");
+  if (!n) return "";
+  if (n.length <= 3) return `(${n}`;
+  if (n.length <= 6) return `(${n.slice(0, 3)}) ${n.slice(3)}`;
+  return `(${n.slice(0, 3)}) ${n.slice(3, 6)}-${n.slice(6, 10)}`;
+}
+
 export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [queues, setQueues] = useState<Queue[]>([]);
   const [activeQueue, setActiveQueue] = useState<Queue | null>(null);
@@ -247,26 +256,111 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
 
   const lead = leads[leadIdx] ?? null;
 
-  // Manual dial: type any number, call it through the normal flow (synthetic
-  // lead at the front of the queue — dispositions/transcripts still log).
-  const [manualPhone, setManualPhone] = useState("");
-  const manualDial = () => {
-    const digits = manualPhone.replace(/[^\d+]/g, "");
-    const bare = digits.replace(/^\+?1/, "");
-    if (bare.length !== 10) return;
-    const e164 = `+1${bare}`;
+  // Manual dial: keypad popup → call. Before dialing we match the number
+  // against the CRM — a found deal rides the normal disposition/logging flow;
+  // an unknown number gets the "add a deal?" offer after hang-up.
+  const [keypadOpen, setKeypadOpen] = useState(false);
+  const [keypadNum, setKeypadNum] = useState(""); // digits only
+  const [keypadBusy, setKeypadBusy] = useState(false);
+  const keypadDigits = keypadNum.replace(/^1/, "");
+  const keypadValid = keypadDigits.length === 10;
+
+  // "No deal matched — add one?" flow after a manual call ends.
+  const [manualDealStage, setManualDealStage] = useState<"ask" | "form" | "skip">("ask");
+  const [mdName, setMdName] = useState("");
+  const [mdEmail, setMdEmail] = useState("");
+  const [mdTitle, setMdTitle] = useState("");
+  const [mdSaving, setMdSaving] = useState(false);
+  const [mdError, setMdError] = useState<string | null>(null);
+  const resetMdForm = () => {
+    setMdName("");
+    setMdEmail("");
+    setMdTitle("");
+    setMdError(null);
+    setManualDealStage("ask");
+  };
+
+  const keypadCall = async () => {
+    if (!keypadValid || inCall || awaitingDispo || keypadBusy) return;
+    setKeypadBusy(true);
+    const e164 = `+1${keypadDigits}`;
+    let matched: {
+      name: string | null;
+      crmDealId: string | null;
+      pipedriveDealId: number | null;
+      dealTitle: string | null;
+    } | null = null;
+    try {
+      const r = await fetch(`/api/crm/contact-by-phone?phone=${encodeURIComponent(e164)}`);
+      const d = r.ok ? await r.json() : null;
+      if (d?.contact) {
+        matched = {
+          name: d.contact.name ?? null,
+          crmDealId: d.deal?.crmDealId ?? null,
+          pipedriveDealId: d.deal?.pipedriveDealId ?? null,
+          dealTitle: d.deal?.title ?? null,
+        };
+      }
+    } catch {}
     const synthetic: Lead = {
-      dealId: 0,
-      title: `Manual dial ${e164}`,
-      personName: null,
+      dealId: matched?.pipedriveDealId ?? 0,
+      title: matched?.dealTitle ?? `Manual dial ${e164}`,
+      personName: matched?.name ?? null,
       phone: e164,
       stageName: "manual",
       hot: false,
       hotReason: null,
+      crmDealId: matched?.crmDealId ?? undefined,
     };
     setLeads((prev) => [...prev.slice(0, leadIdx), synthetic, ...prev.slice(leadIdx)]);
-    setManualPhone("");
+    resetMdForm();
+    setKeypadBusy(false);
+    dial({ leadOverride: synthetic });
   };
+
+  const createManualDeal = async () => {
+    if (!lead?.phone || !mdName.trim() || mdSaving) return;
+    setMdSaving(true);
+    setMdError(null);
+    try {
+      const r = await fetch("/api/crm/create-deal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: lead.phone,
+          name: mdName.trim(),
+          email: mdEmail.trim() || undefined,
+          title: mdTitle.trim() || undefined,
+        }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || d.error) throw new Error(d.error ?? `HTTP ${r.status}`);
+      // Attach the new (or linked) deal to the in-flight lead so the
+      // disposition that follows logs to it.
+      setLeads((prev) =>
+        prev.map((x, i) =>
+          i === leadIdx
+            ? {
+                ...x,
+                dealId: d.pipedriveDealId ?? 0,
+                crmDealId: d.crmDealId ?? undefined,
+                title: d.title ?? x.title,
+                personName: mdName.trim(),
+              }
+            : x
+        )
+      );
+      setManualDealStage("skip");
+    } catch (e) {
+      setMdError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMdSaving(false);
+    }
+  };
+
+  // A manual dial that matched nothing in the CRM — after hang-up, offer to
+  // create a deal before the disposition is taken.
+  const isManualNoDeal = !!lead && lead.stageName === "manual" && !lead.dealId && !lead.crmDealId;
 
   const loadQueues = useCallback(async (scope: OwnerScope) => {
     const r = await fetch(`/api/dialer/queues?owner=${scope}`);
@@ -329,8 +423,9 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     pollRef.current = null;
   };
 
-  const dial = (opts?: { redial?: boolean }) => {
-    if (!lead?.phone || inCall || (awaitingDispo && !opts?.redial) || lead.callable === false) return;
+  const dial = (opts?: { redial?: boolean; leadOverride?: Lead }) => {
+    const l = opts?.leadOverride ?? lead;
+    if (!l?.phone || inCall || (awaitingDispo && !opts?.redial) || l.callable === false) return;
     if (opts?.redial) {
       setAwaitingDispo(false);
       setPendingDispo(null);
@@ -343,29 +438,29 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setSess((s) => ({ ...s, dials: s.dials + 1 }));
     // Record the attempt — drives the shared pool's cooldown + fairness,
     // and marks sprint items as called. Manual dials have no deal to log.
-    if (lead.dealId) {
+    if (l.dealId) {
       void fetch("/api/dialer/attempt", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dealId: lead.dealId, sprintId: lead.sprintId, crmDealId: lead.crmDealId }),
+        body: JSON.stringify({ dealId: l.dealId, sprintId: l.sprintId, crmDealId: l.crmDealId }),
       }).catch(() => {});
     }
     if (dialMethod === "browser") {
-      void browserCall(lead.phone);
+      void browserCall(l.phone);
     } else if (dialMethod === "web") {
       // Quo web (my.quo.com) has no dial deep-link, so the fastest handoff is
       // clipboard: number is copied, rep pastes into the Quo tab. Tracking is
       // unaffected — webhooks record the call wherever it's placed.
-      void navigator.clipboard?.writeText(lead.phone).catch(() => {});
+      void navigator.clipboard?.writeText(l.phone).catch(() => {});
     } else if (window.__TAURI__) {
       // Quo desktop registers as the tel: handler (same handoff the Pipedrive
       // integration uses). The companion webview blocks tel: navigation, so
       // hand it to the OS natively there.
       void window.__TAURI__.core
-        .invoke("open_tel", { url: `tel:${lead.phone}` })
+        .invoke("open_tel", { url: `tel:${l.phone}` })
         .catch((e) => console.error("open_tel failed", e));
     } else {
-      window.location.href = `tel:${lead.phone}`;
+      window.location.href = `tel:${l.phone}`;
     }
     timerRef.current = setInterval(() => {
       callSecRef.current += 1;
@@ -373,9 +468,9 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     }, 1000);
     // Advance on the call.completed webhook.
     pollRef.current = setInterval(async () => {
-      if (!dialStartRef.current || !lead.phone) return;
+      if (!dialStartRef.current || !l.phone) return;
       const r = await fetch(
-        `/api/dialer/call-status?phone=${encodeURIComponent(lead.phone)}&since=${dialStartRef.current}`
+        `/api/dialer/call-status?phone=${encodeURIComponent(l.phone)}&since=${dialStartRef.current}`
       ).catch(() => null);
       if (!r?.ok) return;
       const d = await r.json();
@@ -386,6 +481,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const hangUp = () => {
     stopTimers();
     setInCall(false);
+    setKeypadOpen(false); // keypad's job is done — disposition happens in the lead card
     setAwaitingDispo(true);
   };
 
@@ -478,6 +574,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setDispoNote("");
     setCallSec(0);
     callSecRef.current = 0;
+    resetMdForm();
     if (autoAdv) setLeadIdx((i) => i + 1);
   };
 
@@ -523,8 +620,24 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setLeads((prev) => prev.filter((l) => l.dealId !== dealId));
   };
 
+  // Keypad popup owns the keyboard while open (digits type into the number).
+  useEffect(() => {
+    if (!keypadOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (inCall) return; // in-call controls are buttons only
+      if (/^[0-9]$/.test(e.key)) setKeypadNum((n) => (n.length < 11 ? n + e.key : n));
+      else if (e.key === "Backspace") setKeypadNum((n) => n.slice(0, -1));
+      else if (e.key === "Enter") void keypadCall();
+      else if (e.key === "Escape") setKeypadOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keypadOpen, inCall, keypadNum, keypadBusy]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (keypadOpen) return; // keypad effect handles its own keys
       const tag = (document.activeElement as HTMLElement)?.tagName;
       if (["INPUT", "SELECT", "TEXTAREA"].includes(tag)) return;
       if (e.key === "Enter" && !inCall && !awaitingDispo) dial();
@@ -541,7 +654,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inCall, awaitingDispo, pendingDispo, nextType, dispoNote, lead?.dealId, autoAdv]);
+  }, [inCall, awaitingDispo, pendingDispo, nextType, dispoNote, lead?.dealId, autoAdv, keypadOpen]);
 
   useEffect(() => () => stopTimers(), []);
 
@@ -881,7 +994,56 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                   , paste into the dialer (⌘V) and call
                 </div>
               )}
-              {awaitingDispo && !pendingDispo && (
+              {awaitingDispo && !pendingDispo && isManualNoDeal && manualDealStage === "ask" && (
+                <div className="dispo-row" style={{ display: "flex", alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12.5, color: "var(--text-2)" }}>
+                    No deal matches {lead.phone} — add one?
+                  </span>
+                  <button className="btn primary" onClick={() => setManualDealStage("form")}>
+                    ➕ Add a deal
+                  </button>
+                  <button className="btn ghost" onClick={() => setManualDealStage("skip")}>
+                    Just log the call
+                  </button>
+                </div>
+              )}
+              {awaitingDispo && !pendingDispo && isManualNoDeal && manualDealStage === "form" && (
+                <div style={{ display: "grid", gap: 8, maxWidth: 440, marginTop: 10 }}>
+                  <input
+                    className="vmsel"
+                    placeholder="Contact name (required)"
+                    value={mdName}
+                    onChange={(e) => setMdName(e.target.value)}
+                    autoFocus
+                  />
+                  <input
+                    className="vmsel"
+                    placeholder="Email (optional)"
+                    value={mdEmail}
+                    onChange={(e) => setMdEmail(e.target.value)}
+                  />
+                  <input
+                    className="vmsel"
+                    placeholder={`Deal title (default: Phone Lead - ${mdName.trim() || "name"})`}
+                    value={mdTitle}
+                    onChange={(e) => setMdTitle(e.target.value)}
+                  />
+                  {mdError && <div style={{ color: "var(--crit)", fontSize: 12.5 }}>{mdError}</div>}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      className="btn primary"
+                      disabled={!mdName.trim() || mdSaving}
+                      onClick={createManualDeal}
+                    >
+                      {mdSaving ? "Creating…" : "Create deal"}
+                    </button>
+                    <button className="btn ghost" onClick={() => setManualDealStage("skip")}>
+                      Skip — just log the call
+                    </button>
+                  </div>
+                </div>
+              )}
+              {awaitingDispo && !pendingDispo && !(isManualNoDeal && manualDealStage !== "skip") && (
                 <div className="dispo-row" style={{ display: "flex" }}>
                   {DISPOSITIONS.map(([key, num, label]) => (
                     <button key={key} className="btn" onClick={() => finalize(key)}>
@@ -997,26 +1159,18 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
             ? "🖥 companion mode — VM drops play into the call"
             : "🌐 browser mode — VM drops log only (use the desktop app for audio)"}
         </span>
-        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <input
-            className="vmsel"
-            style={{ width: 150, padding: "4px 8px", fontSize: 12.5, fontVariantNumeric: "tabular-nums" }}
-            placeholder="⌨️ Dial a number…"
-            value={manualPhone}
-            onChange={(e) => setManualPhone(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") manualDial();
-            }}
-          />
-          <button
-            className="btn ghost"
-            style={{ padding: "4px 10px", fontSize: 12.5 }}
-            onClick={manualDial}
-            disabled={manualPhone.replace(/[^\d]/g, "").replace(/^1/, "").length !== 10}
-          >
-            → queue
-          </button>
-        </span>
+        <button
+          className="btn ghost"
+          style={{ padding: "4px 12px", fontSize: 12.5 }}
+          onClick={() => {
+            setKeypadNum("");
+            setKeypadOpen(true);
+          }}
+          disabled={inCall || awaitingDispo}
+          title={awaitingDispo ? "Finish the current disposition first" : undefined}
+        >
+          ⌨️ Manual dial
+        </button>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
           Call via
           <select
@@ -1051,6 +1205,112 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
           )}
         </span>
       </div>
+
+      {keypadOpen && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 900,
+            background: "rgba(0,0,0,0.55)",
+            display: "grid",
+            placeItems: "center",
+          }}
+          onClick={() => {
+            if (!inCall) setKeypadOpen(false);
+          }}
+        >
+          <div
+            style={{
+              background: "var(--surface-1)",
+              border: "1px solid var(--border-soft)",
+              borderRadius: 16,
+              padding: "20px 24px 24px",
+              width: 300,
+              boxShadow: "0 18px 60px rgba(0,0,0,0.6)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
+              <b style={{ fontSize: 13.5 }}>⌨️ Manual dial</b>
+              {!inCall && (
+                <button
+                  className="btn ghost"
+                  style={{ marginLeft: "auto", padding: "2px 9px", fontSize: 13 }}
+                  onClick={() => setKeypadOpen(false)}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            <div
+              style={{
+                fontSize: 22,
+                fontWeight: 700,
+                fontVariantNumeric: "tabular-nums",
+                textAlign: "center",
+                minHeight: 32,
+                marginBottom: 12,
+                color: keypadDigits ? "var(--text-1)" : "var(--text-3)",
+              }}
+            >
+              {fmtDialed(keypadNum) || "Enter a number"}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"].map((k, i) =>
+                k === "" ? (
+                  <span key={i} />
+                ) : (
+                  <button
+                    key={i}
+                    className="btn"
+                    style={{ padding: "13px 0", fontSize: 17, justifyContent: "center" }}
+                    disabled={inCall}
+                    onClick={() =>
+                      k === "⌫"
+                        ? setKeypadNum((n) => n.slice(0, -1))
+                        : setKeypadNum((n) => (n.length < 11 ? n + k : n))
+                    }
+                  >
+                    {k}
+                  </button>
+                )
+              )}
+            </div>
+            {!inCall ? (
+              <button
+                className="btn primary"
+                style={{ width: "100%", justifyContent: "center", padding: "11px 0", fontSize: 15 }}
+                disabled={!keypadValid || keypadBusy}
+                onClick={keypadCall}
+              >
+                {keypadBusy ? "Checking CRM…" : "📞 Call"}
+              </button>
+            ) : (
+              <>
+                <div className="callstate" style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
+                  <span className="dot" /> {fmtClock(callSec)}
+                  {dialMethod === "browser" && browserCallState ? ` · ${browserCallState}` : ""}
+                </div>
+                <button
+                  className="btn"
+                  style={{
+                    width: "100%",
+                    justifyContent: "center",
+                    padding: "11px 0",
+                    fontSize: 15,
+                    background: "var(--crit)",
+                    color: "#fff",
+                  }}
+                  onClick={endCall}
+                >
+                  ⏹ End call
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </>
   );
 }
