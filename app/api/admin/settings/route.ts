@@ -13,10 +13,11 @@ export async function GET() {
   if (user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
 
   const db = supabaseAdmin();
+  // Includes inactive rows — admins have inactive rep identities so they can
+  // hold numbers for testing without appearing on the scoreboard.
   const { data: reps } = await db
     .from("reps")
-    .select("id, name, quo_phone_number, telnyx_number")
-    .eq("active", true)
+    .select("id, name, quo_phone_number, telnyx_number, active")
     .order("sort_order");
 
   let numbers: string[] = [];

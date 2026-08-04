@@ -9,6 +9,7 @@ interface Rep {
   name: string;
   quo_phone_number: string | null;
   telnyx_number: string | null;
+  active?: boolean;
 }
 
 export function SettingsView() {
@@ -58,7 +59,12 @@ export function SettingsView() {
         {reps.map((r) => (
           <div className="stmt-row" key={r.id} style={{ alignItems: "center" }}>
             <div>
-              <b style={{ fontSize: 13.5 }}>{r.name}</b>
+              <b style={{ fontSize: 13.5 }}>
+                {r.name}
+                {r.active === false && (
+                  <span style={{ fontSize: 10.5, color: "var(--text-3)", fontWeight: 600 }}> · admin</span>
+                )}
+              </b>
               <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>
                 Quo: {r.quo_phone_number ?? "—"} (unchanged until port)
               </div>
