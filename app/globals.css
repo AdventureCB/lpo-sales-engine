@@ -2,12 +2,12 @@
    (v1 ported from docs/ui-prototype.html; v2 raises type scale + contrast.) */
 :root {
   color-scheme: dark;
-  --surface-0: #1a1512;
-  --surface-1: #221d18;
-  --surface-2: #2d2721;
-  --surface-3: #3a332c;
-  --border: #4d453c;
-  --border-soft: #3a332b;
+  --surface-0: #12100d;
+  --surface-1: #1d1a16;
+  --surface-2: #282420;
+  --surface-3: #34302a;
+  --border: #48413a;
+  --border-soft: #322d27;
   --text-1: #faf6ef;
   --text-2: #cfc5b8;
   --text-3: #9c9285;
@@ -31,7 +31,7 @@
 
 body {
   background:
-    radial-gradient(1200px 500px at 50% -200px, rgba(217, 91, 49, 0.06), transparent),
+    radial-gradient(1200px 500px at 50% -200px, rgba(217, 91, 49, 0.05), transparent),
     var(--surface-0);
   color: var(--text-1);
   font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -56,7 +56,7 @@ a, button { transition: background 0.13s, color 0.13s, border-color 0.13s, box-s
 aside.sidenav {
   width: 216px;
   flex-shrink: 0;
-  background: linear-gradient(180deg, #251f1a, #1d1813);
+  background: linear-gradient(180deg, #201c18, #191613);
   border-right: 1px solid var(--border-soft);
   position: sticky;
   top: 0;
@@ -121,7 +121,7 @@ main { max-width: 1220px; margin: 0 auto; padding: 30px 32px 64px; }
 h2.viewtitle { font-size: 26px; font-weight: 800; letter-spacing: -0.01em; margin-bottom: 5px; }
 .viewsub { color: var(--text-3); font-size: 14px; margin-bottom: 24px; }
 .card {
-  background: linear-gradient(180deg, #272119, #211b15);
+  background: linear-gradient(180deg, #201d19, #1b1814);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
   padding: 20px;
@@ -135,7 +135,7 @@ h2.viewtitle { font-size: 26px; font-weight: 800; letter-spacing: -0.01em; margi
 .repline { display: grid; grid-template-columns: 150px repeat(8, 1fr); gap: 10px; align-items: center; margin-bottom: 12px; }
 .repline .who { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15.5px; }
 .stat-tile {
-  background: linear-gradient(180deg, #272119, #211b15);
+  background: linear-gradient(180deg, #211d19, #1b1814);
   border: 1px solid var(--border-soft);
   border-radius: 11px;
   padding: 14px 16px;
