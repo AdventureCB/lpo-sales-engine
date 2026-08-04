@@ -130,15 +130,24 @@ export async function POST(req: NextRequest) {
   // disposition, transcript, cost) — lifecycle upserts must merge, not replace.
   const { data: prior } = await db
     .from("call_events")
-    .select("raw")
+    .select("raw, answered_at")
     .eq("quo_call_id", `tx:${p.call_session_id}`)
     .maybeSingle();
+  const isIncoming = p.direction === "incoming";
+  // Inbound answer state is exact (the call.answered event); the duration
+  // heuristic is for outbound only — ring time would fake-answer missed calls.
+  const answeredAt = isIncoming
+    ? type === "call.answered"
+      ? p.start_time ?? event?.data?.occurred_at ?? new Date().toISOString()
+      : prior?.answered_at ?? null
+    : answered;
+
   const row: Record<string, unknown> = {
     quo_call_id: `tx:${p.call_session_id}`,
-    direction: p.direction === "incoming" ? "incoming" : "outgoing",
+    direction: isIncoming ? "incoming" : "outgoing",
     status: type.replace("call.", ""),
     started_at: p.start_time ?? event?.data?.occurred_at ?? null,
-    answered_at: answered,
+    answered_at: answeredAt,
     completed_at: endT,
     duration_s: durationS,
     raw: {
@@ -154,6 +163,48 @@ export async function POST(req: NextRequest) {
   if (error) {
     console.error("telnyx call upsert failed", error);
     return NextResponse.json({ error: "db error" }, { status: 500 });
+  }
+
+  // Inbound hangup: link the call to the caller's contact/deal + the rep
+  // whose number was called; unanswered calls are classified missed.
+  if (isIncoming && type === "call.hangup") {
+    try {
+      const { normalizePhone } = await import("@/lib/identity");
+      const peer = normalizePhone(p.from);
+      const update: Record<string, unknown> = {};
+      if (!answeredAt) update.classification = "no_answer";
+      if (p.to) {
+        const { data: rep } = await db
+          .from("reps")
+          .select("id")
+          .eq("telnyx_number", normalizePhone(p.to) ?? p.to)
+          .maybeSingle();
+        if (rep) update.rep_id = rep.id;
+      }
+      if (peer) {
+        const { data: contact } = await db
+          .from("crm_contacts")
+          .select("id")
+          .contains("phones", JSON.stringify([{ e164: peer }]))
+          .maybeSingle();
+        if (contact) {
+          const { data: deal } = await db
+            .from("crm_deals")
+            .select("pipedrive_deal_id, status")
+            .eq("contact_id", contact.id)
+            .order("status", { ascending: true })
+            .order("updated_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (deal?.pipedrive_deal_id) update.deal_id = deal.pipedrive_deal_id;
+        }
+      }
+      if (Object.keys(update).length > 0) {
+        await db.from("call_events").update(update).eq("quo_call_id", `tx:${p.call_session_id}`);
+      }
+    } catch (e) {
+      console.error("inbound linking failed", e);
+    }
   }
   return NextResponse.json({ ok: true });
 }

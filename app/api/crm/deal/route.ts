@@ -73,7 +73,10 @@ export async function GET(req: NextRequest) {
     ...((calls as any).data ?? []).map((c: any) => ({
       kind: "call",
       at: c.started_at,
-      title: `${c.direction === "incoming" ? "Inbound" : "Outbound"} call · ${c.classification ?? "—"}${c.disposition ? ` · ${c.disposition}` : ""}`,
+      title:
+        c.direction === "incoming" && c.classification === "no_answer"
+          ? "📵 Missed call"
+          : `${c.direction === "incoming" ? "Inbound" : "Outbound"} call · ${c.classification ?? "—"}${c.disposition ? ` · ${c.disposition}` : ""}`,
       body: [
         c.duration_s ? `${Math.round(c.duration_s / 60)}m ${c.duration_s % 60}s` : null,
         c.quality
