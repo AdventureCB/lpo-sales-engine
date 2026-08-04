@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { UserChip } from "./UserChip";
 import { RefreshButton } from "./RefreshButton";
+import { NavGroup } from "./NavGroup";
 
 interface NavItem {
   label: string;
@@ -8,13 +9,15 @@ interface NavItem {
   adminOnly?: boolean;
 }
 
-const SECTIONS: { header: string | null; items: NavItem[] }[] = [
+const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[] }[] = [
   {
     header: "Phone",
+    collapsible: true,
     items: [
       { label: "📞 Dialer", href: "/dialer" },
       { label: "🕘 Call log", href: "/call-log" },
       { label: "💬 Text", href: "/texts" },
+      { label: "🟢 WhatsApp", href: "/whatsapp" },
     ],
   },
   {
@@ -23,7 +26,6 @@ const SECTIONS: { header: string | null; items: NavItem[] }[] = [
       { label: "🔥 Hot List", href: "/hot-list" },
       { label: "Scoreboard", href: "/scoreboard" },
       { label: "Lookup", href: "/lookup" },
-      { label: "WhatsApp", href: "/whatsapp" },
     ],
   },
   {
@@ -60,6 +62,9 @@ export function AppShell({
           {SECTIONS.map((section) => {
             const items = section.items.filter((t) => !t.adminOnly || isAdmin);
             if (items.length === 0) return null;
+            if (section.collapsible && section.header) {
+              return <NavGroup key={section.header} header={section.header} items={items} active={active} />;
+            }
             return (
               <div className="navsec" key={section.header ?? "main"}>
                 {section.header && <h5>{section.header}</h5>}
