@@ -18,6 +18,7 @@ const REQUIRED_ENV = [
   "GOOGLE_CLIENT_SECRET",
   "KLAVIYO_OAUTH_CLIENT_ID",
   "KLAVIYO_OAUTH_CLIENT_SECRET",
+  "TELNYX_API_KEY",
 ] as const;
 
 /** Deploy check: reports which env vars are present (booleans only, never values).

@@ -65,7 +65,12 @@ export async function ensureProvisioned(db: SupabaseClient): Promise<TelnyxState
   if (!ovp) {
     const created = await tx("/outbound_voice_profiles", {
       method: "POST",
-      body: JSON.stringify({ name: "lpo-outbound", traffic_type: "conversational", service_plan: "us" }),
+      body: JSON.stringify({
+        name: "lpo-outbound",
+        traffic_type: "conversational",
+        service_plan: "global",
+        usage_payment_method: "rate-deck",
+      }),
     });
     ovp = created.data;
   }
