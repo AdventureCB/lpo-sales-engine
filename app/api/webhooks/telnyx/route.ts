@@ -133,7 +133,22 @@ export async function POST(req: NextRequest) {
     .select("raw, answered_at")
     .eq("quo_call_id", `tx:${p.call_session_id}`)
     .maybeSingle();
-  const isIncoming = p.direction === "incoming";
+  // Direction from the NUMBERS, not the leg label: inbound calls produce a
+  // second leg toward the rep's browser that Telnyx marks "outgoing" even
+  // though it's the same inbound call.
+  const { normalizePhone } = await import("@/lib/identity");
+  const ourNumbers = new Set<string>();
+  const { data: repNums } = await db.from("reps").select("telnyx_number").not("telnyx_number", "is", null);
+  for (const r of repNums ?? []) {
+    const n = normalizePhone(r.telnyx_number);
+    if (n) ourNumbers.add(n);
+  }
+  const { data: txState } = await db.from("crm_sync_state").select("value").eq("key", "telnyx").maybeSingle();
+  const defaultNum = normalizePhone((txState?.value as any)?.callerNumber);
+  if (defaultNum) ourNumbers.add(defaultNum);
+  const fromN = normalizePhone(p.from);
+  const toN = normalizePhone(p.to);
+  const isIncoming = Boolean(toN && ourNumbers.has(toN) && (!fromN || !ourNumbers.has(fromN)));
   // Inbound answer state is exact (the call.answered event); the duration
   // heuristic is for outbound only — ring time would fake-answer missed calls.
   const answeredAt = isIncoming
@@ -202,6 +217,18 @@ export async function POST(req: NextRequest) {
       if (Object.keys(update).length > 0) {
         await db.from("call_events").update(update).eq("quo_call_id", `tx:${p.call_session_id}`);
       }
+      // Drop the first-leg stub (initiated-only twin) so one inbound call
+      // is one row.
+      await db
+        .from("call_events")
+        .delete()
+        .like("quo_call_id", "tx:%")
+        .neq("quo_call_id", `tx:${p.call_session_id}`)
+        .eq("status", "initiated")
+        .is("answered_at", null)
+        .eq("raw->event->data->payload->>from", p.from)
+        .eq("raw->event->data->payload->>to", p.to)
+        .gte("created_at", new Date(Date.now() - 10 * 60_000).toISOString());
     } catch (e) {
       console.error("inbound linking failed", e);
     }

@@ -98,14 +98,15 @@ export function PhoneDock() {
               </div>
             )}
             {callerInfo?.crmDealId && (
-              <a
-                href={`/crm/deal/${callerInfo.crmDealId}`}
-                target="_blank"
-                rel="noreferrer"
-                style={{ fontSize: 12.5, color: "var(--accent-hover)", display: "inline-block", marginTop: 6 }}
+              <button
+                className="btn ghost"
+                style={{ fontSize: 12.5, padding: "6px 14px", marginTop: 10 }}
+                onClick={() => {
+                  window.location.href = `/crm/deal/${callerInfo.crmDealId}`;
+                }}
               >
-                {callerInfo.dealTitle ?? "Open deal"} ↗
-              </a>
+                📋 {callerInfo.dealTitle ?? "Open deal"}
+              </button>
             )}
             <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 22 }}>
               <button className="btn primary" style={{ padding: "12px 28px", fontSize: 15 }} onClick={answerIncoming}>
@@ -141,14 +142,15 @@ export function PhoneDock() {
         >
           <b style={{ fontSize: 13.5 }}>🟢 On call · {who}</b>
           {callerInfo?.crmDealId && (
-            <a
-              href={`/crm/deal/${callerInfo.crmDealId}`}
-              target="_blank"
-              rel="noreferrer"
-              style={{ fontSize: 12.5, color: "var(--accent-hover)" }}
+            <button
+              className="btn ghost"
+              style={{ fontSize: 12, padding: "5px 10px" }}
+              onClick={() => {
+                window.location.href = `/crm/deal/${callerInfo.crmDealId}`;
+              }}
             >
-              deal ↗
-            </a>
+              📋 deal
+            </button>
           )}
           <button
             className="btn"
