@@ -10,6 +10,7 @@ const TABS = [
   { label: "WhatsApp", href: "/whatsapp", live: true },
   { label: "CRM", href: "/crm", live: true, adminOnly: true },
   { label: "Commissions", href: "/commissions", live: true, adminOnly: true },
+  { label: "⚙", href: "/settings", live: true, adminOnly: true },
 ];
 
 export function AppShell({

@@ -99,6 +99,32 @@ export async function ensureProvisioned(db: SupabaseClient): Promise<TelnyxState
   return state;
 }
 
+/** Start dual-channel recording on a live call (fired from call.answered). */
+export async function startRecording(callControlId: string): Promise<void> {
+  await tx(`/calls/${callControlId}/actions/record_start`, {
+    method: "POST",
+    body: JSON.stringify({ format: "mp3", channels: "dual" }),
+  });
+}
+
+/** Transcribe a recording URL via Telnyx AI (Whisper). Returns plain text. */
+export async function transcribeRecording(mp3Url: string): Promise<string | null> {
+  const audio = await fetch(mp3Url);
+  if (!audio.ok) throw new Error(`recording download ${audio.status}`);
+  const blob = await audio.blob();
+  const form = new FormData();
+  form.append("file", blob, "call.mp3");
+  form.append("model", "distil-whisper/distil-large-v2");
+  const res = await fetch(`${API}/ai/audio/transcriptions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${env("TELNYX_API_KEY")}` },
+    body: form,
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`transcription ${res.status}: ${JSON.stringify(json).slice(0, 200)}`);
+  return json.text ?? null;
+}
+
 /** Login token for the browser SDK. Tokens live 24h and Telnyx's mint
  * endpoint is intermittently flaky (5xx) — mint rarely, cache in
  * crm_sync_state, and fall back to the cached token if a refresh fails. */

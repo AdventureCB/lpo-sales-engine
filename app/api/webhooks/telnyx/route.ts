@@ -56,6 +56,47 @@ export async function POST(req: NextRequest) {
 
   const db = supabaseAdmin();
 
+  // Auto-record every answered call — the recording.saved event then feeds
+  // the AI transcript. Never fail the webhook over recording problems.
+  if (type === "call.answered" && p.call_control_id) {
+    const { startRecording } = await import("@/lib/telnyx");
+    startRecording(p.call_control_id).catch((e) => console.error("record_start", e));
+  }
+
+  // Recording saved → transcribe → attach to the call row + classify.
+  if (type === "call.recording.saved") {
+    const mp3 = p.recording_urls?.mp3 ?? p.public_recording_urls?.mp3;
+    if (mp3) {
+      try {
+        const { transcribeRecording } = await import("@/lib/telnyx");
+        const text = await transcribeRecording(mp3);
+        if (text?.trim()) {
+          const { data: existing } = await db
+            .from("call_events")
+            .select("id, raw, duration_s, classification")
+            .eq("quo_call_id", `tx:${p.call_session_id}`)
+            .maybeSingle();
+          if (existing) {
+            await db
+              .from("call_events")
+              .update({
+                raw: { ...(existing.raw ?? {}), transcript: text.trim() },
+                // Words were exchanged — classify by talk length when the
+                // transcript pipeline (not a human) is the only signal.
+                classification:
+                  existing.classification ??
+                  ((existing.duration_s ?? 0) >= 40 ? "conversation" : "screening"),
+              })
+              .eq("id", existing.id);
+          }
+        }
+      } catch (e) {
+        console.error("transcription failed", e);
+      }
+    }
+    return NextResponse.json({ ok: true });
+  }
+
   // Cost + quality reports annotate the call row rather than acting as
   // lifecycle updates (they'd otherwise clobber the final status).
   if (type === "call.cost" || type.includes("rtcp") || type.includes("quality")) {

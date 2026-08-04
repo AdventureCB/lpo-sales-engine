@@ -131,6 +131,8 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [browserCallState, setBrowserCallState] = useState<string | null>(null);
   const [browserStats, setBrowserStats] = useState<string | null>(null);
   const statsRef = useRef<{ iv: ReturnType<typeof setInterval> | null; prev: { lost: number; recv: number } | null }>({ iv: null, prev: null });
+  // Per-call quality aggregate — logged with the disposition.
+  const qualityRef = useRef<{ sumLoss: number; maxJitter: number; samples: number }>({ sumLoss: 0, maxJitter: 0, samples: 0 });
 
   const stopStats = () => {
     if (statsRef.current.iv) clearInterval(statsRef.current.iv);
@@ -162,6 +164,9 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
         const dRecv = (inbound.packetsReceived ?? 0) - prev.recv;
         const lossPct = dRecv + dLost > 0 ? (100 * dLost) / (dRecv + dLost) : 0;
         const jitterMs = Math.round((inbound.jitter ?? 0) * 1000);
+        qualityRef.current.sumLoss += lossPct;
+        qualityRef.current.maxJitter = Math.max(qualityRef.current.maxJitter, jitterMs);
+        qualityRef.current.samples++;
         setBrowserStats(`▼ loss ${lossPct.toFixed(1)}% · jitter ${jitterMs}ms`);
       } catch {}
     }, 5000);
@@ -308,7 +313,11 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
 
   const dial = (opts?: { redial?: boolean }) => {
     if (!lead?.phone || inCall || (awaitingDispo && !opts?.redial) || lead.callable === false) return;
-    if (opts?.redial) setAwaitingDispo(false);
+    if (opts?.redial) {
+      setAwaitingDispo(false);
+      setPendingDispo(null);
+    }
+    qualityRef.current = { sumLoss: 0, maxJitter: 0, samples: 0 };
     dialStartRef.current = new Date().toISOString();
     setInCall(true);
     setCallSec(0);
@@ -373,8 +382,9 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     hangUp();
   };
 
-  const sendDisposition = async (dispo: string) => {
+  const sendDisposition = async (dispo: string, next: { type: string; subject: string; dueAt: string } | null) => {
     if (!lead?.phone || !dialStartRef.current) return;
+    const q = qualityRef.current;
     const body = {
       dealId: lead.dealId,
       phone: lead.phone,
@@ -382,6 +392,16 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       dialStartedAt: dialStartRef.current,
       sprintId: lead.sprintId,
       crmDealId: lead.crmDealId,
+      next,
+      quality:
+        q.samples > 0
+          ? {
+              avg_loss_pct: Number((q.sumLoss / q.samples).toFixed(2)),
+              max_jitter_ms: q.maxJitter,
+              samples: q.samples,
+              method: dialMethod,
+            }
+          : null,
     };
     for (let attempt = 0; attempt < 4; attempt++) {
       const r = await fetch("/api/dialer/disposition", {
@@ -394,11 +414,30 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     }
   };
 
-  const finalize = (dispo: string) => {
+  // Two-step disposition: pick the outcome, then (optionally) schedule the
+  // next touch in the same gesture — no separate trip to the deal page.
+  const [pendingDispo, setPendingDispo] = useState<string | null>(null);
+  const [nextType, setNextType] = useState("call");
+  const finalize = (dispo: string) => setPendingDispo(dispo);
+
+  const followUpAt = (preset: "tomorrow" | "3d" | "week"): string => {
+    const d = new Date();
+    d.setDate(d.getDate() + (preset === "tomorrow" ? 1 : preset === "3d" ? 3 : 7));
+    d.setHours(9, 0, 0, 0);
+    return d.toISOString();
+  };
+
+  const completeDispo = (dueAt: string | null) => {
+    const dispo = pendingDispo;
+    if (!dispo) return;
+    setPendingDispo(null);
     setAwaitingDispo(false);
     if (dispo === "connected") setSess((s) => ({ ...s, conn: s.conn + 1, talkS: s.talkS + callSecRef.current }));
     if (dispo === "vm_dropped") setSess((s) => ({ ...s, vm: s.vm + 1 }));
-    void sendDisposition(dispo);
+    void sendDisposition(
+      dispo,
+      dueAt ? { type: nextType, subject: `Follow up (${dispo.replace("_", " ")})`, dueAt } : null
+    );
     setCallSec(0);
     callSecRef.current = 0;
     if (autoAdv) setLeadIdx((i) => i + 1);
@@ -451,7 +490,8 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       const tag = (document.activeElement as HTMLElement)?.tagName;
       if (["INPUT", "SELECT", "TEXTAREA"].includes(tag)) return;
       if (e.key === "Enter" && !inCall && !awaitingDispo) dial();
-      if ((e.key === "r" || e.key === "R") && awaitingDispo) dial({ redial: true });
+      if (e.key === "Enter" && pendingDispo) completeDispo(null);
+      if ((e.key === "r" || e.key === "R") && awaitingDispo && !pendingDispo) dial({ redial: true });
       if ((e.key === "v" || e.key === "V") && inCall) dropVm();
       if ((e.key === "e" || e.key === "E") && inCall) void endCall();
       if ((e.key === "s" || e.key === "S") && !inCall && !awaitingDispo) skip();
@@ -463,7 +503,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inCall, awaitingDispo, lead?.dealId, autoAdv]);
+  }, [inCall, awaitingDispo, pendingDispo, nextType, lead?.dealId, autoAdv]);
 
   useEffect(() => () => stopTimers(), []);
 
@@ -804,7 +844,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                   , paste into the dialer (⌘V) and call
                 </div>
               )}
-              {awaitingDispo && (
+              {awaitingDispo && !pendingDispo && (
                 <div className="dispo-row" style={{ display: "flex" }}>
                   {DISPOSITIONS.map(([key, num, label]) => (
                     <button key={key} className="btn" onClick={() => finalize(key)}>
@@ -813,6 +853,23 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                   ))}
                   <button className="btn ghost" onClick={() => dial({ redial: true })} title="Call this contact again — no disposition logged yet">
                     ↺ Redial <kbd>R</kbd>
+                  </button>
+                </div>
+              )}
+              {awaitingDispo && pendingDispo && (
+                <div className="dispo-row" style={{ display: "flex", alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12.5, color: "var(--text-2)" }}>Next step?</span>
+                  <select className="vmsel" style={{ width: "auto", padding: "6px 8px", fontSize: 12.5 }} value={nextType} onChange={(e) => setNextType(e.target.value)}>
+                    <option value="call">📞 Call</option>
+                    <option value="task">📋 Task</option>
+                    <option value="email">✉️ Email</option>
+                    <option value="meeting">📅 Meeting</option>
+                  </select>
+                  <button className="btn" onClick={() => completeDispo(followUpAt("tomorrow"))}>Tomorrow 9am</button>
+                  <button className="btn" onClick={() => completeDispo(followUpAt("3d"))}>In 3 days</button>
+                  <button className="btn" onClick={() => completeDispo(followUpAt("week"))}>Next week</button>
+                  <button className="btn ghost" onClick={() => completeDispo(null)}>
+                    No follow-up <kbd>⏎</kbd>
                   </button>
                 </div>
               )}
