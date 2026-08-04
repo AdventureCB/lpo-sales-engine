@@ -129,6 +129,37 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const telnyxClientRef = useRef<any>(null);
   const telnyxCallRef = useRef<any>(null);
   const [browserCallState, setBrowserCallState] = useState<string | null>(null);
+  const [browserStats, setBrowserStats] = useState<string | null>(null);
+  const statsRef = useRef<{ iv: ReturnType<typeof setInterval> | null; prev: { lost: number; recv: number } | null }>({ iv: null, prev: null });
+
+  const stopStats = () => {
+    if (statsRef.current.iv) clearInterval(statsRef.current.iv);
+    statsRef.current = { iv: null, prev: null };
+    setBrowserStats(null);
+  };
+
+  /** Poll WebRTC inbound stats — makes "it sounded choppy" measurable. */
+  const startStats = () => {
+    stopStats();
+    statsRef.current.iv = setInterval(async () => {
+      try {
+        const pc = telnyxCallRef.current?.peerConnection;
+        if (!pc?.getStats) return;
+        const stats: any[] = [];
+        (await pc.getStats()).forEach((s: any) => stats.push(s));
+        const inbound = stats.find((s) => s.type === "inbound-rtp" && (s.kind === "audio" || s.mediaType === "audio"));
+        if (!inbound) return;
+        const prev = statsRef.current.prev;
+        statsRef.current.prev = { lost: inbound.packetsLost ?? 0, recv: inbound.packetsReceived ?? 0 };
+        if (!prev) return;
+        const dLost = (inbound.packetsLost ?? 0) - prev.lost;
+        const dRecv = (inbound.packetsReceived ?? 0) - prev.recv;
+        const lossPct = dRecv + dLost > 0 ? (100 * dLost) / (dRecv + dLost) : 0;
+        const jitterMs = Math.round((inbound.jitter ?? 0) * 1000);
+        setBrowserStats(`▼ loss ${lossPct.toFixed(1)}% · jitter ${jitterMs}ms`);
+      } catch {}
+    }, 5000);
+  };
 
   /** In-tab call via Telnyx WebRTC — the post-Quo path being piloted. */
   const browserCall = async (phone: string) => {
@@ -164,11 +195,15 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       client.on("telnyx.notification", (n: any) => {
         if (n?.type !== "callUpdate" || !n.call) return;
         const s = n.call.state;
-        if (s === "active") setBrowserCallState("active");
+        if (s === "active") {
+          setBrowserCallState("active");
+          startStats();
+        }
         if (s === "ringing" || s === "trying" || s === "requesting") setBrowserCallState("ringing");
         if (s === "hangup" || s === "destroy") {
           setBrowserCallState(null);
           telnyxCallRef.current = null;
+          stopStats();
           hangUp();
         }
       });
@@ -728,7 +763,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                 <div style={{ fontSize: 12.5, color: browserCallState.startsWith("error") ? "var(--crit)" : "var(--text-2)", marginTop: 8 }}>
                   {browserCallState === "connecting" && "🌐 Connecting…"}
                   {browserCallState === "ringing" && "🌐 Ringing — in-browser call via Telnyx"}
-                  {browserCallState === "active" && "🌐 Live — talking through this tab"}
+                  {browserCallState === "active" && `🌐 Live — talking through this tab${browserStats ? ` · ${browserStats}` : ""}`}
                   {browserCallState.startsWith("error") && `🌐 ${browserCallState}`}
                 </div>
               )}
