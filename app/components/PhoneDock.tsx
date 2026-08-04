@@ -179,6 +179,9 @@ export function PhoneDock() {
           }}
         >
           <b style={{ fontSize: 13.5 }}>🟢 On call · {who}</b>
+          <span style={{ fontSize: 11.5, color: "var(--warn, #d9a234)" }} title="Recording disclosure is the rep's responsibility — say it on the call">
+            📼 recorded — disclose
+          </span>
           {callerInfo?.crmDealId && (
             <button
               className="btn ghost"

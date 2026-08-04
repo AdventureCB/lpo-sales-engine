@@ -977,7 +977,14 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                 <div style={{ fontSize: 12.5, color: browserCallState.startsWith("error") ? "var(--crit)" : "var(--text-2)", marginTop: 8 }}>
                   {browserCallState === "connecting" && "🌐 Connecting…"}
                   {browserCallState === "ringing" && "🌐 Ringing — in-browser call via Telnyx"}
-                  {browserCallState === "active" && `🌐 Live — talking through this tab${browserStats ? ` · ${browserStats}` : ""}`}
+                  {browserCallState === "active" && (
+                    <>
+                      🌐 Live — talking through this tab{browserStats ? ` · ${browserStats}` : ""}
+                      <span style={{ display: "block", color: "var(--warn, #d9a234)", marginTop: 2 }}>
+                        📼 This call is recorded — let the caller know
+                      </span>
+                    </>
+                  )}
                   {browserCallState.startsWith("error") && `🌐 ${browserCallState}`}
                 </div>
               )}
