@@ -123,15 +123,25 @@ export async function getProfileByEmail(email: string): Promise<KlaviyoProfile |
 }
 
 export interface KlaviyoProfileEvent {
+  id: string;
   metric: string;
   datetime: string;
   detail: Record<string, unknown>;
 }
 
 /** Recent events for a profile, newest first, metric names resolved.
- * Paginates (events has no page[size]) until `limit` or history runs out. */
-export async function getProfileEvents(profileId: string, limit = 25): Promise<KlaviyoProfileEvent[]> {
-  const filter = encodeURIComponent(`equals(profile_id,"${profileId}")`);
+ * Paginates (events has no page[size]) until `limit` or history runs out.
+ * With `sinceIso`, only events strictly newer are fetched (incremental sync). */
+export async function getProfileEvents(
+  profileId: string,
+  limit = 25,
+  sinceIso?: string
+): Promise<KlaviyoProfileEvent[]> {
+  const filter = encodeURIComponent(
+    sinceIso
+      ? `and(equals(profile_id,"${profileId}"),greater-than(datetime,${sinceIso}))`
+      : `equals(profile_id,"${profileId}")`
+  );
   const metricNames = new Map<string, string>();
   const rows: any[] = [];
   let url: string | null = `${BASE}/events/?filter=${filter}&include=metric&sort=-datetime`;
@@ -162,6 +172,7 @@ export async function getProfileEvents(profileId: string, limit = 25): Promise<K
       if (typeof v === "string" || typeof v === "number") detail[k] = String(v).slice(0, 300);
     }
     events.push({
+      id: ev.id,
       metric: metricNames.get(ev.relationships?.metric?.data?.id) ?? "event",
       datetime: ev.attributes?.datetime,
       detail,
