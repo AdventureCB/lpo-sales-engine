@@ -452,6 +452,39 @@ function relTime(iso: string): string {
 
 const last10 = (p: string) => p.replace(/\D/g, "").slice(-10);
 
+/** URLs inside event text become links. Browser: new tab. Companion: the
+ * webview can't spawn a browser (no native opener yet) — copy instead. */
+function Linkify({ text }: { text: string }) {
+  const parts = String(text).split(/(https?:\/\/[^\s"',]+)/g);
+  return (
+    <>
+      {parts.map((p, i) =>
+        /^https?:\/\//.test(p) ? (
+          <a
+            key={i}
+            href={p}
+            target="_blank"
+            rel="noreferrer"
+            style={{ color: "var(--accent-2)", wordBreak: "break-all" }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (window.__TAURI__) {
+                e.preventDefault();
+                void navigator.clipboard?.writeText(p).catch(() => {});
+              }
+            }}
+            title={window.__TAURI__ ? "Copies the link (companion can't open a browser)" : "Opens in a new tab"}
+          >
+            {p}
+          </a>
+        ) : (
+          p
+        )
+      )}
+    </>
+  );
+}
+
 function KlaviyoActivity({
   email,
   contactId,
@@ -468,6 +501,14 @@ function KlaviyoActivity({
   const [failed, setFailed] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const toggleExpanded = (i: number) =>
+    setExpanded((s) => {
+      const next = new Set(s);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
 
   useEffect(() => {
     setEvents(null);
@@ -558,10 +599,14 @@ function KlaviyoActivity({
           {shown.map((e, i) => {
             const kind = eventKind(e.metric);
             const buying = isBuying(kind);
-            const detail = Object.values(e.detail ?? {}).join(" · ");
+            const entries = Object.entries(e.detail ?? {});
+            const detail = entries.map(([, v]) => String(v)).join(" · ");
+            const isOpen = expanded.has(i);
             return (
               <div
                 key={i}
+                onClick={() => toggleExpanded(i)}
+                title={isOpen ? undefined : "Click to expand"}
                 style={{
                   display: "flex",
                   gap: 8,
@@ -570,16 +615,33 @@ function KlaviyoActivity({
                   fontSize: 13.5,
                   borderRadius: 8,
                   marginBottom: 2,
-                  background: buying ? "var(--accent-soft)" : "transparent",
+                  cursor: "pointer",
+                  background: buying ? "var(--accent-soft)" : isOpen ? "var(--surface-2)" : "transparent",
                   boxShadow: buying ? "inset 2px 0 0 var(--accent)" : "none",
                 }}
               >
                 <span style={{ flexShrink: 0 }}>{SIGNAL_ICON[kind]}</span>
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ fontWeight: buying ? 750 : 600, color: "var(--text-1)" }}>{e.metric}</span>
-                  {detail && (
+                  {!isOpen && detail && (
                     <span style={{ display: "block", color: "var(--text-3)", fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {detail}
+                    </span>
+                  )}
+                  {isOpen && (
+                    <span style={{ display: "block", marginTop: 4 }}>
+                      {entries.length === 0 && (
+                        <span style={{ color: "var(--text-3)", fontSize: 12.5 }}>No event details.</span>
+                      )}
+                      {entries.map(([k, v]) => (
+                        <span key={k} style={{ display: "block", fontSize: 12.5, color: "var(--text-2)", padding: "1px 0", wordBreak: "break-word", whiteSpace: "pre-wrap" }}>
+                          <span style={{ color: "var(--text-3)" }}>{k}: </span>
+                          <Linkify text={String(v)} />
+                        </span>
+                      ))}
+                      <span style={{ display: "block", fontSize: 11.5, color: "var(--text-3)", marginTop: 3 }}>
+                        {new Date(e.at).toLocaleString()}
+                      </span>
                     </span>
                   )}
                 </span>

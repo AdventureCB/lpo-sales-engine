@@ -151,16 +151,15 @@ export async function getProfileEvents(profileId: string, limit = 25): Promise<K
     for (const key of ["Subject", "Campaign Name", "URL", "$value", "Name", "Items"]) {
       const v = props[key];
       if (v !== undefined && v !== null && v !== "") {
-        detail[key] = typeof v === "object" ? JSON.stringify(v).slice(0, 160) : v;
+        detail[key] = typeof v === "object" ? JSON.stringify(v).slice(0, 400) : v;
       }
     }
-    // fall back to the first few scalar props (builder saves etc. use custom keys)
-    if (Object.keys(detail).length === 0) {
-      for (const [k, v] of Object.entries(props)) {
-        if (Object.keys(detail).length >= 3) break;
-        if (k.startsWith("$")) continue;
-        if (typeof v === "string" || typeof v === "number") detail[k] = String(v).slice(0, 120);
-      }
+    // plus scalar props (builder saves etc. use custom keys) — the deal page
+    // shows these on expand, so keep them reasonably complete
+    for (const [k, v] of Object.entries(props)) {
+      if (Object.keys(detail).length >= 8) break;
+      if (k.startsWith("$") || detail[k] !== undefined) continue;
+      if (typeof v === "string" || typeof v === "number") detail[k] = String(v).slice(0, 300);
     }
     events.push({
       metric: metricNames.get(ev.relationships?.metric?.data?.id) ?? "event",
