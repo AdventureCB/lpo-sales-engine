@@ -33,6 +33,8 @@ interface ScoreboardData {
           talk: string;
           avgTalk: string;
           rate: string;
+          confs: number;
+          confTalk: string;
           comm: string;
         }
       >;
@@ -58,6 +60,7 @@ const TILE_LABELS: [keyof ScoreboardData["ranges"][string]["tiles"][string], str
   ["talk", "Talk time"],
   ["avgTalk", "Avg talk/conv"],
   ["rate", "Connect rate"],
+  ["confs", "Confirmations"],
   ["comm", "Commission MTD"],
 ];
 
@@ -190,6 +193,9 @@ export function ScoreboardView() {
                   <div className="d">
                     +{t.convIn} inbound · {t.conv + t.convIn} total
                   </div>
+                )}
+                {field === "confs" && (t?.confs ?? 0) > 0 && (
+                  <div className="d">{t.confTalk} on confirmations</div>
                 )}
               </div>
             ))}

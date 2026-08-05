@@ -86,6 +86,8 @@ interface Tally {
   talkS: number;
   texts: number;
   textsIn: number;
+  conf: number;
+  confTalkS: number;
 }
 
 const emptyTally = (): Tally => ({
@@ -96,9 +98,19 @@ const emptyTally = (): Tally => ({
   talkS: 0,
   texts: 0,
   textsIn: 0,
+  conf: 0,
+  confTalkS: 0,
 });
 
 function tallyCall(t: Tally, c: CallRow) {
+  // Confirmation calls are their own lane: counted + timed separately,
+  // excluded from dials/conversations/talk/connect-rate so sales metrics
+  // stay purely about selling.
+  if (c.direction === "outgoing" && c.disposition === "confirmation") {
+    t.conf++;
+    t.confTalkS += c.duration_s ?? 0;
+    return;
+  }
   const isConvOut = c.direction === "outgoing" && c.classification === "conversation";
   const isConvIn = c.direction === "incoming" && c.answered_at !== null;
   if (c.direction === "outgoing") t.dials++;
@@ -208,6 +220,8 @@ export function buildScoreboard(
         total.talkS += t.talkS;
         total.texts += t.texts;
         total.textsIn += t.textsIn;
+        total.conf += t.conf;
+        total.confTalkS += t.confTalkS;
       }
       const key = repKey(rep);
       dials[key] = series.dials;
@@ -227,6 +241,8 @@ export function buildScoreboard(
             ? formatTalk(Math.round(total.talkS / (total.convOut + total.convIn)))
             : "—",
         rate: total.dials > 0 ? `${Math.round((total.convOut / total.dials) * 100)}%` : "—",
+        confs: total.conf,
+        confTalk: formatTalk(total.confTalkS),
         comm: `$${Math.round((commMtdCents.get(rep.id) ?? 0) / 100)}`,
       };
     }

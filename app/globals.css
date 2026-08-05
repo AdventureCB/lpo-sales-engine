@@ -134,8 +134,8 @@ h2.viewtitle { font-size: 26px; font-weight: 800; letter-spacing: -0.01em; margi
 .range-toggle { display: inline-flex; background: var(--surface-2); border-radius: 10px; padding: 3px; gap: 2px; margin-bottom: 20px; border: 1px solid var(--border-soft); }
 .range-toggle button { border: none; background: none; color: var(--text-2); font-size: 14px; font-weight: 650; padding: 8px 18px; border-radius: 8px; cursor: pointer; }
 .range-toggle button.active { background: var(--surface-3); color: var(--text-1); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); }
-.repline { display: grid; grid-template-columns: 150px repeat(8, 1fr); gap: 10px; align-items: center; margin-bottom: 12px; }
-.repline .who { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15.5px; }
+.repline { display: grid; grid-template-columns: 150px repeat(5, 1fr); gap: 10px; align-items: center; margin-bottom: 14px; }
+.repline .who { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15.5px; grid-row: span 2; }
 .stat-tile {
   background: linear-gradient(180deg, #211d19, #1b1814);
   border: 1px solid var(--border-soft);
