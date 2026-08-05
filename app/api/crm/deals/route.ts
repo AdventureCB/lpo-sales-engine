@@ -14,11 +14,10 @@ const SORTS: Record<string, string> = {
   stage_changed: "stage_changed_at",
 };
 
-/** Admin deal browser over the mirrored CRM. */
+/** Deal browser over the mirrored CRM (all roles). */
 export async function GET(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
 
   const p = new URL(req.url).searchParams;
   const page = Math.max(0, Number(p.get("page")) || 0);

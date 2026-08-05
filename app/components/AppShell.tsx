@@ -24,6 +24,7 @@ const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[]
     header: "Sales",
     items: [
       { label: "🔥 Hot List", href: "/hot-list" },
+      { label: "📇 CRM", href: "/crm" },
       { label: "Scoreboard", href: "/scoreboard" },
       { label: "Lookup", href: "/lookup" },
     ],
@@ -32,7 +33,6 @@ const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[]
     header: "Admin",
     items: [
       { label: "Quality", href: "/quality", adminOnly: true },
-      { label: "CRM", href: "/crm", adminOnly: true },
       { label: "Commissions", href: "/commissions", adminOnly: true },
     ],
   },

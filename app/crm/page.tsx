@@ -7,10 +7,14 @@ export const metadata = { title: "CRM · LPO Sales Engine" };
 
 export default async function CrmPage() {
   const user = await getSessionUser();
-  if (user?.role !== "admin") redirect("/scoreboard");
+  if (!user) redirect("/login");
+  const isAdmin = user.role === "admin";
   return (
     <AppShell active="/crm" user={{ name: user.repName ?? user.email, role: user.role }}>
-      <CrmView />
+      <CrmView
+        isAdmin={isAdmin}
+        defaultOwner={!isAdmin && user.pipedriveUserId ? String(user.pipedriveUserId) : ""}
+      />
     </AppShell>
   );
 }

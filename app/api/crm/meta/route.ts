@@ -9,7 +9,6 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
 
   const db = supabaseAdmin();
   const [pipelines, stages, dealCount, contactCount, importState] = await Promise.all([

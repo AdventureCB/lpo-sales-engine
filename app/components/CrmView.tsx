@@ -53,7 +53,7 @@ function fmtDate(iso: string | null) {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export function CrmView() {
+export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOwner: string }) {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [total, setTotal] = useState(0);
@@ -63,7 +63,7 @@ export function CrmView() {
   const [pipeline, setPipeline] = useState("");
   const [stage, setStage] = useState("");
   const [status, setStatus] = useState("open");
-  const [owner, setOwner] = useState("");
+  const [owner, setOwner] = useState(defaultOwner);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("updated");
   const [dir, setDir] = useState<"asc" | "desc">("desc");
@@ -242,11 +242,16 @@ export function CrmView() {
     <>
       <h2 className="viewtitle">CRM · Deals</h2>
       <div className="viewsub">
-        Native system of record (admin preview) · mirrored from Pipedrive continuously ·{" "}
+        Native system of record · mirrored from Pipedrive continuously ·{" "}
         {meta ? `${meta.mirror.deals.toLocaleString()} deals, ${meta.mirror.contacts.toLocaleString()} contacts mirrored` : "…"}{" "}
-        · <a href="/crm/automations" style={{ color: "var(--accent-hover)" }}>⚙ Automations</a>
+        {isAdmin && (
+          <>
+            · <a href="/crm/automations" style={{ color: "var(--accent-hover)" }}>⚙ Automations</a>
+          </>
+        )}
       </div>
 
+      {isAdmin && (
       <div className="card" style={{ padding: "10px 14px", marginBottom: 16, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <span className="panel-h" style={{ margin: 0 }}>Mirror</span>
         <button className="btn ghost" style={{ padding: "6px 12px", fontSize: 13.5 }} onClick={runImport} disabled={importing}>
@@ -265,6 +270,7 @@ export function CrmView() {
         )}
         {importMsg && <span style={{ fontSize: 13, color: "var(--text-2)" }}>{importMsg}</span>}
       </div>
+      )}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
         <select className="vmsel" style={{ width: "auto" }} value={pipeline} onChange={(e) => { setPipeline(e.target.value); setStage(""); setPage(0); }}>
@@ -300,7 +306,7 @@ export function CrmView() {
         />
       </div>
 
-      {selected.size > 0 && (
+      {isAdmin && selected.size > 0 && (
         <div className="card" style={{ padding: "10px 14px", marginBottom: 14, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <b style={{ fontSize: 14.5 }}>⚡ {selected.size} selected</b>
           <input
@@ -340,19 +346,21 @@ export function CrmView() {
         <table className="data">
           <thead>
             <tr>
-              <th style={{ width: 30 }}>
-                <input
-                  type="checkbox"
-                  checked={deals.length > 0 && deals.every((d) => selected.has(d.id))}
-                  onChange={(e) =>
-                    setSelected((prev) => {
-                      const next = new Set(prev);
-                      deals.forEach((d) => (e.target.checked ? next.add(d.id) : next.delete(d.id)));
-                      return next;
-                    })
-                  }
-                />
-              </th>
+              {isAdmin && (
+                <th style={{ width: 30 }}>
+                  <input
+                    type="checkbox"
+                    checked={deals.length > 0 && deals.every((d) => selected.has(d.id))}
+                    onChange={(e) =>
+                      setSelected((prev) => {
+                        const next = new Set(prev);
+                        deals.forEach((d) => (e.target.checked ? next.add(d.id) : next.delete(d.id)));
+                        return next;
+                      })
+                    }
+                  />
+                </th>
+              )}
               {COLUMNS.map(([key, label]) => (
                 <th key={key} style={{ cursor: "pointer" }} onClick={() => clickSort(key)}>
                   {label} {sort === key ? (dir === "desc" ? "↓" : "↑") : ""}
@@ -364,18 +372,20 @@ export function CrmView() {
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={8} style={{ color: "var(--text-3)", padding: "16px 10px" }}>Loading…</td></tr>
+              <tr><td colSpan={isAdmin ? 8 : 7} style={{ color: "var(--text-3)", padding: "16px 10px" }}>Loading…</td></tr>
             )}
             {!loading && deals.length === 0 && (
-              <tr><td colSpan={8} style={{ color: "var(--text-3)", padding: "16px 10px" }}>
+              <tr><td colSpan={isAdmin ? 8 : 7} style={{ color: "var(--text-3)", padding: "16px 10px" }}>
                 No deals in the mirror yet — run the import above.
               </td></tr>
             )}
             {!loading && deals.map((d) => (
               <tr key={d.id}>
-                <td>
-                  <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} />
-                </td>
+                {isAdmin && (
+                  <td>
+                    <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} />
+                  </td>
+                )}
                 <td>
                   <a href={`/crm/deal/${d.id}`} style={{ color: "var(--text-1)", textDecoration: "none" }}>
                     <b>{d.title}</b>
