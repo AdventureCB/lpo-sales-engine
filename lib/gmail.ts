@@ -124,6 +124,19 @@ export async function sendGmail(
   return json.id as string;
 }
 
+/** Gmail's `snippet` is HTML-entity-encoded (&#39; etc.) — decode for storage. */
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
+}
+
 function header(headers: any[], name: string): string | null {
   return headers?.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? null;
 }
@@ -212,7 +225,7 @@ export async function sweepGmailAccount(
         contact_id: contactId,
         type: "email",
         subject: `${inbound ? "📥" : "📤"} ${header(headers, "Subject") || "(no subject)"}`,
-        body: msg.snippet ?? null,
+        body: msg.snippet ? decodeEntities(msg.snippet) : null,
         actor: inbound ? matchedEmail : account.user_email,
         occurred_at: occurredAt,
         meta: { gmail: true, direction: inbound ? "inbound" : "outbound" },
