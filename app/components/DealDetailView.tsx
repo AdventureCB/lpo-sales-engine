@@ -41,6 +41,8 @@ export function DealDetailView({ dealId }: { dealId: string }) {
   // Upcoming-activity inline editor
   const [editAct, setEditAct] = useState<{ id: string; subject: string; type: string; due: string } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [modal, setModal] = useState<null | "note" | "schedule" | "sprint">(null);
+  const [tlOpen, setTlOpen] = useState<Set<number>>(new Set());
 
   const load = useCallback(
     () =>
@@ -96,9 +98,10 @@ export function DealDetailView({ dealId }: { dealId: string }) {
 
       <div className="split" style={{ marginTop: 0 }}>
         <div>
-          <div className="card" style={{ marginBottom: 18 }}>
-            <div className="panel-h">Actions</div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {/* Deal properties — labeled so nothing gets changed by accident. */}
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 16 }}>
+            <div className="field">
+              <label>Stage</label>
               <select
                 className="vmsel"
                 style={{ width: "auto" }}
@@ -112,13 +115,15 @@ export function DealDetailView({ dealId }: { dealId: string }) {
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="field">
+              <label>Owner</label>
               <select
                 className="vmsel"
                 style={{ width: "auto" }}
                 value={d.owner_pipedrive_id ?? ""}
                 onChange={(e) => update({ ownerPipedriveId: e.target.value })}
                 disabled={saving}
-                title="Deal owner"
               >
                 <option value="" disabled>Owner…</option>
                 <option value="24081760">Parker</option>
@@ -126,158 +131,183 @@ export function DealDetailView({ dealId }: { dealId: string }) {
                 <option value="24723797">Cainen</option>
                 <option value="23851101">Gabi</option>
               </select>
+            </div>
+            <div className="field">
+              <label>Source</label>
               <select
                 className="vmsel"
                 style={{ width: "auto" }}
                 value={d.source_id ?? ""}
                 onChange={(e) => update({ sourceId: e.target.value || null })}
                 disabled={saving}
-                title="Deal source"
               >
-                <option value="">Source…</option>
+                <option value="">—</option>
                 {data.sources.map((s) => (
                   <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
               </select>
+            </div>
+          </div>
+
+          <div className="card" style={{ marginBottom: 18 }}>
+            <div className="panel-h">Actions</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <button className="btn" onClick={() => setModal("note")}>📝 Add note</button>
+              <button className="btn" onClick={() => setModal("schedule")}>📅 Schedule activity</button>
+              <button className="btn" onClick={() => setModal("sprint")}>
+                ⚡ Add to sprint{data.dealSprintIds.length > 0 ? ` (in ${data.dealSprintIds.length})` : ""}
+              </button>
               {d.status === "open" ? (
                 <>
-                  <button className="btn ghost" style={{ padding: "8px 13px", fontSize: 14 }} onClick={() => update({ status: "won" })} disabled={saving}>
+                  <button className="btn ghost" style={{ marginLeft: "auto" }} onClick={() => update({ status: "won" })} disabled={saving}>
                     ✓ Won
                   </button>
-                  <button className="btn ghost" style={{ padding: "8px 13px", fontSize: 14 }} onClick={() => update({ status: "lost" })} disabled={saving}>
+                  <button className="btn ghost" onClick={() => update({ status: "lost" })} disabled={saving}>
                     ✗ Lost
                   </button>
                 </>
               ) : (
-                <button className="btn ghost" style={{ padding: "8px 13px", fontSize: 14 }} onClick={() => update({ status: "open" })} disabled={saving}>
+                <button className="btn ghost" style={{ marginLeft: "auto" }} onClick={() => update({ status: "open" })} disabled={saving}>
                   Reopen
                 </button>
               )}
             </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <input
-                className="vmsel"
-                style={{ flex: 1 }}
-                placeholder="Add a note… (saves here + Pipedrive)"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && note.trim()) {
-                    void update({ note });
-                    setNote("");
-                  }
-                }}
-              />
-              <button
-                className="btn primary"
-                style={{ padding: "8px 14px", fontSize: 14 }}
-                disabled={!note.trim() || saving}
-                onClick={() => {
-                  void update({ note });
-                  setNote("");
-                }}
-              >
-                Add note
-              </button>
-            </div>
-
-            <div className="panel-h" style={{ marginTop: 16 }}>Schedule activity</div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              <select className="vmsel" style={{ width: "auto" }} value={schedType} onChange={(e) => setSchedType(e.target.value)}>
-                <option value="call">📞 Call</option>
-                <option value="task">📋 Task</option>
-                <option value="meeting">📅 Meeting</option>
-                <option value="email">✉️ Email</option>
-              </select>
-              <input
-                className="vmsel"
-                style={{ flex: 1, minWidth: 160 }}
-                placeholder="What needs to happen?"
-                value={schedSubject}
-                onChange={(e) => setSchedSubject(e.target.value)}
-              />
-              <input
-                type="datetime-local"
-                className="vmsel"
-                style={{ width: "auto" }}
-                value={schedDue}
-                onChange={(e) => setSchedDue(e.target.value)}
-              />
-              <button
-                className="btn primary"
-                style={{ padding: "8px 14px", fontSize: 14 }}
-                disabled={!schedSubject.trim() || saving}
-                onClick={() => {
-                  void update({
-                    activity: {
-                      type: schedType,
-                      subject: schedSubject,
-                      dueAt: schedDue ? new Date(schedDue).toISOString() : null,
-                    },
-                  });
-                  setSchedSubject("");
-                  setSchedDue("");
-                }}
-              >
-                Schedule
-              </button>
-            </div>
-
-            <div className="panel-h" style={{ marginTop: 16 }}>Call sprint</div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              <select className="vmsel" style={{ width: "auto", minWidth: 180 }} value={sprintPick} onChange={(e) => setSprintPick(e.target.value)}>
-                <option value="">Add to sprint…</option>
-                {data.sprints.map((s) => (
-                  <option key={s.id} value={s.id} disabled={data.dealSprintIds.includes(s.id)}>
-                    {s.name} · {s.owner.split("@")[0]}{data.dealSprintIds.includes(s.id) ? " ✓ (already in)" : ""}
-                  </option>
-                ))}
-                <option value="__new">＋ New sprint…</option>
-              </select>
-              {sprintPick === "__new" && (
-                <>
-                  <input
-                    className="vmsel"
-                    style={{ width: "auto" }}
-                    placeholder="Sprint name"
-                    value={newSprintName}
-                    onChange={(e) => setNewSprintName(e.target.value)}
-                  />
-                  <select className="vmsel" style={{ width: "auto" }} value={newSprintOwner} onChange={(e) => setNewSprintOwner(e.target.value)}>
-                    <option value="">Rep…</option>
-                    {data.sprintOwners.map((o) => (
-                      <option key={o} value={o}>{o.split("@")[0]}</option>
-                    ))}
-                  </select>
-                </>
-              )}
-              <button
-                className="btn ghost"
-                style={{ padding: "8px 13px", fontSize: 14 }}
-                disabled={
-                  saving ||
-                  (sprintPick === "__new" ? !newSprintName.trim() || !newSprintOwner : !sprintPick)
-                }
-                onClick={() => {
-                  void update({
-                    sprint:
-                      sprintPick === "__new"
-                        ? { name: newSprintName, owner: newSprintOwner }
-                        : { sprintId: sprintPick },
-                  });
-                  setSprintPick("");
-                  setNewSprintName("");
-                }}
-              >
-                Add to sprint
-              </button>
-              {data.dealSprintIds.length > 0 && (
-                <span style={{ fontSize: 13, color: "var(--text-3)" }}>
-                  In {data.dealSprintIds.length} sprint{data.dealSprintIds.length === 1 ? "" : "s"} — shows in that rep’s dialer
-                </span>
-              )}
-            </div>
           </div>
+
+          {modal === "note" && (
+            <ActionModal title="Add note" onClose={() => setModal(null)}>
+              <textarea
+                className="vmsel"
+                rows={4}
+                style={{ resize: "vertical" }}
+                placeholder="Note… (saves here + Pipedrive)"
+                value={note}
+                autoFocus
+                onChange={(e) => setNote(e.target.value)}
+              />
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <button
+                  className="btn primary"
+                  disabled={!note.trim() || saving}
+                  onClick={async () => {
+                    await update({ note });
+                    setNote("");
+                    setModal(null);
+                  }}
+                >
+                  Save note
+                </button>
+                <button className="btn ghost" onClick={() => setModal(null)}>Cancel</button>
+              </div>
+            </ActionModal>
+          )}
+
+          {modal === "schedule" && (
+            <ActionModal title="Schedule activity" onClose={() => setModal(null)}>
+              <div style={{ display: "grid", gap: 8 }}>
+                <select className="vmsel" value={schedType} onChange={(e) => setSchedType(e.target.value)}>
+                  <option value="call">📞 Call</option>
+                  <option value="task">📋 Task</option>
+                  <option value="meeting">📅 Meeting</option>
+                  <option value="email">✉️ Email</option>
+                </select>
+                <input
+                  className="vmsel"
+                  placeholder="What needs to happen?"
+                  value={schedSubject}
+                  autoFocus
+                  onChange={(e) => setSchedSubject(e.target.value)}
+                />
+                <input
+                  type="datetime-local"
+                  className="vmsel"
+                  value={schedDue}
+                  onChange={(e) => setSchedDue(e.target.value)}
+                />
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="btn primary"
+                    disabled={!schedSubject.trim() || saving}
+                    onClick={async () => {
+                      await update({
+                        activity: {
+                          type: schedType,
+                          subject: schedSubject,
+                          dueAt: schedDue ? new Date(schedDue).toISOString() : null,
+                        },
+                      });
+                      setSchedSubject("");
+                      setSchedDue("");
+                      setModal(null);
+                    }}
+                  >
+                    Schedule
+                  </button>
+                  <button className="btn ghost" onClick={() => setModal(null)}>Cancel</button>
+                </div>
+              </div>
+            </ActionModal>
+          )}
+
+          {modal === "sprint" && (
+            <ActionModal title="Add to call sprint" onClose={() => setModal(null)}>
+              <div style={{ display: "grid", gap: 8 }}>
+                <select className="vmsel" value={sprintPick} onChange={(e) => setSprintPick(e.target.value)}>
+                  <option value="">Pick a sprint…</option>
+                  {data.sprints.map((s) => (
+                    <option key={s.id} value={s.id} disabled={data.dealSprintIds.includes(s.id)}>
+                      {s.name} · {s.owner.split("@")[0]}{data.dealSprintIds.includes(s.id) ? " ✓ (already in)" : ""}
+                    </option>
+                  ))}
+                  <option value="__new">＋ New sprint…</option>
+                </select>
+                {sprintPick === "__new" && (
+                  <>
+                    <input
+                      className="vmsel"
+                      placeholder="Sprint name"
+                      value={newSprintName}
+                      onChange={(e) => setNewSprintName(e.target.value)}
+                    />
+                    <select className="vmsel" value={newSprintOwner} onChange={(e) => setNewSprintOwner(e.target.value)}>
+                      <option value="">Rep…</option>
+                      {data.sprintOwners.map((o) => (
+                        <option key={o} value={o}>{o.split("@")[0]}</option>
+                      ))}
+                    </select>
+                  </>
+                )}
+                {data.dealSprintIds.length > 0 && (
+                  <div style={{ fontSize: 13, color: "var(--text-3)" }}>
+                    Already in {data.dealSprintIds.length} sprint{data.dealSprintIds.length === 1 ? "" : "s"} — shows in that rep’s dialer.
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="btn primary"
+                    disabled={
+                      saving ||
+                      (sprintPick === "__new" ? !newSprintName.trim() || !newSprintOwner : !sprintPick)
+                    }
+                    onClick={async () => {
+                      await update({
+                        sprint:
+                          sprintPick === "__new"
+                            ? { name: newSprintName, owner: newSprintOwner }
+                            : { sprintId: sprintPick },
+                      });
+                      setSprintPick("");
+                      setNewSprintName("");
+                      setModal(null);
+                    }}
+                  >
+                    Add to sprint
+                  </button>
+                  <button className="btn ghost" onClick={() => setModal(null)}>Cancel</button>
+                </div>
+              </div>
+            </ActionModal>
+          )}
 
           <CommBar
             dealId={d.id}
@@ -422,23 +452,52 @@ export function DealDetailView({ dealId }: { dealId: string }) {
             )}
             {/* Pending scheduled items live in Upcoming, not the timeline —
                 they land here once completed. */}
-            {data.timeline.filter((t) => !(t.due && !t.done)).map((t, i) => (
-              <div className="stmt-row" style={{ alignItems: "flex-start" }} key={i}>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <span>{KIND_ICON[t.kind] ?? "•"}</span>
-                  <div>
-                    <b style={{ fontSize: 14 }}>{t.title}</b>
-                    {t.body && (
-                      <div style={{ fontSize: 13.5, color: "var(--text-2)", maxWidth: 480 }}>{t.body}</div>
-                    )}
-                    {t.actor && <div style={{ fontSize: 12, color: "var(--text-3)" }}>{t.actor}</div>}
+            {data.timeline.filter((t) => !(t.due && !t.done)).map((t, i) => {
+              const isOpen = tlOpen.has(i);
+              const long = (t.body?.length ?? 0) > 160;
+              return (
+                <div
+                  className="stmt-row"
+                  style={{ alignItems: "flex-start", cursor: t.body ? "pointer" : "default" }}
+                  key={i}
+                  title={t.body && !isOpen ? "Click to expand" : undefined}
+                  onClick={() =>
+                    t.body &&
+                    setTlOpen((s) => {
+                      const next = new Set(s);
+                      if (next.has(i)) next.delete(i);
+                      else next.add(i);
+                      return next;
+                    })
+                  }
+                >
+                  <div style={{ display: "flex", gap: 8, minWidth: 0 }}>
+                    <span>{KIND_ICON[t.kind] ?? "•"}</span>
+                    <div style={{ minWidth: 0 }}>
+                      <b style={{ fontSize: 14 }}>{t.title}</b>
+                      {t.body && !isOpen && (
+                        <div style={{ fontSize: 13.5, color: "var(--text-2)", maxWidth: 480, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {t.body}
+                          {long ? " …" : ""}
+                        </div>
+                      )}
+                      {t.body && isOpen && (
+                        <div style={{ fontSize: 13.5, color: "var(--text-2)", whiteSpace: "pre-wrap", wordBreak: "break-word", marginTop: 4 }}>
+                          {t.body}
+                        </div>
+                      )}
+                      {t.actor && <div style={{ fontSize: 12, color: "var(--text-3)" }}>{t.actor}</div>}
+                      {isOpen && t.at && (
+                        <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 3 }}>{new Date(t.at).toLocaleString()}</div>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--text-3)", flexShrink: 0, marginLeft: 10 }}>
+                    {fmtWhen(t.at)}
                   </div>
                 </div>
-                <div style={{ fontSize: 12, color: "var(--text-3)", flexShrink: 0, marginLeft: 10 }}>
-                  {fmtWhen(t.at)}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -1373,6 +1432,26 @@ function CommBar({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Centered popup for deal actions (note / schedule / sprint). */
+function ActionModal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, zIndex: 900, background: "rgba(0,0,0,0.55)", display: "grid", placeItems: "center" }}
+      onClick={onClose}
+    >
+      <div className="card" style={{ width: 460, maxWidth: "92vw" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
+          <div className="panel-h" style={{ marginBottom: 0 }}>{title}</div>
+          <button className="btn ghost" style={{ marginLeft: "auto", padding: "2px 10px", fontSize: 13 }} onClick={onClose}>
+            ✕
+          </button>
+        </div>
+        {children}
+      </div>
     </div>
   );
 }
