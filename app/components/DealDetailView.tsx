@@ -91,6 +91,78 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
     (data.stages.find((s) => pattern.test(s.name) && (!pipeline || s.crm_pipelines?.name === pipeline)) ??
       data.stages.find((s) => pattern.test(s.name)))?.id;
 
+  // Shared pieces the embedded (dialer) layout re-arranges without forking.
+  const propertyFields = (
+    <>
+              <div className="field">
+                <label>Stage</label>
+                <select
+                  className="vmsel"
+                  style={{ width: "auto" }}
+                  value={d.stage_id ?? ""}
+                  onChange={(e) => update({ stageId: e.target.value })}
+                  disabled={saving}
+                >
+                  {data.stages.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.crm_pipelines?.name} ▸ {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label>Owner</label>
+                <select
+                  className="vmsel"
+                  style={{ width: "auto" }}
+                  value={d.owner_pipedrive_id ?? ""}
+                  onChange={(e) => update({ ownerPipedriveId: e.target.value })}
+                  disabled={saving}
+                >
+                  <option value="" disabled>Owner…</option>
+                  <option value="24081760">Parker</option>
+                  <option value="24391245">Jackson</option>
+                  <option value="24723797">Cainen</option>
+                  <option value="23851101">Gabi</option>
+                </select>
+              </div>
+              <div className="field">
+                <label>Source</label>
+                <select
+                  className="vmsel"
+                  style={{ width: "auto" }}
+                  value={d.source_id ?? ""}
+                  onChange={(e) => update({ sourceId: e.target.value || null })}
+                  disabled={saving}
+                >
+                  <option value="">—</option>
+                  {data.sources.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+    </>
+  );
+  const commBarEl = (
+    <CommBar
+      dealId={d.id}
+      pdDealId={d.pipedrive_deal_id ?? null}
+      hideCall={embedded}
+      contact={contact ? { id: contact.id, name: contact.name, firstName: contact.first_name } : null}
+      phone={phones.find((p) => p.primary)?.e164 ?? phones[0]?.e164 ?? phones[0]?.value ?? null}
+      email={emails.find((e) => e.primary)?.value ?? emails[0]?.value ?? null}
+      onLogged={load}
+    />
+  );
+  const klaviyoEl = emails[0]?.value ? (
+    <KlaviyoActivity
+      email={emails[0].value}
+      contactId={contact?.id ?? null}
+      knownPhones={phones.map((p) => p.e164 ?? p.value)}
+      onSaved={load}
+    />
+  ) : null;
+
   return (
     <>
       {!embedded && (
@@ -109,53 +181,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
 
       {/* Deal properties + outcome — one labeled row above everything. */}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end", margin: "0 0 18px" }}>
-        <div className="field">
-          <label>Stage</label>
-          <select
-            className="vmsel"
-            style={{ width: "auto" }}
-            value={d.stage_id ?? ""}
-            onChange={(e) => update({ stageId: e.target.value })}
-            disabled={saving}
-          >
-            {data.stages.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.crm_pipelines?.name} ▸ {s.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>Owner</label>
-          <select
-            className="vmsel"
-            style={{ width: "auto" }}
-            value={d.owner_pipedrive_id ?? ""}
-            onChange={(e) => update({ ownerPipedriveId: e.target.value })}
-            disabled={saving}
-          >
-            <option value="" disabled>Owner…</option>
-            <option value="24081760">Parker</option>
-            <option value="24391245">Jackson</option>
-            <option value="24723797">Cainen</option>
-            <option value="23851101">Gabi</option>
-          </select>
-        </div>
-        <div className="field">
-          <label>Source</label>
-          <select
-            className="vmsel"
-            style={{ width: "auto" }}
-            value={d.source_id ?? ""}
-            onChange={(e) => update({ sourceId: e.target.value || null })}
-            disabled={saving}
-          >
-            <option value="">—</option>
-            {data.sources.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-        </div>
+        {!embedded && propertyFields}
         <div className="field" style={{ marginLeft: "auto" }}>
           <label>Outcome</label>
           {(() => {
@@ -234,8 +260,11 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
         </div>
       </div>
 
+      {embedded && <div style={{ marginBottom: 18 }}>{commBarEl}</div>}
+
       <div className="split" style={{ marginTop: 0, ...(embedded ? { gridTemplateColumns: "1fr" } : {}) }}>
         <div>
+          {!embedded && (
           <div className="card" style={{ marginBottom: 18 }}>
             <div className="panel-h">Actions</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -246,6 +275,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
               </button>
             </div>
           </div>
+          )}
 
           {modal === "note" && (
             <ActionModal title="Add note" onClose={() => setModal(null)}>
@@ -431,15 +461,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
             </ActionModal>
           )}
 
-          <CommBar
-            dealId={d.id}
-            pdDealId={d.pipedrive_deal_id ?? null}
-            hideCall={embedded}
-            contact={contact ? { id: contact.id, name: contact.name, firstName: contact.first_name } : null}
-            phone={phones.find((p) => p.primary)?.e164 ?? phones[0]?.e164 ?? phones[0]?.value ?? null}
-            email={emails.find((e) => e.primary)?.value ?? emails[0]?.value ?? null}
-            onLogged={load}
-          />
+          {!embedded && commBarEl}
 
           {(() => {
             const upcoming = data.timeline
@@ -652,6 +674,9 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
               </div>
             </>
           )}
+          {embedded && klaviyoEl}
+          {!embedded && (
+            <>
           <div className="panel-h">Contact</div>
           {contact ? (
             <>
@@ -713,21 +738,25 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
           ) : (
             <div style={{ color: "var(--text-3)", fontSize: 14 }}>No linked contact.</div>
           )}
-          <div className="panel-h" style={{ marginTop: 16 }}>Record</div>
-          <div style={{ fontSize: 13.5, color: "var(--text-3)", lineHeight: 1.8 }}>
-            Created {fmtWhen(d.pd_add_time ?? d.created_at)}<br />
-            Stage changed {fmtWhen(d.stage_changed_at)}<br />
-            Last activity {fmtWhen(d.last_activity_at)}<br />
-            Pipedrive #{d.pipedrive_deal_id ?? "—"}
-          </div>
-          {emails[0]?.value && (
-            <KlaviyoActivity
-              email={emails[0].value}
-              contactId={contact?.id ?? null}
-              knownPhones={phones.map((p) => p.e164 ?? p.value)}
-              onSaved={load}
-            />
+            </>
           )}
+          <div style={embedded ? { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" } : undefined}>
+            <div style={embedded ? { flex: 1, minWidth: 170 } : undefined}>
+              <div className="panel-h" style={{ marginTop: 16 }}>Record</div>
+              <div style={{ fontSize: 13.5, color: "var(--text-3)", lineHeight: 1.8 }}>
+                Created {fmtWhen(d.pd_add_time ?? d.created_at)}<br />
+                Stage changed {fmtWhen(d.stage_changed_at)}<br />
+                Last activity {fmtWhen(d.last_activity_at)}<br />
+                Pipedrive #{d.pipedrive_deal_id ?? "—"}
+              </div>
+            </div>
+            {embedded && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16, minWidth: 210 }}>
+                {propertyFields}
+              </div>
+            )}
+          </div>
+          {!embedded && klaviyoEl}
         </div>
       </div>
     </>
