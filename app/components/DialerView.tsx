@@ -83,6 +83,7 @@ const DISPOSITIONS: [string, string, string][] = [
   ["vm_dropped", "2", "🎙 VM left"],
   ["bad_number", "3", "🚫 Bad number"],
   ["callback", "4", "📅 Callback set"],
+  ["confirmation", "5", "📋 Confirmation call"],
 ];
 
 function fmtClock(sec: number) {
@@ -606,12 +607,16 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setCustomDue("");
     setAwaitingDispo(false);
     if (dispo === "connected") setSess((s) => ({ ...s, conn: s.conn + 1, talkS: s.talkS + callSecRef.current }));
+    // Confirmation calls count talk time but NOT sales connects — that
+    // separation is the whole point of the disposition.
+    if (dispo === "confirmation") setSess((s) => ({ ...s, talkS: s.talkS + callSecRef.current }));
     if (dispo === "vm_dropped") setSess((s) => ({ ...s, vm: s.vm + 1 }));
     const FOLLOW_UP_SUBJECT: Record<string, string> = {
       connected: "Continue conversation",
       vm_dropped: "Follow up — voicemail left",
       callback: "Callback requested",
       bad_number: "Follow up — fix number first",
+      confirmation: "Confirmation follow-up",
     };
     void sendDisposition(
       dispo,
@@ -728,7 +733,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       if ((e.key === "v" || e.key === "V") && inCall) dropVm();
       if ((e.key === "e" || e.key === "E") && inCall) void endCall();
       if ((e.key === "s" || e.key === "S") && !inCall && !awaitingDispo) skip();
-      if ((inCall || awaitingDispo) && ["1", "2", "3", "4"].includes(e.key)) {
+      if ((inCall || awaitingDispo) && ["1", "2", "3", "4", "5"].includes(e.key)) {
         if (inCall) hangUp();
         finalize(DISPOSITIONS[Number(e.key) - 1][0]);
       }

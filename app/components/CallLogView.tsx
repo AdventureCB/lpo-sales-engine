@@ -42,6 +42,7 @@ const DISPO_LABEL: Record<string, string> = {
   vm_dropped: "🎙 VM left",
   bad_number: "🚫 Bad number",
   callback: "📅 Callback",
+  confirmation: "📋 Confirmation call",
 };
 
 export function CallLogView() {
