@@ -92,9 +92,32 @@ export async function GET(req: NextRequest) {
     })),
   ].sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""));
 
+  // Call counters: every call tied to this deal or any of the contact's
+  // numbers — dials, talk, answer rate.
+  const contactPhones = ((deal.crm_contacts?.phones as any[]) ?? [])
+    .map((p) => p.e164 ?? p.value)
+    .filter(Boolean);
+  let callStats: { dials: number; answered: number; talkS: number; inbound: number } | null = null;
+  if (contactPhones.length > 0 || deal.pipedrive_deal_id) {
+    const { data: cs } = await db.rpc("deal_call_stats", {
+      p_phones: contactPhones,
+      p_deal_id: deal.pipedrive_deal_id ?? null,
+    });
+    const row = Array.isArray(cs) ? cs[0] : cs;
+    if (row) {
+      callStats = {
+        dials: Number(row.dials),
+        answered: Number(row.answered),
+        talkS: Number(row.talk_s),
+        inbound: Number(row.inbound),
+      };
+    }
+  }
+
   return NextResponse.json({
     deal,
     timeline,
+    callStats,
     stages: stages.data ?? [],
     sprints: sprints.data ?? [],
     dealSprintIds: (dealSprints.data ?? []).map((s) => s.sprint_id),

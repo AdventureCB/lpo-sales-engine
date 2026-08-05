@@ -6,6 +6,7 @@ import { newOutboundCall, setOutboundHandler } from "./phoneClient";
 interface DealData {
   deal: any;
   timeline: { id?: string; kind: string; at: string | null; title: string; body: string | null; actor: string | null; done: boolean; due: string | null }[];
+  callStats: { dials: number; answered: number; talkS: number; inbound: number } | null;
   stages: { id: string; name: string; crm_pipelines: { name: string } | null }[];
   sprints: { id: string; name: string; owner: string }[];
   dealSprintIds: string[];
@@ -428,6 +429,33 @@ export function DealDetailView({ dealId }: { dealId: string }) {
         </div>
 
         <div className="card">
+          {data.callStats && (
+            <>
+              <div className="panel-h">Call effort</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
+                <div className="sstat">
+                  <div className="n">{data.callStats.dials}</div>
+                  <div className="l">Dials</div>
+                </div>
+                <div className="sstat">
+                  <div className="n">
+                    {data.callStats.talkS >= 3600
+                      ? `${(data.callStats.talkS / 3600).toFixed(1)}h`
+                      : `${Math.round(data.callStats.talkS / 60)}m`}
+                  </div>
+                  <div className="l">Talk time</div>
+                </div>
+                <div className="sstat">
+                  <div className="n">
+                    {data.callStats.dials > 0
+                      ? `${Math.round((100 * data.callStats.answered) / data.callStats.dials)}%`
+                      : "—"}
+                  </div>
+                  <div className="l">Answer rate</div>
+                </div>
+              </div>
+            </>
+          )}
           <div className="panel-h">Contact</div>
           {contact ? (
             <>
