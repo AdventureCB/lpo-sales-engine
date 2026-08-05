@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { newOutboundCall, setOutboundHandler } from "./phoneClient";
 
 interface DealData {
   deal: any;
@@ -259,6 +260,14 @@ export function DealDetailView({ dealId }: { dealId: string }) {
               )}
             </div>
           </div>
+
+          <CommBar
+            dealId={d.id}
+            contact={contact ? { id: contact.id, name: contact.name, firstName: contact.first_name } : null}
+            phone={phones.find((p) => p.primary)?.e164 ?? phones[0]?.e164 ?? phones[0]?.value ?? null}
+            email={emails.find((e) => e.primary)?.value ?? emails[0]?.value ?? null}
+            onLogged={load}
+          />
 
           {(() => {
             const upcoming = data.timeline
@@ -667,6 +676,277 @@ function AddContactDetail({ contactId, onSaved }: { contactId: string; onSaved: 
       <button className="btn ghost" style={{ padding: "4px 10px", fontSize: 12.5 }} onClick={() => setOpen(false)}>
         Cancel
       </button>
+    </div>
+  );
+}
+
+// ── Comm bar: Call / Text / WhatsApp / Email without leaving the deal ───────
+
+interface Macro {
+  id: string;
+  channel: "sms" | "whatsapp" | "email" | "any";
+  name: string;
+  subject: string | null;
+  body: string;
+}
+interface Asset {
+  id: string;
+  kind: "url" | "media";
+  name: string;
+  url: string;
+}
+
+type CommChannel = "sms" | "whatsapp" | "email";
+
+function CommBar({
+  dealId,
+  contact,
+  phone,
+  email,
+  onLogged,
+}: {
+  dealId: string;
+  contact: { id: string; name: string; firstName: string | null } | null;
+  phone: string | null;
+  email: string | null;
+  onLogged: () => void;
+}) {
+  const [channel, setChannel] = useState<CommChannel | null>(null);
+  const [macros, setMacros] = useState<Macro[]>([]);
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [body, setBody] = useState("");
+  const [subject, setSubject] = useState("");
+  const [sending, setSending] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
+  const [waProfileId, setWaProfileId] = useState<string | null | "missing">(null);
+  // Browser-mode call state (Telnyx singleton)
+  const [callState, setCallState] = useState<string | null>(null);
+  const callRef = useRef<any>(null);
+
+  useEffect(() => {
+    fetch("/api/crm/comm-library")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        setMacros(d.macros ?? []);
+        setAssets(d.assets ?? []);
+      })
+      .catch(() => {});
+    return () => setOutboundHandler(null);
+  }, []);
+
+  // Resolve the Klaviyo profile once the WhatsApp composer opens.
+  useEffect(() => {
+    if (channel !== "whatsapp" || waProfileId || !email) return;
+    fetch(`/api/crm/contact-events?email=${encodeURIComponent(email)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setWaProfileId(d?.profile?.id ?? "missing"))
+      .catch(() => setWaProfileId("missing"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channel, email]);
+
+  const renderTemplate = (text: string) =>
+    text
+      .replaceAll("{{name}}", contact?.name?.trim() ?? "")
+      .replaceAll("{{first_name}}", contact?.firstName ?? contact?.name?.split(" ")[0] ?? "");
+
+  const applyMacro = (id: string) => {
+    const m = macros.find((x) => x.id === id);
+    if (!m) return;
+    setBody(renderTemplate(m.body));
+    if (m.subject && channel === "email") setSubject(renderTemplate(m.subject));
+  };
+
+  const appendAsset = (id: string) => {
+    const a = assets.find((x) => x.id === id);
+    if (!a) return;
+    setBody((b) => (b ? `${b.trimEnd()} ${a.url}` : a.url));
+  };
+
+  const startCall = () => {
+    if (!phone) return;
+    const method = localStorage.getItem("dialMethod") ?? "desktop";
+    if (method === "browser") {
+      setCallState("connecting");
+      setOutboundHandler((c: any, s: string) => {
+        callRef.current = c;
+        if (s === "ringing" || s === "trying" || s === "requesting") setCallState("ringing");
+        if (s === "active") setCallState("active");
+        if (s === "hangup" || s === "destroy") {
+          setCallState(null);
+          callRef.current = null;
+        }
+      });
+      newOutboundCall(phone)
+        .then((c) => {
+          callRef.current = c;
+          setCallState("ringing");
+        })
+        .catch((e) => setCallState(`error: ${e instanceof Error ? e.message : e}`));
+    } else if (method === "web") {
+      void navigator.clipboard?.writeText(phone).catch(() => {});
+      window.open("https://my.quo.com", "quo-web");
+    } else if (window.__TAURI__) {
+      void window.__TAURI__.core.invoke("open_tel", { url: `tel:${phone}` }).catch(() => {});
+    } else {
+      window.location.href = `tel:${phone}`;
+    }
+  };
+
+  const endCall = () => {
+    try {
+      callRef.current?.hangup();
+    } catch {}
+    setCallState(null);
+  };
+
+  const flashOk = (msg: string) => {
+    setOk(msg);
+    setTimeout(() => setOk(null), 3000);
+  };
+
+  const send = async () => {
+    const text = body.trim();
+    if (!text || sending) return;
+    setSending(true);
+    setErr(null);
+    try {
+      let r: Response | null = null;
+      if (channel === "sms") {
+        r = await fetch("/api/texts/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to: phone, body: text, crmDealId: dealId, contactId: contact?.id }),
+        });
+      } else if (channel === "whatsapp") {
+        if (!waProfileId || waProfileId === "missing") throw new Error("No Klaviyo profile for this contact");
+        r = await fetch("/api/crm/whatsapp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ profileId: waProfileId, message: text, dealId, contactId: contact?.id }),
+        });
+      } else if (channel === "email") {
+        if (!subject.trim()) throw new Error("Subject required");
+        r = await fetch("/api/gmail/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to: email, subject: subject.trim(), body: text, dealId, contactId: contact?.id }),
+        });
+      }
+      const d = await r?.json().catch(() => ({}));
+      if (!r?.ok || d?.error) throw new Error(d?.error ?? `HTTP ${r?.status}`);
+      setBody("");
+      setSubject("");
+      setChannel(null);
+      flashOk("Sent ✓");
+      onLogged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const macrosFor = macros.filter((m) => m.channel === channel || m.channel === "any");
+  const urls = assets.filter((a) => a.kind === "url");
+  const media = assets.filter((a) => a.kind === "media");
+
+  const chBtn = (key: CommChannel, label: string, disabled: boolean, title?: string) => (
+    <button
+      className={`btn ${channel === key ? "primary" : ""}`}
+      disabled={disabled}
+      title={title}
+      onClick={() => {
+        setErr(null);
+        setChannel((c) => (c === key ? null : key));
+      }}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="card" style={{ marginBottom: 18 }}>
+      <div className="panel-h">Reach out</div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        {callState === null ? (
+          <button className="btn" disabled={!phone} title={phone ?? "No phone on contact"} onClick={startCall}>
+            📞 Call
+          </button>
+        ) : callState.startsWith("error") ? (
+          <button className="btn" style={{ color: "var(--crit)" }} onClick={() => setCallState(null)} title={callState}>
+            📞 Call failed — retry
+          </button>
+        ) : (
+          <button className="btn" style={{ background: "var(--crit)", color: "#fff" }} onClick={endCall}>
+            ⏹ {callState === "active" ? "On call" : "Ringing…"} — End
+          </button>
+        )}
+        {chBtn("sms", "💬 Text", !phone, phone ?? "No phone on contact")}
+        {chBtn("whatsapp", "🟢 WhatsApp", !email, email ?? "Needs an email to find the Klaviyo profile")}
+        {chBtn("email", "✉️ Email", !email, email ?? "No email on contact")}
+        {ok && <span style={{ color: "var(--good)", fontSize: 13.5, fontWeight: 700 }}>{ok}</span>}
+      </div>
+
+      {channel && (
+        <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <select className="vmsel" style={{ width: "auto", flex: 1, minWidth: 140 }} value="" onChange={(e) => e.target.value && applyMacro(e.target.value)}>
+              <option value="">📋 Macro…</option>
+              {macrosFor.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+            <select className="vmsel" style={{ width: "auto", flex: 1, minWidth: 140 }} value="" onChange={(e) => e.target.value && appendAsset(e.target.value)}>
+              <option value="">🔗 URL asset…</option>
+              {urls.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+            <select className="vmsel" style={{ width: "auto", flex: 1, minWidth: 140 }} value="" onChange={(e) => e.target.value && appendAsset(e.target.value)}>
+              <option value="">🖼 Media asset…</option>
+              {media.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+          </div>
+          {channel === "email" && (
+            <input
+              className="vmsel"
+              placeholder="Subject…"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+            />
+          )}
+          <textarea
+            className="vmsel"
+            rows={4}
+            style={{ resize: "vertical" }}
+            placeholder={
+              channel === "sms"
+                ? `Text ${phone}…`
+                : channel === "whatsapp"
+                  ? "WhatsApp message…"
+                  : `Email ${email}…`
+            }
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+          />
+          {channel === "whatsapp" && waProfileId === "missing" && (
+            <div style={{ color: "var(--warn)", fontSize: 13 }}>
+              No Klaviyo profile found for {email} — WhatsApp needs one.
+            </div>
+          )}
+          {err && <div style={{ color: "var(--crit)", fontSize: 13 }}>{err}</div>}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn primary" disabled={!body.trim() || sending} onClick={send}>
+              {sending ? "Sending…" : `Send ${channel === "sms" ? "text" : channel === "whatsapp" ? "WhatsApp" : "email"}`}
+            </button>
+            <button className="btn ghost" onClick={() => setChannel(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

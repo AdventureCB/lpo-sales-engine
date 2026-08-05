@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  let body: { to?: string; body?: string; from?: string };
+  let body: { to?: string; body?: string; from?: string; crmDealId?: string; contactId?: string };
   try {
     body = await req.json();
   } catch {
@@ -75,6 +75,19 @@ export async function POST(req: NextRequest) {
   await db
     .from("sms_messages")
     .upsert(row, { onConflict: "provider,provider_message_id", ignoreDuplicates: false });
+
+  // Deal-page sends land on the timeline immediately.
+  if (body.crmDealId || body.contactId) {
+    await db.from("crm_activities").insert({
+      deal_id: body.crmDealId ?? null,
+      contact_id: body.contactId ?? null,
+      type: "sms",
+      subject: "💬 Text sent",
+      body: content.slice(0, 500),
+      actor: user.email,
+      occurred_at: new Date().toISOString(),
+    });
+  }
 
   return NextResponse.json({
     ok: true,

@@ -55,7 +55,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  let body: { profileId?: string; message?: string; refresh?: boolean };
+  let body: { profileId?: string; message?: string; refresh?: boolean; dealId?: string; contactId?: string };
   try {
     body = await req.json();
   } catch {
@@ -98,6 +98,18 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg }, { status: 502 });
+  }
+  // Deal-page sends land on the timeline immediately.
+  if (body.dealId || body.contactId) {
+    await db.from("crm_activities").insert({
+      deal_id: body.dealId ?? null,
+      contact_id: body.contactId ?? null,
+      type: "sms",
+      subject: "🟢 WhatsApp sent",
+      body: text.slice(0, 500),
+      actor: user.email,
+      occurred_at: new Date().toISOString(),
+    });
   }
   return NextResponse.json({ ok: true });
 }

@@ -96,6 +96,34 @@ async function freshAccessToken(db: SupabaseClient, account: any): Promise<strin
   return tok.access_token;
 }
 
+/** Send a plain-text email from the rep's connected Gmail. Returns the
+ * Gmail message id (used to pre-dedupe against the timeline sweep). */
+export async function sendGmail(
+  db: SupabaseClient,
+  account: any,
+  opts: { to: string; subject: string; body: string }
+): Promise<string> {
+  const token = await freshAccessToken(db, account);
+  const mime = [
+    `From: ${account.google_email}`,
+    `To: ${opts.to}`,
+    `Subject: ${opts.subject}`,
+    `MIME-Version: 1.0`,
+    `Content-Type: text/plain; charset="UTF-8"`,
+    ``,
+    opts.body,
+  ].join("\r\n");
+  const raw = Buffer.from(mime).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const res = await fetch(`${API}/messages/send`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ raw }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`gmail send ${res.status}: ${JSON.stringify(json.error ?? {}).slice(0, 200)}`);
+  return json.id as string;
+}
+
 function header(headers: any[], name: string): string | null {
   return headers?.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? null;
 }
