@@ -270,6 +270,30 @@ export async function upsertDealFlowBatch(
   return { emails, changes: rows.size - emails };
 }
 
+// Pipedrive truck-model field meta (key/options), cached per process.
+let truckMetaCache: { key: string; options: Record<string, string> } | null | undefined;
+async function truckModelFrom(db: SupabaseClient, d: any): Promise<string | null> {
+  if (truckMetaCache === undefined) {
+    const { data } = await db.from("crm_sync_state").select("value").eq("key", "pd_truck_field").maybeSingle();
+    truckMetaCache = (data?.value as any)?.key
+      ? { key: (data!.value as any).key, options: (data!.value as any).options ?? {} }
+      : null;
+  }
+  if (!truckMetaCache) return null;
+  // v2 payloads nest custom fields; v1 webhooks put them top-level by hash.
+  const v = d.custom_fields?.[truckMetaCache.key] ?? d[truckMetaCache.key];
+  if (v === null || v === undefined || v === "") return null;
+  const s = String(typeof v === "object" ? v?.id ?? "" : v);
+  if (!s) return null;
+  if (Object.keys(truckMetaCache.options).length > 0) {
+    return s
+      .split(",")
+      .map((part) => truckMetaCache!.options[part.trim()] ?? part.trim())
+      .join(", ");
+  }
+  return s;
+}
+
 // Pipedrive channel id → deal_sources uuid, cached per process. Unknown
 // channels get a placeholder row (renameable in Settings).
 const sourceCache = new Map<number, string>();
@@ -304,7 +328,8 @@ function dealRowFromPipedrive(
   d: any,
   stageUuid: string | null,
   contactUuid: string | null,
-  sourceUuid?: string | null
+  sourceUuid?: string | null,
+  truckModel?: string | null
 ) {
   const ownerId = typeof d.user_id === "object" ? d.user_id?.id ?? null : d.user_id ?? d.owner_id ?? null;
   const valueCents =
@@ -329,6 +354,8 @@ function dealRowFromPipedrive(
     // Only carry source when Pipedrive actually has a channel — a null here
     // would clobber manual assignments on every webhook re-upsert.
     ...(sourceUuid ? { source_id: sourceUuid } : {}),
+    // Same clobber-guard as source: only carried when Pipedrive has a value.
+    ...(truckModel ? { truck_model: truckModel } : {}),
   };
 }
 
@@ -352,7 +379,8 @@ export async function upsertDeal(
   }
   const contactUuid = await crmContactId(db, personId);
   const srcMap = await sourceIdsForChannels(db, [d.channel]);
-  const row = dealRowFromPipedrive(d, stageUuid, contactUuid, srcMap.get(d.channel) ?? null);
+  const truck = await truckModelFrom(db, d);
+  const row = dealRowFromPipedrive(d, stageUuid, contactUuid, srcMap.get(d.channel) ?? null, truck);
   const { data: upserted, error } = await db
     .from("crm_deals")
     .upsert(row, { onConflict: "pipedrive_deal_id" })

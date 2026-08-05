@@ -45,6 +45,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
   const [depositFollow, setDepositFollow] = useState(false); // schedule modal opened by the Deposit flow
   const [lostReason, setLostReason] = useState("");
   const [tlOpen, setTlOpen] = useState<Set<number>>(new Set());
+  const [truckEdit, setTruckEdit] = useState<string | null>(null);
 
   const load = useCallback(
     () =>
@@ -141,6 +142,23 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
                   ))}
                 </select>
               </div>
+              <div className="field">
+                <label>Truck</label>
+                <input
+                  className="vmsel"
+                  style={{ width: 150 }}
+                  placeholder="e.g. Tacoma"
+                  value={truckEdit ?? d.truck_model ?? ""}
+                  disabled={saving}
+                  onChange={(e) => setTruckEdit(e.target.value)}
+                  onBlur={() => {
+                    if (truckEdit !== null && truckEdit.trim() !== (d.truck_model ?? "")) {
+                      void update({ truckModel: truckEdit.trim() || null });
+                    }
+                    setTruckEdit(null);
+                  }}
+                />
+              </div>
     </>
   );
   const commBarEl = (
@@ -158,7 +176,9 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
     <KlaviyoActivity
       email={emails[0].value}
       contactId={contact?.id ?? null}
+      dealId={d.id}
       knownPhones={phones.map((p) => p.e164 ?? p.value)}
+      knownTruck={d.truck_model ?? null}
       onSaved={load}
     />
   ) : null;
@@ -855,16 +875,22 @@ function Linkify({ text }: { text: string }) {
 function KlaviyoActivity({
   email,
   contactId,
+  dealId,
   knownPhones,
+  knownTruck,
   onSaved,
 }: {
   email: string;
   contactId: string | null;
+  dealId?: string | null;
   knownPhones: string[];
+  knownTruck?: string | null;
   onSaved: () => void;
 }) {
   const [events, setEvents] = useState<{ metric: string; at: string; detail: Record<string, unknown> }[] | null>(null);
   const [profilePhones, setProfilePhones] = useState<string[]>([]);
+  const [profileTruck, setProfileTruck] = useState<string | null>(null);
+  const [addingTruck, setAddingTruck] = useState(false);
   const [failed, setFailed] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
@@ -885,6 +911,7 @@ function KlaviyoActivity({
       .then((d) => {
         setEvents(d.events ?? []);
         setProfilePhones(d.profile?.phones ?? []);
+        setProfileTruck(d.profile?.truckModel ?? null);
       })
       .catch(() => setFailed(true));
   }, [email]);
@@ -927,6 +954,40 @@ function KlaviyoActivity({
       {failed && <div style={{ fontSize: 13.5, color: "var(--text-3)" }}>Klaviyo unavailable right now.</div>}
       {events !== null && events.length === 0 && (
         <div style={{ fontSize: 13.5, color: "var(--text-3)" }}>No Klaviyo events for {email}.</div>
+      )}
+      {dealId && profileTruck && !knownTruck && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            background: "var(--accent-2-soft)",
+            border: "1px solid rgba(196,154,108,0.35)",
+            borderRadius: 10,
+            padding: "7px 11px",
+            fontSize: 13.5,
+            marginBottom: 8,
+          }}
+        >
+          🛻 Klaviyo has truck model: <b>{profileTruck}</b>
+          <button
+            className="btn primary"
+            style={{ marginLeft: "auto", padding: "4px 12px", fontSize: 12.5 }}
+            disabled={addingTruck}
+            onClick={async () => {
+              setAddingTruck(true);
+              const r = await fetch("/api/crm/deal", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: dealId, truckModel: profileTruck }),
+              }).catch(() => null);
+              setAddingTruck(false);
+              if (r?.ok) onSaved();
+            }}
+          >
+            {addingTruck ? "…" : "+ Add to deal"}
+          </button>
+        </div>
       )}
       {contactId &&
         suggestions.map((p) => (

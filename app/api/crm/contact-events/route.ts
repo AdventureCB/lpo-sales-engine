@@ -25,6 +25,7 @@ export async function GET(req: NextRequest) {
   const { data: cached } = await db.from("klaviyo_profiles").select("*").eq("email", email).maybeSingle();
   let profileId: string | null = cached?.profile_id ?? null;
   let phones: string[] = (cached?.phones as string[]) ?? [];
+  let truckModel: string | null = (cached?.truck_model as string) ?? null;
   const lastSynced = cached?.last_synced_at ? Date.parse(cached.last_synced_at) : 0;
   const profileAge = cached?.updated_at ? Date.now() - Date.parse(cached.updated_at) : Infinity;
 
@@ -52,6 +53,12 @@ export async function GET(req: NextRequest) {
         }
       }
       phones = [...found];
+      for (const [k, v] of Object.entries(profile.properties ?? {})) {
+        if (/truck|vehicle/i.test(k) && typeof v === "string" && v.trim()) {
+          truckModel = v.trim();
+          break;
+        }
+      }
     }
 
     if (profileId && profileId !== "none" && (needsSync || needsProfile)) {
@@ -86,6 +93,7 @@ export async function GET(req: NextRequest) {
           email,
           profile_id: profileId,
           phones,
+          truck_model: truckModel,
           last_synced_at: new Date().toISOString(),
           ...(needsProfile ? { updated_at: new Date().toISOString() } : {}),
         },
@@ -107,7 +115,7 @@ export async function GET(req: NextRequest) {
     .limit(200);
 
   return NextResponse.json({
-    profile: profileId ? { id: profileId, phones } : null,
+    profile: profileId ? { id: profileId, phones, truckModel } : null,
     events: (stored ?? []).map((e) => ({ metric: e.metric, at: e.event_at, detail: e.detail })),
     ...(syncError ? { syncError } : {}),
   });

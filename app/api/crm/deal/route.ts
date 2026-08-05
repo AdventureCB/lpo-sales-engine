@@ -151,6 +151,7 @@ export async function POST(req: NextRequest) {
     ownerPipedriveId?: number;
     activity?: { type: string; subject: string; dueAt?: string | null };
     sourceId?: string | null;
+    truckModel?: string | null;
     completeActivityId?: string;
     editActivity?: { activityId: string; subject?: string; type?: string; dueAt?: string | null };
     deleteActivityId?: string;
@@ -240,6 +241,15 @@ export async function POST(req: NextRequest) {
         writeThroughError = "Pipedrive busy — queued, will sync automatically";
       }
     }
+  }
+
+  // Truck model — manual entry from conversation. CRM-native.
+  if (body.truckModel !== undefined) {
+    const { error } = await db
+      .from("crm_deals")
+      .update({ truck_model: body.truckModel?.trim() || null })
+      .eq("id", deal.id);
+    if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
   }
 
   // Source assignment — CRM-native, no Pipedrive write-through (we own it).
