@@ -7,6 +7,7 @@ interface DealData {
   deal: any;
   timeline: { id?: string; kind: string; at: string | null; title: string; body: string | null; actor: string | null; done: boolean; due: string | null }[];
   callStats: { dials: number; answered: number; talkS: number; inbound: number } | null;
+  sources: { id: string; name: string }[];
   stages: { id: string; name: string; crm_pipelines: { name: string } | null }[];
   sprints: { id: string; name: string; owner: string }[];
   dealSprintIds: string[];
@@ -124,6 +125,19 @@ export function DealDetailView({ dealId }: { dealId: string }) {
                 <option value="24391245">Jackson</option>
                 <option value="24723797">Cainen</option>
                 <option value="23851101">Gabi</option>
+              </select>
+              <select
+                className="vmsel"
+                style={{ width: "auto" }}
+                value={d.source_id ?? ""}
+                onChange={(e) => update({ sourceId: e.target.value || null })}
+                disabled={saving}
+                title="Deal source"
+              >
+                <option value="">Source…</option>
+                {data.sources.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
               </select>
               {d.status === "open" ? (
                 <>

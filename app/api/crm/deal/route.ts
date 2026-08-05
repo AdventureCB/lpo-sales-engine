@@ -57,6 +57,11 @@ export async function GET(req: NextRequest) {
     db.from("crm_sprint_items").select("sprint_id").eq("deal_id", id),
     db.from("app_users").select("email, role").order("email"),
   ]);
+  const { data: sources } = await db
+    .from("deal_sources")
+    .select("id, name")
+    .order("sort_order")
+    .order("name");
 
   const timeline = [
     ...(activities.data ?? []).map((a) => ({
@@ -117,6 +122,7 @@ export async function GET(req: NextRequest) {
     deal,
     timeline,
     callStats,
+    sources: sources ?? [],
     stages: stages.data ?? [],
     sprints: sprints.data ?? [],
     dealSprintIds: (dealSprints.data ?? []).map((s) => s.sprint_id),
@@ -141,6 +147,7 @@ export async function POST(req: NextRequest) {
     note?: string;
     ownerPipedriveId?: number;
     activity?: { type: string; subject: string; dueAt?: string | null };
+    sourceId?: string | null;
     completeActivityId?: string;
     editActivity?: { activityId: string; subject?: string; type?: string; dueAt?: string | null };
     deleteActivityId?: string;
@@ -230,6 +237,15 @@ export async function POST(req: NextRequest) {
         writeThroughError = "Pipedrive busy — queued, will sync automatically";
       }
     }
+  }
+
+  // Source assignment — CRM-native, no Pipedrive write-through (we own it).
+  if (body.sourceId !== undefined) {
+    const { error } = await db
+      .from("crm_deals")
+      .update({ source_id: body.sourceId || null })
+      .eq("id", deal.id);
+    if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
   }
 
   // Reschedule / retitle / retype a scheduled activity.

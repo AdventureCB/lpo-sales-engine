@@ -71,6 +71,7 @@ export async function createDealFromEmail(
     pipedriveStageId?: number | null;
     enrichPhone?: boolean;
     skipIfOpenDeal?: boolean;
+    sourceName?: string | null;
   }
 ): Promise<CreateDealResult> {
   const email = normalizeEmail(opts.email);
@@ -130,6 +131,9 @@ export async function createDealFromEmail(
     .select("id")
     .eq("pipedrive_deal_id", deal.id)
     .maybeSingle();
+  if (mirrored && opts.sourceName) {
+    await setDealSourceByName(db, mirrored.id, opts.sourceName);
+  }
 
   return {
     created: true,
@@ -154,6 +158,7 @@ export async function createDealFromPhone(
     title?: string | null;
     ownerPipedriveId?: number | null;
     pipedriveStageId?: number | null;
+    sourceName?: string | null;
   }
 ): Promise<CreateDealResult> {
   const phone = normalizePhone(opts.phone);
@@ -212,6 +217,30 @@ export async function createDealFromPhone(
     .select("id")
     .eq("pipedrive_deal_id", deal.id)
     .maybeSingle();
+  if (mirrored && opts.sourceName) {
+    await setDealSourceByName(db, mirrored.id, opts.sourceName);
+  }
 
   return { created: true, pipedriveDealId: deal.id, crmDealId: mirrored?.id, title };
+}
+
+/** Get-or-create a source by name and stamp it on a CRM deal — the
+ * post-Pipedrive attribution path for app-created deals. */
+export async function setDealSourceByName(
+  db: SupabaseClient,
+  crmDealId: string,
+  sourceName: string
+): Promise<void> {
+  const name = sourceName.trim();
+  if (!name) return;
+  let { data: src } = await db.from("deal_sources").select("id").eq("name", name).maybeSingle();
+  if (!src) {
+    const { data: ins } = await db
+      .from("deal_sources")
+      .upsert({ name }, { onConflict: "name", ignoreDuplicates: false })
+      .select("id")
+      .maybeSingle();
+    src = ins ?? null;
+  }
+  if (src) await db.from("crm_deals").update({ source_id: src.id }).eq("id", crmDealId);
 }

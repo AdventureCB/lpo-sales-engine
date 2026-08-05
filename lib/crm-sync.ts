@@ -94,11 +94,12 @@ export async function upsertDealsBatch(db: SupabaseClient, deals: any[]): Promis
   for (const sid of stageIds) stageMap.set(sid, await crmStageId(db, sid));
 
   const contactMap = await pdIdMap(db, "crm_contacts", "pipedrive_person_id", deals.map(personIdOf));
+  const srcMap = await sourceIdsForChannels(db, deals.map((d) => d.channel));
 
   const byId = new Map(
     deals.map((d) => {
       const pid = personIdOf(d);
-      return [d.id, dealRowFromPipedrive(d, stageMap.get(d.stage_id) ?? null, pid ? contactMap.get(pid) ?? null : null)];
+      return [d.id, dealRowFromPipedrive(d, stageMap.get(d.stage_id) ?? null, pid ? contactMap.get(pid) ?? null : null, srcMap.get(d.channel) ?? null)];
     })
   );
   const { error } = await db.from("crm_deals").upsert([...byId.values()], { onConflict: "pipedrive_deal_id" });
@@ -269,7 +270,42 @@ export async function upsertDealFlowBatch(
   return { emails, changes: rows.size - emails };
 }
 
-function dealRowFromPipedrive(d: any, stageUuid: string | null, contactUuid: string | null) {
+// Pipedrive channel id → deal_sources uuid, cached per process. Unknown
+// channels get a placeholder row (renameable in Settings).
+const sourceCache = new Map<number, string>();
+export async function sourceIdsForChannels(
+  db: SupabaseClient,
+  channels: (number | null | undefined)[]
+): Promise<Map<number, string>> {
+  const need = [...new Set(channels.filter((c): c is number => typeof c === "number"))];
+  const missing = need.filter((c) => !sourceCache.has(c));
+  if (missing.length > 0) {
+    const { data } = await db
+      .from("deal_sources")
+      .select("id, pipedrive_channel_id")
+      .in("pipedrive_channel_id", missing);
+    for (const r of data ?? []) sourceCache.set(r.pipedrive_channel_id, r.id);
+    for (const c of missing.filter((c) => !sourceCache.has(c))) {
+      const { data: ins } = await db
+        .from("deal_sources")
+        .upsert(
+          { pipedrive_channel_id: c, name: `Pipedrive channel ${c}` },
+          { onConflict: "pipedrive_channel_id" }
+        )
+        .select("id")
+        .maybeSingle();
+      if (ins) sourceCache.set(c, ins.id);
+    }
+  }
+  return new Map(need.filter((c) => sourceCache.has(c)).map((c) => [c, sourceCache.get(c)!]));
+}
+
+function dealRowFromPipedrive(
+  d: any,
+  stageUuid: string | null,
+  contactUuid: string | null,
+  sourceUuid?: string | null
+) {
   const ownerId = typeof d.user_id === "object" ? d.user_id?.id ?? null : d.user_id ?? d.owner_id ?? null;
   const valueCents =
     d.value !== undefined && d.value !== null ? Math.round(Number(d.value) * 100) : null;
@@ -290,6 +326,9 @@ function dealRowFromPipedrive(d: any, stageUuid: string | null, contactUuid: str
     pd_add_time: d.add_time ?? null,
     last_activity_at: d.last_activity_date ?? null,
     updated_at: new Date().toISOString(),
+    // Only carry source when Pipedrive actually has a channel — a null here
+    // would clobber manual assignments on every webhook re-upsert.
+    ...(sourceUuid ? { source_id: sourceUuid } : {}),
   };
 }
 
@@ -312,7 +351,8 @@ export async function upsertDeal(
     existing = data ?? null;
   }
   const contactUuid = await crmContactId(db, personId);
-  const row = dealRowFromPipedrive(d, stageUuid, contactUuid);
+  const srcMap = await sourceIdsForChannels(db, [d.channel]);
+  const row = dealRowFromPipedrive(d, stageUuid, contactUuid, srcMap.get(d.channel) ?? null);
   const { data: upserted, error } = await db
     .from("crm_deals")
     .upsert(row, { onConflict: "pipedrive_deal_id" })

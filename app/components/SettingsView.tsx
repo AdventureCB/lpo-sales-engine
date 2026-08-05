@@ -186,6 +186,7 @@ export function SettingsView() {
       </div>
 
       <CommLibraryAdmin />
+      <DealSourcesAdmin />
     </>
   );
 }
@@ -391,5 +392,100 @@ function CommLibraryAdmin() {
         </div>
       </div>
     </>
+  );
+}
+
+// ── Deal sources (Pipedrive channel-mapped + native) ───────────────────────
+
+interface DealSource {
+  id: string;
+  name: string;
+  pipedrive_channel_id: number | null;
+}
+
+function DealSourcesAdmin() {
+  const [sources, setSources] = useState<DealSource[]>([]);
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const [newName, setNewName] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const load = useCallback(
+    () =>
+      fetch("/api/crm/sources")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => d && setSources(d.sources ?? [])),
+    []
+  );
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const post = async (payload: Record<string, unknown>) => {
+    const r = await fetch("/api/crm/sources", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).catch(() => null);
+    const d = await r?.json().catch(() => ({}));
+    setMsg(r?.ok ? "✓ Saved" : d?.error ?? "Save failed");
+    setTimeout(() => setMsg(null), 2500);
+    await load();
+    return Boolean(r?.ok);
+  };
+
+  return (
+    <div className="card" style={{ maxWidth: 680, marginTop: 18 }}>
+      <div className="panel-h">Deal sources</div>
+      <div style={{ fontSize: 13.5, color: "var(--text-3)", marginBottom: 10 }}>
+        Where deals come from. Sources tagged <b>PD</b> map directly to Pipedrive channels
+        (mirrored deals pick them up automatically); the rest are native — assign them on the
+        deal page. {msg && <b style={{ color: "var(--text-2)" }}>{msg}</b>}
+      </div>
+      {sources.map((s) => (
+        <div className="stmt-row" key={s.id} style={{ alignItems: "center", gap: 8 }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+            <input
+              className="vmsel"
+              style={{ flex: 1 }}
+              value={edits[s.id] ?? s.name}
+              onChange={(e) => setEdits((m) => ({ ...m, [s.id]: e.target.value }))}
+              onBlur={() => {
+                const v = (edits[s.id] ?? s.name).trim();
+                if (v && v !== s.name) void post({ op: "save", source: { id: s.id, name: v } });
+              }}
+            />
+            {s.pipedrive_channel_id != null && (
+              <span className="chip stage" title="Mapped to a Pipedrive channel">PD #{s.pipedrive_channel_id}</span>
+            )}
+          </span>
+          <button
+            className="btn ghost"
+            style={{ padding: "4px 10px", fontSize: 12.5, flexShrink: 0 }}
+            title="Delete (deals fall back to no source)"
+            onClick={() => post({ op: "delete", id: s.id })}
+          >
+            🗑
+          </button>
+        </div>
+      ))}
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <input
+          className="vmsel"
+          style={{ flex: 1 }}
+          placeholder="New source name… (e.g. Referral, Walk-in, Instagram DM)"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && newName.trim() && post({ op: "save", source: { name: newName.trim() } }).then((ok) => ok && setNewName(""))}
+        />
+        <button
+          className="btn primary"
+          style={{ padding: "8px 14px", fontSize: 13.5 }}
+          disabled={!newName.trim()}
+          onClick={() => post({ op: "save", source: { name: newName.trim() } }).then((ok) => ok && setNewName(""))}
+        >
+          Add
+        </button>
+      </div>
+    </div>
   );
 }

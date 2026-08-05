@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
           title: body.title ?? null,
           ownerPipedriveId,
           pipedriveStageId: body.pipedriveStageId ?? 44, // Intake default
+          sourceName: "Manual dial",
         })
       : await createDealFromEmail(supabaseAdmin(), {
           email: body.email!,
