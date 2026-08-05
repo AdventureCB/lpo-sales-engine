@@ -452,31 +452,47 @@ function relTime(iso: string): string {
 
 const last10 = (p: string) => p.replace(/\D/g, "").slice(-10);
 
-/** URLs inside event text become links. Browser: new tab. Companion: the
- * webview can't spawn a browser (no native opener yet) — copy instead. */
+/** URLs inside event text: click copies the link (works identically in the
+ * browser and the companion webview, which can't open external tabs). */
 function Linkify({ text }: { text: string }) {
   const parts = String(text).split(/(https?:\/\/[^\s"',]+)/g);
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   return (
     <>
       {parts.map((p, i) =>
         /^https?:\/\//.test(p) ? (
-          <a
-            key={i}
-            href={p}
-            target="_blank"
-            rel="noreferrer"
-            style={{ color: "var(--accent-2)", wordBreak: "break-all" }}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (window.__TAURI__) {
+          <span key={i}>
+            <a
+              href={p}
+              style={{ color: "var(--accent-2)", wordBreak: "break-all", cursor: "copy" }}
+              onClick={(e) => {
                 e.preventDefault();
+                e.stopPropagation();
                 void navigator.clipboard?.writeText(p).catch(() => {});
-              }
-            }}
-            title={window.__TAURI__ ? "Copies the link (companion can't open a browser)" : "Opens in a new tab"}
-          >
-            {p}
-          </a>
+                setCopiedIdx(i);
+                setTimeout(() => setCopiedIdx((c) => (c === i ? null : c)), 2000);
+              }}
+              title="Click to copy the link"
+            >
+              {p}
+            </a>
+            {copiedIdx === i && (
+              <span
+                style={{
+                  marginLeft: 6,
+                  fontSize: 11,
+                  fontWeight: 800,
+                  color: "var(--good)",
+                  background: "rgba(76, 196, 76, 0.14)",
+                  borderRadius: 999,
+                  padding: "1px 8px",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                ✓ Link copied
+              </span>
+            )}
+          </span>
         ) : (
           p
         )
