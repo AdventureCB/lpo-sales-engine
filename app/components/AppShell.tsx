@@ -25,6 +25,7 @@ const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[]
     items: [
       { label: "🔥 Hot List", href: "/hot-list" },
       { label: "📇 CRM", href: "/crm" },
+      { label: "📅 Calendar", href: "/calendar" },
       { label: "Scoreboard", href: "/scoreboard" },
       { label: "Lookup", href: "/lookup" },
     ],
