@@ -546,7 +546,7 @@ type SignalKind = "cart" | "build" | "order" | "view" | "email" | "msg" | "other
 function eventKind(metric: string): SignalKind {
   const s = metric.toLowerCase();
   if (/(add|added).*cart|checkout started|started checkout/.test(s)) return "cart";
-  if (/saved.*build|build.*saved/.test(s)) return "build";
+  if (/save.*build|build.*save|3d builder/.test(s)) return "build";
   if (/placed order|ordered product|fulfilled/.test(s)) return "order";
   if (/viewed|active on site/.test(s)) return "view";
   if (/email|bounc|unsubscribe|spam/.test(s)) return "email";
@@ -686,6 +686,15 @@ function KlaviyoActivity({
     (e) => isBuying(eventKind(e.metric)) && Date.now() - Date.parse(e.at) < 14 * 86_400_000
   );
 
+  // The latest saved build — its link should take zero effort to find.
+  const latestBuild = (events ?? []).find((e) => eventKind(e.metric) === "build");
+  const buildLink = latestBuild
+    ? Object.values(latestBuild.detail ?? {})
+        .map((v) => String(v).match(/https?:\/\/[^\s"',]+/)?.[0])
+        .find(Boolean) ?? null
+    : null;
+  const [buildCopied, setBuildCopied] = useState(false);
+
   return (
     <>
       <div className="panel-h" style={{ marginTop: 16 }}>Marketing signals</div>
@@ -721,7 +730,44 @@ function KlaviyoActivity({
             </button>
           </div>
         ))}
-      {freshBuying && (
+      {latestBuild && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            background: "var(--accent-soft)",
+            border: "1px solid rgba(217, 91, 49, 0.45)",
+            borderRadius: 10,
+            padding: "9px 12px",
+            fontSize: 13.5,
+            fontWeight: 700,
+            marginBottom: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          🏗 Latest saved build
+          <span style={{ color: "var(--text-3)", fontWeight: 600 }}>{relTime(latestBuild.at)}</span>
+          {buildLink ? (
+            <button
+              className="btn primary"
+              style={{ marginLeft: "auto", padding: "4px 14px", fontSize: 12.5 }}
+              onClick={() => {
+                void navigator.clipboard?.writeText(buildLink).catch(() => {});
+                setBuildCopied(true);
+                setTimeout(() => setBuildCopied(false), 2000);
+              }}
+            >
+              {buildCopied ? "✓ Link copied" : "📋 Copy build link"}
+            </button>
+          ) : (
+            <span style={{ marginLeft: "auto", color: "var(--text-3)", fontSize: 12, fontWeight: 600 }}>
+              no link in event
+            </span>
+          )}
+        </div>
+      )}
+      {freshBuying && eventKind(freshBuying.metric) !== "build" && (
         <div
           style={{
             background: "var(--accent-soft)",
