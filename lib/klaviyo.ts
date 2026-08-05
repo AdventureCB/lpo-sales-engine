@@ -128,16 +128,23 @@ export interface KlaviyoProfileEvent {
   detail: Record<string, unknown>;
 }
 
-/** Recent events for a profile, newest first, metric names resolved. */
+/** Recent events for a profile, newest first, metric names resolved.
+ * Paginates (events has no page[size]) until `limit` or history runs out. */
 export async function getProfileEvents(profileId: string, limit = 25): Promise<KlaviyoProfileEvent[]> {
   const filter = encodeURIComponent(`equals(profile_id,"${profileId}")`);
-  const page = await kGet(`${BASE}/events/?filter=${filter}&include=metric&sort=-datetime`);
   const metricNames = new Map<string, string>();
-  for (const inc of page.included ?? []) {
-    if (inc.type === "metric") metricNames.set(inc.id, inc.attributes?.name ?? inc.id);
+  const rows: any[] = [];
+  let url: string | null = `${BASE}/events/?filter=${filter}&include=metric&sort=-datetime`;
+  while (url && rows.length < limit) {
+    const page: any = await kGet(url);
+    for (const inc of page.included ?? []) {
+      if (inc.type === "metric") metricNames.set(inc.id, inc.attributes?.name ?? inc.id);
+    }
+    rows.push(...(page.data ?? []));
+    url = page.links?.next ?? null;
   }
   const events: KlaviyoProfileEvent[] = [];
-  for (const ev of page.data ?? []) {
+  for (const ev of rows) {
     if (events.length >= limit) break;
     const props = ev.attributes?.event_properties ?? {};
     const detail: Record<string, unknown> = {};

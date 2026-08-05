@@ -387,8 +387,135 @@ export function DealDetailView({ dealId }: { dealId: string }) {
             Last activity {fmtWhen(d.last_activity_at)}<br />
             Pipedrive #{d.pipedrive_deal_id ?? "—"}
           </div>
+          {emails[0]?.value && <KlaviyoActivity email={emails[0].value} />}
         </div>
       </div>
+    </>
+  );
+}
+
+// ── Klaviyo marketing signals ───────────────────────────────────────────────
+
+type SignalKind = "cart" | "build" | "order" | "view" | "email" | "msg" | "other";
+
+/** Cart adds + saved builds are the buying-mode leading indicators. */
+function eventKind(metric: string): SignalKind {
+  const s = metric.toLowerCase();
+  if (/(add|added).*cart|checkout started|started checkout/.test(s)) return "cart";
+  if (/saved.*build|build.*saved/.test(s)) return "build";
+  if (/placed order|ordered product|fulfilled/.test(s)) return "order";
+  if (/viewed|active on site/.test(s)) return "view";
+  if (/email|bounc|unsubscribe|spam/.test(s)) return "email";
+  if (/whatsapp|sms|message/.test(s)) return "msg";
+  return "other";
+}
+
+const SIGNAL_ICON: Record<SignalKind, string> = {
+  cart: "🛒",
+  build: "🏗",
+  order: "💰",
+  view: "👀",
+  email: "✉️",
+  msg: "💬",
+  other: "⚡",
+};
+
+const isBuying = (k: SignalKind) => k === "cart" || k === "build";
+
+function relTime(iso: string): string {
+  const ms = Date.now() - Date.parse(iso);
+  const h = ms / 3_600_000;
+  if (h < 1) return `${Math.max(1, Math.round(ms / 60_000))}m ago`;
+  if (h < 24) return `${Math.round(h)}h ago`;
+  const days = Math.round(h / 24);
+  if (days <= 30) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function KlaviyoActivity({ email }: { email: string }) {
+  const [events, setEvents] = useState<{ metric: string; at: string; detail: Record<string, unknown> }[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+
+  useEffect(() => {
+    setEvents(null);
+    setFailed(false);
+    fetch(`/api/crm/contact-events?email=${encodeURIComponent(email)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d) => setEvents(d.events ?? []))
+      .catch(() => setFailed(true));
+  }, [email]);
+
+  const shown = events ? (showAll ? events : events.slice(0, 15)) : [];
+  // Buying-mode banner: freshest cart/saved-build signal in the last 14 days.
+  const freshBuying = (events ?? []).find(
+    (e) => isBuying(eventKind(e.metric)) && Date.now() - Date.parse(e.at) < 14 * 86_400_000
+  );
+
+  return (
+    <>
+      <div className="panel-h" style={{ marginTop: 16 }}>Marketing signals</div>
+      {events === null && !failed && <div style={{ fontSize: 13.5, color: "var(--text-3)" }}>Loading Klaviyo history…</div>}
+      {failed && <div style={{ fontSize: 13.5, color: "var(--text-3)" }}>Klaviyo unavailable right now.</div>}
+      {events !== null && events.length === 0 && (
+        <div style={{ fontSize: 13.5, color: "var(--text-3)" }}>No Klaviyo events for {email}.</div>
+      )}
+      {freshBuying && (
+        <div
+          style={{
+            background: "var(--accent-soft)",
+            border: "1px solid rgba(217, 91, 49, 0.45)",
+            borderRadius: 10,
+            padding: "9px 12px",
+            fontSize: 13.5,
+            fontWeight: 700,
+            marginBottom: 10,
+          }}
+        >
+          {SIGNAL_ICON[eventKind(freshBuying.metric)]} Buying mode — {freshBuying.metric} {relTime(freshBuying.at)}
+        </div>
+      )}
+      {shown.length > 0 && (
+        <div style={{ maxHeight: 340, overflowY: "auto" }}>
+          {shown.map((e, i) => {
+            const kind = eventKind(e.metric);
+            const buying = isBuying(kind);
+            const detail = Object.values(e.detail ?? {}).join(" · ");
+            return (
+              <div
+                key={i}
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "baseline",
+                  padding: "6px 8px",
+                  fontSize: 13.5,
+                  borderRadius: 8,
+                  marginBottom: 2,
+                  background: buying ? "var(--accent-soft)" : "transparent",
+                  boxShadow: buying ? "inset 2px 0 0 var(--accent)" : "none",
+                }}
+              >
+                <span style={{ flexShrink: 0 }}>{SIGNAL_ICON[kind]}</span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ fontWeight: buying ? 750 : 600, color: "var(--text-1)" }}>{e.metric}</span>
+                  {detail && (
+                    <span style={{ display: "block", color: "var(--text-3)", fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {detail}
+                    </span>
+                  )}
+                </span>
+                <span style={{ color: "var(--text-3)", fontSize: 12, whiteSpace: "nowrap" }}>{relTime(e.at)}</span>
+              </div>
+            );
+          })}
+          {events && events.length > 15 && !showAll && (
+            <button className="btn ghost" style={{ width: "100%", justifyContent: "center", padding: "6px 0", fontSize: 13 }} onClick={() => setShowAll(true)}>
+              Show all {events.length} events
+            </button>
+          )}
+        </div>
+      )}
     </>
   );
 }
