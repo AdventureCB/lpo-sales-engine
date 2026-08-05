@@ -133,6 +133,20 @@ export async function createActivity(opts: {
   return data?.id ?? null;
 }
 
+export async function updatePersonContacts(
+  personId: number,
+  fields: {
+    phones?: { value: string; primary?: boolean }[];
+    emails?: { value: string; primary?: boolean }[];
+  }
+): Promise<void> {
+  const body: Record<string, unknown> = {};
+  if (fields.phones?.length) body.phones = fields.phones;
+  if (fields.emails?.length) body.emails = fields.emails;
+  if (Object.keys(body).length === 0) return;
+  await pd(V2, `/persons/${personId}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
 export async function addDealNote(dealId: number, content: string): Promise<void> {
   await pd(V1, "/notes", {
     method: "POST",

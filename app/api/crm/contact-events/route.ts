@@ -20,8 +20,17 @@ export async function GET(req: NextRequest) {
     const profile = await getProfileByEmail(email);
     if (!profile) return NextResponse.json({ events: [], profile: null });
     const events = await getProfileEvents(profile.id, 60);
+    // Phone enrichment: the standard field plus phone-shaped custom
+    // properties (Klaviyo profiles often hide numbers there).
+    const phones = new Set<string>();
+    if (profile.phoneNumber) phones.add(profile.phoneNumber);
+    for (const [k, v] of Object.entries(profile.properties ?? {})) {
+      if (/phone|mobile|cell/i.test(k) && typeof v === "string" && v.replace(/\D/g, "").length >= 10) {
+        phones.add(v);
+      }
+    }
     return NextResponse.json({
-      profile: { id: profile.id, created: profile.created },
+      profile: { id: profile.id, created: profile.created, phones: [...phones] },
       events: events.map((e) => ({
         metric: e.metric,
         at: e.datetime,

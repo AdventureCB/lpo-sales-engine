@@ -375,6 +375,7 @@ export function DealDetailView({ dealId }: { dealId: string }) {
                 {phones.length === 0 && emails.length === 0 && (
                   <div style={{ color: "var(--text-3)", fontSize: 14 }}>No contact details.</div>
                 )}
+                <AddContactDetail contactId={contact.id} onSaved={load} />
               </div>
             </>
           ) : (
@@ -387,7 +388,14 @@ export function DealDetailView({ dealId }: { dealId: string }) {
             Last activity {fmtWhen(d.last_activity_at)}<br />
             Pipedrive #{d.pipedrive_deal_id ?? "—"}
           </div>
-          {emails[0]?.value && <KlaviyoActivity email={emails[0].value} />}
+          {emails[0]?.value && (
+            <KlaviyoActivity
+              email={emails[0].value}
+              contactId={contact?.id ?? null}
+              knownPhones={phones.map((p) => p.e164 ?? p.value)}
+              onSaved={load}
+            />
+          )}
         </div>
       </div>
     </>
@@ -432,19 +440,52 @@ function relTime(iso: string): string {
   return new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-function KlaviyoActivity({ email }: { email: string }) {
+const last10 = (p: string) => p.replace(/\D/g, "").slice(-10);
+
+function KlaviyoActivity({
+  email,
+  contactId,
+  knownPhones,
+  onSaved,
+}: {
+  email: string;
+  contactId: string | null;
+  knownPhones: string[];
+  onSaved: () => void;
+}) {
   const [events, setEvents] = useState<{ metric: string; at: string; detail: Record<string, unknown> }[] | null>(null);
+  const [profilePhones, setProfilePhones] = useState<string[]>([]);
   const [failed, setFailed] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [adding, setAdding] = useState<string | null>(null);
 
   useEffect(() => {
     setEvents(null);
     setFailed(false);
     fetch(`/api/crm/contact-events?email=${encodeURIComponent(email)}`)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((d) => setEvents(d.events ?? []))
+      .then((d) => {
+        setEvents(d.events ?? []);
+        setProfilePhones(d.profile?.phones ?? []);
+      })
       .catch(() => setFailed(true));
   }, [email]);
+
+  // Phones Klaviyo knows that the CRM contact is missing.
+  const known = new Set(knownPhones.map(last10));
+  const suggestions = profilePhones.filter((p) => last10(p).length === 10 && !known.has(last10(p)));
+
+  const addSuggested = async (phone: string) => {
+    if (!contactId) return;
+    setAdding(phone);
+    const r = await fetch("/api/crm/contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contactId, phone, source: "klaviyo" }),
+    }).catch(() => null);
+    setAdding(null);
+    if (r?.ok) onSaved();
+  };
 
   const shown = events ? (showAll ? events : events.slice(0, 15)) : [];
   // Buying-mode banner: freshest cart/saved-build signal in the last 14 days.
@@ -460,6 +501,33 @@ function KlaviyoActivity({ email }: { email: string }) {
       {events !== null && events.length === 0 && (
         <div style={{ fontSize: 13.5, color: "var(--text-3)" }}>No Klaviyo events for {email}.</div>
       )}
+      {contactId &&
+        suggestions.map((p) => (
+          <div
+            key={p}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              background: "var(--accent-2-soft)",
+              border: "1px solid rgba(196,154,108,0.35)",
+              borderRadius: 10,
+              padding: "7px 11px",
+              fontSize: 13.5,
+              marginBottom: 8,
+            }}
+          >
+            📱 Klaviyo has <b style={{ fontVariantNumeric: "tabular-nums" }}>{p}</b>
+            <button
+              className="btn primary"
+              style={{ marginLeft: "auto", padding: "4px 12px", fontSize: 12.5 }}
+              disabled={adding === p}
+              onClick={() => addSuggested(p)}
+            >
+              {adding === p ? "…" : "+ Add to contact"}
+            </button>
+          </div>
+        ))}
       {freshBuying && (
         <div
           style={{
@@ -476,7 +544,7 @@ function KlaviyoActivity({ email }: { email: string }) {
         </div>
       )}
       {shown.length > 0 && (
-        <div style={{ maxHeight: 340, overflowY: "auto" }}>
+        <div style={{ maxHeight: 340, overflowY: "auto", overflowX: "hidden" }}>
           {shown.map((e, i) => {
             const kind = eventKind(e.metric);
             const buying = isBuying(kind);
@@ -517,5 +585,88 @@ function KlaviyoActivity({ email }: { email: string }) {
         </div>
       )}
     </>
+  );
+}
+
+/** Inline "+ add phone / email" for a contact — CRM-first, Pipedrive via outbox. */
+function AddContactDetail({ contactId, onSaved }: { contactId: string; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = async (payload: { phone?: string; email?: string }) => {
+    setBusy(true);
+    setErr(null);
+    const r = await fetch("/api/crm/contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contactId, ...payload }),
+    }).catch(() => null);
+    const d = await r?.json().catch(() => ({}));
+    setBusy(false);
+    if (r?.ok) {
+      setPhone("");
+      setEmail("");
+      setOpen(false);
+      onSaved();
+    } else {
+      setErr(d?.error ?? "Save failed");
+    }
+  };
+
+  if (!open) {
+    return (
+      <button
+        className="btn ghost"
+        style={{ padding: "4px 12px", fontSize: 12.5, marginTop: 8 }}
+        onClick={() => setOpen(true)}
+      >
+        ＋ Add phone / email
+      </button>
+    );
+  }
+  return (
+    <div style={{ marginTop: 10, display: "grid", gap: 6, maxWidth: 320 }}>
+      <div style={{ display: "flex", gap: 6 }}>
+        <input
+          className="vmsel"
+          placeholder="Phone number…"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && phone.trim() && save({ phone: phone.trim() })}
+        />
+        <button
+          className="btn primary"
+          style={{ padding: "6px 12px", fontSize: 13 }}
+          disabled={!phone.trim() || busy}
+          onClick={() => save({ phone: phone.trim() })}
+        >
+          Add
+        </button>
+      </div>
+      <div style={{ display: "flex", gap: 6 }}>
+        <input
+          className="vmsel"
+          placeholder="Email address…"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && email.trim() && save({ email: email.trim() })}
+        />
+        <button
+          className="btn primary"
+          style={{ padding: "6px 12px", fontSize: 13 }}
+          disabled={!email.trim() || busy}
+          onClick={() => save({ email: email.trim() })}
+        >
+          Add
+        </button>
+      </div>
+      {err && <div style={{ color: "var(--crit)", fontSize: 12.5 }}>{err}</div>}
+      <button className="btn ghost" style={{ padding: "4px 10px", fontSize: 12.5 }} onClick={() => setOpen(false)}>
+        Cancel
+      </button>
+    </div>
   );
 }
