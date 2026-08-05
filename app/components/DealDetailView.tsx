@@ -263,6 +263,7 @@ export function DealDetailView({ dealId }: { dealId: string }) {
 
           <CommBar
             dealId={d.id}
+            pdDealId={d.pipedrive_deal_id ?? null}
             contact={contact ? { id: contact.id, name: contact.name, firstName: contact.first_name } : null}
             phone={phones.find((p) => p.primary)?.e164 ?? phones[0]?.e164 ?? phones[0]?.value ?? null}
             email={emails.find((e) => e.primary)?.value ?? emails[0]?.value ?? null}
@@ -700,12 +701,14 @@ type CommChannel = "sms" | "whatsapp" | "email";
 
 function CommBar({
   dealId,
+  pdDealId,
   contact,
   phone,
   email,
   onLogged,
 }: {
   dealId: string;
+  pdDealId: number | null;
   contact: { id: string; name: string; firstName: string | null } | null;
   phone: string | null;
   email: string | null;
@@ -723,6 +726,36 @@ function CommBar({
   // Browser-mode call state (Telnyx singleton)
   const [callState, setCallState] = useState<string | null>(null);
   const callRef = useRef<any>(null);
+
+  // ── Disposition flow — same shape as the dialer's ──
+  const dialStartedAtRef = useRef<string | null>(null);
+  const [awaitingDispo, setAwaitingDispo] = useState(false);
+  const [pendingDispo, setPendingDispo] = useState<string | null>(null);
+  const [dispoNote, setDispoNote] = useState("");
+  const [nextType, setNextType] = useState("call");
+  const [customDue, setCustomDue] = useState("");
+  const [showCustomDue, setShowCustomDue] = useState(false);
+
+  const DISPOSITIONS: [string, string][] = [
+    ["connected", "✅ Connected"],
+    ["vm_dropped", "🎙 VM left"],
+    ["bad_number", "🚫 Bad number"],
+    ["callback", "📅 Callback set"],
+    ["confirmation", "📋 Confirmation call"],
+  ];
+  const FOLLOW_UP_SUBJECT: Record<string, string> = {
+    connected: "Continue conversation",
+    vm_dropped: "Follow up — voicemail left",
+    callback: "Callback requested",
+    bad_number: "Follow up — fix number first",
+    confirmation: "Confirmation follow-up",
+  };
+  const followUpAt = (days: number): string => {
+    const dt = new Date();
+    dt.setDate(dt.getDate() + days);
+    dt.setHours(9, 0, 0, 0);
+    return dt.toISOString();
+  };
 
   useEffect(() => {
     fetch("/api/crm/comm-library")
@@ -765,7 +798,16 @@ function CommBar({
   };
 
   const startCall = () => {
-    if (!phone) return;
+    if (!phone || awaitingDispo) return;
+    dialStartedAtRef.current = new Date().toISOString();
+    // Attempt log drives pool cooldown/fairness, same as the dialer.
+    if (pdDealId) {
+      void fetch("/api/dialer/attempt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dealId: pdDealId, crmDealId: dealId }),
+      }).catch(() => {});
+    }
     const method = localStorage.getItem("dialMethod") ?? "desktop";
     if (method === "browser") {
       setCallState("connecting");
@@ -776,6 +818,7 @@ function CommBar({
         if (s === "hangup" || s === "destroy") {
           setCallState(null);
           callRef.current = null;
+          setAwaitingDispo(true);
         }
       });
       newOutboundCall(phone)
@@ -784,13 +827,17 @@ function CommBar({
           setCallState("ringing");
         })
         .catch((e) => setCallState(`error: ${e instanceof Error ? e.message : e}`));
-    } else if (method === "web") {
-      void navigator.clipboard?.writeText(phone).catch(() => {});
-      window.open("https://my.quo.com", "quo-web");
-    } else if (window.__TAURI__) {
-      void window.__TAURI__.core.invoke("open_tel", { url: `tel:${phone}` }).catch(() => {});
     } else {
-      window.location.href = `tel:${phone}`;
+      // Call happens in Quo — log the outcome here when it wraps.
+      if (method === "web") {
+        void navigator.clipboard?.writeText(phone).catch(() => {});
+        window.open("https://my.quo.com", "quo-web");
+      } else if (window.__TAURI__) {
+        void window.__TAURI__.core.invoke("open_tel", { url: `tel:${phone}` }).catch(() => {});
+      } else {
+        window.location.href = `tel:${phone}`;
+      }
+      setAwaitingDispo(true);
     }
   };
 
@@ -799,11 +846,44 @@ function CommBar({
       callRef.current?.hangup();
     } catch {}
     setCallState(null);
+    setAwaitingDispo(true);
   };
 
   const flashOk = (msg: string) => {
     setOk(msg);
     setTimeout(() => setOk(null), 3000);
+  };
+
+  /** Same retry contract as the dialer: 202 until the webhook lands. */
+  const completeDispo = async (dueAt: string | null) => {
+    const dispo = pendingDispo;
+    if (!dispo || !phone || !dialStartedAtRef.current) return;
+    const payload = {
+      dealId: pdDealId ?? undefined,
+      crmDealId: dealId,
+      phone,
+      disposition: dispo,
+      dialStartedAt: dialStartedAtRef.current,
+      next: dueAt ? { type: nextType, subject: FOLLOW_UP_SUBJECT[dispo] ?? "Follow up", dueAt } : null,
+      note: dispoNote.trim() || null,
+    };
+    setPendingDispo(null);
+    setAwaitingDispo(false);
+    setShowCustomDue(false);
+    setCustomDue("");
+    setDispoNote("");
+    flashOk("Logging…");
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const r = await fetch("/api/dialer/disposition", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, final: attempt === 3 }),
+      }).catch(() => null);
+      if (r && r.status !== 202) break;
+      await new Promise((res) => setTimeout(res, 4000));
+    }
+    flashOk("Call logged ✓");
+    onLogged();
   };
 
   const send = async () => {
@@ -852,45 +932,127 @@ function CommBar({
   const urls = assets.filter((a) => a.kind === "url");
   const media = assets.filter((a) => a.kind === "media");
 
-  const chBtn = (key: CommChannel, label: string, disabled: boolean, title?: string) => (
-    <button
-      className={`btn ${channel === key ? "primary" : ""}`}
-      disabled={disabled}
-      title={title}
-      onClick={() => {
-        setErr(null);
-        setChannel((c) => (c === key ? null : key));
-      }}
-    >
-      {label}
-    </button>
-  );
+  const btnStyle: React.CSSProperties = { justifyContent: "center", width: "100%" };
 
   return (
-    <div className="card" style={{ marginBottom: 18 }}>
-      <div className="panel-h">Reach out</div>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+    <div style={{ marginBottom: 18 }}>
+      {/* Floating buttons — no card, low visual weight. */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
         {callState === null ? (
-          <button className="btn" disabled={!phone} title={phone ?? "No phone on contact"} onClick={startCall}>
+          <button className="btn" style={btnStyle} disabled={!phone || awaitingDispo} title={phone ?? "No phone on contact"} onClick={startCall}>
             📞 Call
           </button>
         ) : callState.startsWith("error") ? (
-          <button className="btn" style={{ color: "var(--crit)" }} onClick={() => setCallState(null)} title={callState}>
-            📞 Call failed — retry
+          <button className="btn" style={{ ...btnStyle, color: "var(--crit)" }} onClick={() => setCallState(null)} title={callState}>
+            📞 Failed — retry
           </button>
         ) : (
-          <button className="btn" style={{ background: "var(--crit)", color: "#fff" }} onClick={endCall}>
-            ⏹ {callState === "active" ? "On call" : "Ringing…"} — End
+          <button className="btn" style={{ ...btnStyle, background: "var(--crit)", color: "#fff" }} onClick={endCall}>
+            ⏹ {callState === "active" ? "On call" : "Ringing…"}
           </button>
         )}
-        {chBtn("sms", "💬 Text", !phone, phone ?? "No phone on contact")}
-        {chBtn("whatsapp", "🟢 WhatsApp", !email, email ?? "Needs an email to find the Klaviyo profile")}
-        {chBtn("email", "✉️ Email", !email, email ?? "No email on contact")}
-        {ok && <span style={{ color: "var(--good)", fontSize: 13.5, fontWeight: 700 }}>{ok}</span>}
+        <button
+          className={`btn ${channel === "sms" ? "primary" : ""}`}
+          style={btnStyle}
+          disabled={!phone}
+          title={phone ?? "No phone on contact"}
+          onClick={() => {
+            setErr(null);
+            setChannel((c) => (c === "sms" ? null : "sms"));
+          }}
+        >
+          💬 Text
+        </button>
+        <button
+          className={`btn ${channel === "whatsapp" ? "primary" : ""}`}
+          style={btnStyle}
+          disabled={!email}
+          title={email ?? "Needs an email to find the Klaviyo profile"}
+          onClick={() => {
+            setErr(null);
+            setChannel((c) => (c === "whatsapp" ? null : "whatsapp"));
+          }}
+        >
+          🟢 WhatsApp
+        </button>
+        <button
+          className={`btn ${channel === "email" ? "primary" : ""}`}
+          style={btnStyle}
+          disabled={!email}
+          title={email ?? "No email on contact"}
+          onClick={() => {
+            setErr(null);
+            setChannel((c) => (c === "email" ? null : "email"));
+          }}
+        >
+          ✉️ Email
+        </button>
       </div>
+      {ok && <div style={{ color: "var(--good)", fontSize: 13.5, fontWeight: 700, marginTop: 8 }}>{ok}</div>}
+
+      {/* Disposition — appears when a call wraps, same flow as the dialer. */}
+      {awaitingDispo && !pendingDispo && (
+        <div className="card" style={{ marginTop: 12 }}>
+          <div className="panel-h">How did the call go?</div>
+          <div className="dispo-row attn" style={{ display: "flex", marginTop: 0 }}>
+            {DISPOSITIONS.map(([key, label]) => (
+              <button key={key} className="btn" onClick={() => setPendingDispo(key)}>
+                {label}
+              </button>
+            ))}
+            <button className="btn ghost" onClick={() => setAwaitingDispo(false)} title="No disposition — the call still logs via webhook">
+              Skip
+            </button>
+          </div>
+        </div>
+      )}
+      {awaitingDispo && pendingDispo && (
+        <div className="card" style={{ marginTop: 12 }}>
+          <input
+            className="vmsel"
+            style={{ width: "100%", marginBottom: 8 }}
+            placeholder="Add a note about this call… (optional, saves to the deal)"
+            value={dispoNote}
+            onChange={(e) => setDispoNote(e.target.value)}
+          />
+          <div className="dispo-row" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", marginTop: 0 }}>
+            <span style={{ fontSize: 13.5, color: "var(--text-2)" }}>Next step?</span>
+            <select className="vmsel" style={{ width: "auto", padding: "6px 8px", fontSize: 13.5 }} value={nextType} onChange={(e) => setNextType(e.target.value)}>
+              <option value="call">📞 Call</option>
+              <option value="task">📋 Task</option>
+              <option value="email">✉️ Email</option>
+              <option value="meeting">📅 Meeting</option>
+            </select>
+            <button className="btn" onClick={() => completeDispo(followUpAt(7))}>1 week</button>
+            <button className="btn" onClick={() => completeDispo(followUpAt(14))}>2 weeks</button>
+            <button className="btn" onClick={() => completeDispo(followUpAt(30))}>1 month</button>
+            <button className="btn" onClick={() => setShowCustomDue((v) => !v)}>📅 Custom…</button>
+            <button className="btn ghost" onClick={() => completeDispo(null)}>No follow-up</button>
+          </div>
+          {showCustomDue && (
+            <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+              <input
+                type="datetime-local"
+                className="vmsel"
+                style={{ width: "auto" }}
+                value={customDue}
+                onChange={(e) => setCustomDue(e.target.value)}
+              />
+              <button
+                className="btn primary"
+                style={{ padding: "7px 14px", fontSize: 14 }}
+                disabled={!customDue}
+                onClick={() => completeDispo(new Date(customDue).toISOString())}
+              >
+                Schedule
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {channel && (
-        <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+        <div className="card" style={{ marginTop: 12, display: "grid", gap: 8 }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <select className="vmsel" style={{ width: "auto", flex: 1, minWidth: 140 }} value="" onChange={(e) => e.target.value && applyMacro(e.target.value)}>
               <option value="">📋 Macro…</option>
