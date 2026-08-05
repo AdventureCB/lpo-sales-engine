@@ -13,6 +13,7 @@ interface Rep {
   active?: boolean;
   daily_dial_goal: number;
   daily_talk_goal_min: number;
+  bonus_dial_goal: number | null;
 }
 
 export function SettingsView() {
@@ -20,7 +21,7 @@ export function SettingsView() {
   const [numbers, setNumbers] = useState<string[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   // Local edit buffer so typing a goal doesn't fire a save per keystroke.
-  const [goalEdits, setGoalEdits] = useState<Record<string, { dial: string; talk: string }>>({});
+  const [goalEdits, setGoalEdits] = useState<Record<string, { dial: string; talk: string; bonus: string }>>({});
 
   const load = useCallback(
     () =>
@@ -55,18 +56,25 @@ export function SettingsView() {
     if (!edit) return;
     const dial = Number(edit.dial);
     const talk = Number(edit.talk);
-    if (dial === r.daily_dial_goal && talk === r.daily_talk_goal_min) return;
+    const bonus = edit.bonus.trim() === "" ? 0 : Number(edit.bonus); // empty = derived
+    const bonusChanged = bonus !== (r.bonus_dial_goal ?? 0);
+    if (dial === r.daily_dial_goal && talk === r.daily_talk_goal_min && !bonusChanged) return;
     void post({
       repId: r.id,
       ...(dial > 0 && dial !== r.daily_dial_goal ? { dialGoal: dial } : {}),
       ...(talk > 0 && talk !== r.daily_talk_goal_min ? { talkGoalMin: talk } : {}),
+      ...(bonusChanged ? { bonusDialGoal: bonus } : {}),
     });
   };
 
   const editFor = (r: Rep) =>
-    goalEdits[r.id] ?? { dial: String(r.daily_dial_goal), talk: String(r.daily_talk_goal_min) };
+    goalEdits[r.id] ?? {
+      dial: String(r.daily_dial_goal),
+      talk: String(r.daily_talk_goal_min),
+      bonus: r.bonus_dial_goal != null ? String(r.bonus_dial_goal) : "",
+    };
 
-  const setEdit = (r: Rep, patch: Partial<{ dial: string; talk: string }>) =>
+  const setEdit = (r: Rep, patch: Partial<{ dial: string; talk: string; bonus: string }>) =>
     setGoalEdits((g) => ({ ...g, [r.id]: { ...editFor(r), ...patch } }));
 
   const assignedElsewhere = (num: string, repId: string) =>
@@ -146,6 +154,19 @@ export function SettingsView() {
                     onBlur={() => saveGoals(r)}
                   />
                   dials
+                </span>
+                <span style={{ display: "flex", gap: 6, alignItems: "center" }} title="Stretch tier — leave blank for 1.5× the dial goal">
+                  <input
+                    className="vmsel"
+                    style={goalInput}
+                    type="number"
+                    min={1}
+                    placeholder={String(Math.round((Number(editFor(r).dial) || r.daily_dial_goal) * 1.5 / 5) * 5)}
+                    value={editFor(r).bonus}
+                    onChange={(e) => setEdit(r, { bonus: e.target.value })}
+                    onBlur={() => saveGoals(r)}
+                  />
+                  bonus
                 </span>
                 <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   <input

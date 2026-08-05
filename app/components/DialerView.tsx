@@ -255,6 +255,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   // ── Momentum: today's totals, personal best, streak (goal-gradient) ──
   const [today, setToday] = useState<{
     goal: number;
+    bonusGoal: number;
     talkGoalMin: number;
     dialsToday: number;
     connectsToday: number;
@@ -626,6 +627,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       const newConn = today.connectsToday + (dispo === "connected" ? 1 : 0);
       if (dispo === "connected" && today.connectsToday === 0) celebrate("☀️ First connect of the day!");
       else if (newDials === today.goal) celebrate(`🎯 Daily goal hit — ${today.goal} dials!`);
+      else if (newDials === today.bonusGoal) celebrate(`💪 BONUS goal — ${today.bonusGoal} dials!`);
       else if (today.bestDials > 0 && newDials === today.bestDials + 1) celebrate("🏆 New personal best!");
       else if (newDials % 25 === 0) celebrate(`🔥 ${newDials} dials today`);
       setToday({
@@ -1251,15 +1253,23 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
                 <b style={{ fontSize: 24, fontVariantNumeric: "tabular-nums" }}>
                   {today.dialsToday}
-                  <span style={{ fontSize: 13.5, color: "var(--text-3)", fontWeight: 600 }}> / {today.goal} dials</span>
+                  <span style={{ fontSize: 13.5, color: "var(--text-3)", fontWeight: 600 }}>
+                    {" "}/ {today.goal} dials · bonus {today.bonusGoal}
+                  </span>
                 </b>
                 {today.streak > 0 && <span className="streak-chip">🔥 {today.streak}-day streak</span>}
               </div>
+              {/* Bar spans to the BONUS tier; the tick marks the min goal. */}
               <div className="goalbar">
                 <div
-                  className={`fill ${today.dialsToday >= today.goal ? "done" : ""}`}
-                  style={{ width: `${Math.min(100, (100 * today.dialsToday) / today.goal)}%` }}
+                  className={`fill ${
+                    today.dialsToday >= today.bonusGoal ? "bonus" : today.dialsToday >= today.goal ? "done" : ""
+                  }`}
+                  style={{ width: `${Math.min(100, (100 * today.dialsToday) / today.bonusGoal)}%` }}
                 />
+                {today.bonusGoal > today.goal && (
+                  <div className="tick" style={{ left: `${(100 * today.goal) / today.bonusGoal}%` }} />
+                )}
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 10 }}>
                 <b style={{ fontSize: 17, fontVariantNumeric: "tabular-nums" }}>

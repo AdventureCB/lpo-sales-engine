@@ -17,7 +17,7 @@ export async function GET() {
   // hold numbers for testing without appearing on the scoreboard.
   const { data: reps } = await db
     .from("reps")
-    .select("id, name, quo_phone_number, telnyx_number, active, daily_dial_goal, daily_talk_goal_min")
+    .select("id, name, quo_phone_number, telnyx_number, active, daily_dial_goal, daily_talk_goal_min, bonus_dial_goal")
     .order("sort_order");
 
   let numbers: string[] = [];
@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
     telnyxNumber?: string | null;
     dialGoal?: number;
     talkGoalMin?: number;
+    bonusDialGoal?: number; // 0 = clear → derived (1.5× min)
   };
   try {
     body = await req.json();
@@ -59,6 +60,10 @@ export async function POST(req: NextRequest) {
   }
   if (typeof body.talkGoalMin === "number" && body.talkGoalMin > 0) {
     update.daily_talk_goal_min = Math.min(480, Math.round(body.talkGoalMin));
+  }
+  if (typeof body.bonusDialGoal === "number") {
+    update.bonus_dial_goal =
+      body.bonusDialGoal > 0 ? Math.min(1000, Math.round(body.bonusDialGoal)) : null;
   }
   if (Object.keys(update).length === 0) {
     return NextResponse.json({ error: "nothing to update" }, { status: 400 });

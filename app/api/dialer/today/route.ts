@@ -38,11 +38,13 @@ export async function GET() {
   if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
   const { data: repRow } = await db
     .from("reps")
-    .select("daily_dial_goal, daily_talk_goal_min")
+    .select("daily_dial_goal, daily_talk_goal_min, bonus_dial_goal")
     .eq("id", user.repId)
     .maybeSingle();
   const goal = repRow?.daily_dial_goal ?? DEFAULT_DIAL_GOAL;
   const talkGoalMin = repRow?.daily_talk_goal_min ?? DEFAULT_TALK_GOAL_MIN;
+  // Bonus (stretch) tier: explicit, else 1.5× min rounded to a clean 5.
+  const bonusGoal = repRow?.bonus_dial_goal ?? Math.round((goal * 1.5) / 5) * 5;
 
   const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: tz });
   const byDay = new Map<string, { dials: number; connects: number; talk_s: number }>(
@@ -74,6 +76,7 @@ export async function GET() {
   return NextResponse.json({
     stats: {
       goal,
+      bonusGoal,
       talkGoalMin,
       dialsToday: today.dials,
       connectsToday: today.connects,
