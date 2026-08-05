@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ensurePhone, getPhoneState, newOutboundCall, setOutboundHandler, subscribePhone } from "./phoneClient";
 import type { VmDrop } from "./VmPanel";
+import { DealDetailView } from "./DealDetailView";
 
 declare global {
   interface Window {
@@ -104,10 +105,6 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [activeQueue, setActiveQueue] = useState<Queue | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [leadIdx, setLeadIdx] = useState(0);
-  const [notes, setNotes] = useState<string[]>([]);
-  const [activities, setActivities] = useState<
-    { type: string; subject: string | null; done: boolean; due_date: string | null; add_time: string | null }[]
-  >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [queueMeta, setQueueMeta] = useState<{
@@ -252,6 +249,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [callSec, setCallSec] = useState(0);
   const [autoAdv, setAutoAdv] = useState(true);
   const [sess, setSess] = useState({ dials: 0, conn: 0, vm: 0, talkS: 0 });
+  const [dealRefresh, setDealRefresh] = useState(0); // remounts the embedded deal view
 
   // ── Momentum: today's totals, personal best, streak (goal-gradient) ──
   const [today, setToday] = useState<{
@@ -451,18 +449,6 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    setNotes([]);
-    setActivities([]);
-    if (lead) {
-      fetch(`/api/dialer/lead?dealId=${lead.dealId}`)
-        .then((r) => r.json())
-        .then((d) => {
-          setNotes(d.notes ?? []);
-          setActivities(d.activities ?? []);
-        });
-    }
-  }, [lead?.dealId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const stopTimers = () => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -647,6 +633,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setCallSec(0);
     callSecRef.current = 0;
     resetMdForm();
+    setTimeout(() => setDealRefresh((k) => k + 1), 1500); // let the webhook land
     if (autoAdv) setLeadIdx((i) => i + 1);
   };
 
@@ -987,8 +974,9 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
           </button>
         </div>
 
-        {/* center: lead card */}
-        <div className="card lead-card" style={{ position: "relative" }}>
+        {/* center: lead card + full embedded deal view */}
+        <div style={{ minWidth: 0 }}>
+        <div className="card lead-card" style={{ position: "relative", marginBottom: 18 }}>
           {rewards.map((r) => (
             <span key={r.id} className="reward-float" style={{ right: 34, bottom: 96 }}>
               {r.label}
@@ -1019,37 +1007,6 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                 )}
                 <span className="chip stage">Pipedrive ▸ deal open</span>
               </div>
-              <div className="lead-notes">
-                {notes.length > 0 ? notes.join(" · ") : "No notes on this deal."}
-              </div>
-              {activities.length > 0 && (
-                <div style={{ marginBottom: 22 }}>
-                  <div className="panel-h">Recent activity</div>
-                  {activities.map((a, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        display: "flex",
-                        gap: 8,
-                        alignItems: "baseline",
-                        padding: "5px 0",
-                        fontSize: 14,
-                      }}
-                    >
-                      <span>
-                        {{ call: "📞", meeting: "📅", email: "✉️", task: "📋", deadline: "⏰", lunch: "🍽" }[a.type] ?? "📋"}
-                      </span>
-                      <span style={{ color: "var(--text-1)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {a.subject ?? a.type}
-                      </span>
-                      <span style={{ color: "var(--text-3)", fontSize: 13, whiteSpace: "nowrap" }}>
-                        {a.done ? "✓ " : "due "}
-                        {(a.due_date ?? a.add_time ?? "").slice(0, 10)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
               {lead.callable === false && (
                 <div className="viewsub" style={{ marginBottom: 12 }}>
                   🔒 Owned by another rep — view only.
@@ -1248,6 +1205,13 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
               )}
             </>
           )}
+        </div>
+
+        {/* Everything the CRM knows, without leaving the dialer. Improvements
+            to the deal page land here automatically (same component). */}
+        {!loading && lead && lead.dealId > 0 && (
+          <DealDetailView key={`${lead.dealId}:${dealRefresh}`} pdDealId={lead.dealId} embedded />
+        )}
         </div>
 
         {/* right: session panel (steps back while a call is live) */}

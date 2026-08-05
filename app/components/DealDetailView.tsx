@@ -25,7 +25,7 @@ function fmtWhen(iso: string | null) {
   });
 }
 
-export function DealDetailView({ dealId }: { dealId: string }) {
+export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string; pdDealId?: number; embedded?: boolean }) {
   const [data, setData] = useState<DealData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState("");
@@ -48,11 +48,11 @@ export function DealDetailView({ dealId }: { dealId: string }) {
 
   const load = useCallback(
     () =>
-      fetch(`/api/crm/deal?id=${dealId}`)
+      fetch(dealId ? `/api/crm/deal?id=${dealId}` : `/api/crm/deal?pdId=${pdDealId}`)
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
         .then(setData)
         .catch((e) => setError(String(e))),
-    [dealId]
+    [dealId, pdDealId]
   );
   useEffect(() => {
     void load();
@@ -64,7 +64,7 @@ export function DealDetailView({ dealId }: { dealId: string }) {
     const r = await fetch("/api/crm/deal", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: dealId, ...fields }),
+      body: JSON.stringify({ id: data?.deal?.id ?? dealId, ...fields }),
     }).catch(() => null);
     if (r?.ok) {
       const d = await r.json();
@@ -93,14 +93,18 @@ export function DealDetailView({ dealId }: { dealId: string }) {
 
   return (
     <>
-      <div className="viewsub" style={{ marginBottom: 6 }}>
-        <a href="/crm" style={{ color: "var(--text-3)", textDecoration: "none" }}>← All deals</a>
-      </div>
-      <h2 className="viewtitle">{d.title}</h2>
-      <div className="viewsub">
-        {d.crm_stages?.crm_pipelines?.name} ▸ {d.crm_stages?.name ?? "—"} · {d.status}
-        {d.value_cents != null && <> · ${Math.round(d.value_cents / 100).toLocaleString()}</>}
-      </div>
+      {!embedded && (
+        <>
+          <div className="viewsub" style={{ marginBottom: 6 }}>
+            <a href="/crm" style={{ color: "var(--text-3)", textDecoration: "none" }}>← All deals</a>
+          </div>
+          <h2 className="viewtitle">{d.title}</h2>
+          <div className="viewsub">
+            {d.crm_stages?.crm_pipelines?.name} ▸ {d.crm_stages?.name ?? "—"} · {d.status}
+            {d.value_cents != null && <> · ${Math.round(d.value_cents / 100).toLocaleString()}</>}
+          </div>
+        </>
+      )}
       {warn && <div className="viewsub" style={{ color: "var(--warn)" }}>{warn}</div>}
 
       {/* Deal properties + outcome — one labeled row above everything. */}
@@ -230,7 +234,7 @@ export function DealDetailView({ dealId }: { dealId: string }) {
         </div>
       </div>
 
-      <div className="split" style={{ marginTop: 0 }}>
+      <div className="split" style={{ marginTop: 0, ...(embedded ? { gridTemplateColumns: "1fr" } : {}) }}>
         <div>
           <div className="card" style={{ marginBottom: 18 }}>
             <div className="panel-h">Actions</div>
@@ -430,6 +434,7 @@ export function DealDetailView({ dealId }: { dealId: string }) {
           <CommBar
             dealId={d.id}
             pdDealId={d.pipedrive_deal_id ?? null}
+            hideCall={embedded}
             contact={contact ? { id: contact.id, name: contact.name, firstName: contact.first_name } : null}
             phone={phones.find((p) => p.primary)?.e164 ?? phones[0]?.e164 ?? phones[0]?.value ?? null}
             email={emails.find((e) => e.primary)?.value ?? emails[0]?.value ?? null}
@@ -619,7 +624,7 @@ export function DealDetailView({ dealId }: { dealId: string }) {
           </div>
         </div>
 
-        <div className="card">
+        <div className="card" style={embedded ? { order: -1 } : undefined}>
           {data.callStats && (
             <>
               <div className="panel-h">Call effort</div>
@@ -1147,6 +1152,7 @@ function CommBar({
   phone,
   email,
   onLogged,
+  hideCall,
 }: {
   dealId: string;
   pdDealId: number | null;
@@ -1154,6 +1160,7 @@ function CommBar({
   phone: string | null;
   email: string | null;
   onLogged: () => void;
+  hideCall?: boolean;
 }) {
   const [channel, setChannel] = useState<CommChannel | null>(null);
   const [macros, setMacros] = useState<Macro[]>([]);
@@ -1207,7 +1214,9 @@ function CommBar({
         setAssets(d.assets ?? []);
       })
       .catch(() => {});
-    return () => setOutboundHandler(null);
+    return () => {
+      if (!hideCall) setOutboundHandler(null);
+    };
   }, []);
 
   // Resolve the Klaviyo profile once the WhatsApp composer opens.
@@ -1378,8 +1387,8 @@ function CommBar({
   return (
     <div style={{ marginBottom: 18 }}>
       {/* Floating buttons — no card, low visual weight. */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
-        {callState === null ? (
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${hideCall ? 3 : 4}, 1fr)`, gap: 10 }}>
+        {!hideCall && (callState === null ? (
           <button className="btn" style={btnStyle} disabled={!phone || awaitingDispo} title={phone ?? "No phone on contact"} onClick={startCall}>
             📞 Call
           </button>
@@ -1391,7 +1400,7 @@ function CommBar({
           <button className="btn" style={{ ...btnStyle, background: "var(--crit)", color: "#fff" }} onClick={endCall}>
             ⏹ {callState === "active" ? "On call" : "Ringing…"}
           </button>
-        )}
+        ))}
         <button
           className={`btn ${channel === "sms" ? "primary" : ""}`}
           style={btnStyle}

@@ -12,24 +12,26 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  const id = new URL(req.url).searchParams.get("id");
-  if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
+  const params = new URL(req.url).searchParams;
+  const id = params.get("id");
+  const pdId = params.get("pdId"); // dialer leads know the Pipedrive id
+  if (!id && !pdId) return NextResponse.json({ error: "id or pdId required" }, { status: 400 });
 
   const db = supabaseAdmin();
-  const { data: deal, error } = await db
+  let q = db
     .from("crm_deals")
     .select(
       "*, crm_stages ( id, name, pipeline_id, crm_pipelines ( id, name ) ), crm_contacts ( id, name, emails, phones, org_name )"
-    )
-    .eq("id", id)
-    .maybeSingle();
+    );
+  q = id ? q.eq("id", id) : q.eq("pipedrive_deal_id", Number(pdId));
+  const { data: deal, error } = await q.maybeSingle();
   if (error || !deal) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   // Quo logs calls/notes on the person, not the deal — pull the contact's
   // activities into the deal timeline too, or most history is invisible.
   const activityFilter = deal.contact_id
-    ? `deal_id.eq.${id},contact_id.eq.${deal.contact_id}`
-    : `deal_id.eq.${id}`;
+    ? `deal_id.eq.${deal.id},contact_id.eq.${deal.contact_id}`
+    : `deal_id.eq.${deal.id}`;
   const [activities, calls, stages, sprints, dealSprints, owners] = await Promise.all([
     db
       .from("crm_activities")
@@ -54,7 +56,7 @@ export async function GET(req: NextRequest) {
       .select("id, name, owner")
       .eq("status", "active")
       .order("created_at", { ascending: false }),
-    db.from("crm_sprint_items").select("sprint_id").eq("deal_id", id),
+    db.from("crm_sprint_items").select("sprint_id").eq("deal_id", deal.id),
     db.from("app_users").select("email, role").order("email"),
   ]);
   const { data: sources } = await db
@@ -68,7 +70,7 @@ export async function GET(req: NextRequest) {
       id: a.id,
       kind: a.type,
       at: a.occurred_at,
-      title: (a.subject ?? a.type) + (a.deal_id === id ? "" : " · (contact)"),
+      title: (a.subject ?? a.type) + (a.deal_id === deal.id ? "" : " · (contact)"),
       body: a.body,
       actor: a.actor,
       done: Boolean(a.done_at),
