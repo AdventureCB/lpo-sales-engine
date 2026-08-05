@@ -154,56 +154,6 @@ export function DealDetailView({ dealId }: { dealId: string }) {
                 ))}
               </select>
             </div>
-            <div className="field" style={{ marginLeft: "auto" }}>
-              <label>Outcome</label>
-              <div style={{ display: "flex", gap: 8 }}>
-                {d.status === "open" ? (
-                  <>
-                    <button
-                      className="btn"
-                      disabled={saving}
-                      title="Deposit placed — moves to Deposit Placed and prompts a confirmation follow-up"
-                      onClick={() => {
-                        const depositStage = stageByName(/deposit placed/i, "Order");
-                        if (depositStage) void update({ stageId: depositStage });
-                        setSchedType("call");
-                        setSchedSubject("Confirmation follow-up");
-                        setSchedDue("");
-                        setDepositFollow(true);
-                        setModal("schedule");
-                      }}
-                    >
-                      💰 Deposit
-                    </button>
-                    <button
-                      className="btn"
-                      disabled={saving}
-                      title="Deal executed — archives as won"
-                      onClick={() => {
-                        const wonStage = stageByName(/confirmed/i, "Order");
-                        void update({ status: "won", ...(wonStage ? { stageId: wonStage } : {}) });
-                      }}
-                    >
-                      ✓ Confirmed
-                    </button>
-                    <button
-                      className="btn ghost"
-                      disabled={saving}
-                      onClick={() => {
-                        setLostReason("");
-                        setModal("lost");
-                      }}
-                    >
-                      ✗ Lost
-                    </button>
-                  </>
-                ) : (
-                  <button className="btn ghost" disabled={saving} onClick={() => update({ status: "open" })}>
-                    Reopen ({d.status})
-                  </button>
-                )}
-              </div>
-            </div>
           </div>
 
           <div className="card" style={{ marginBottom: 18 }}>
@@ -594,6 +544,82 @@ export function DealDetailView({ dealId }: { dealId: string }) {
         </div>
 
         <div className="card">
+          <div className="panel-h">Outcome</div>
+          {(() => {
+            const stageName = d.crm_stages?.name ?? "";
+            const inDeposit = d.status === "open" && /deposit placed|confirmation scheduled/i.test(stageName);
+            const current: "open" | "deposit" | "won" | "lost" =
+              d.status === "won" ? "won" : d.status === "lost" ? "lost" : inDeposit ? "deposit" : "open";
+            const outcomeBtn = (
+              key: "open" | "deposit" | "won" | "lost",
+              label: string,
+              onClick: () => void,
+              title: string
+            ) => (
+              <button
+                className="btn"
+                disabled={saving || current === key}
+                title={title}
+                onClick={onClick}
+                style={{
+                  justifyContent: "center",
+                  ...(current === key
+                    ? { background: "var(--accent-soft)", boxShadow: "inset 0 0 0 1px rgba(217, 91, 49, 0.5)", opacity: 1 }
+                    : {}),
+                }}
+              >
+                {label}
+              </button>
+            );
+            return (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
+                {outcomeBtn(
+                  "open",
+                  "🔄 Open",
+                  () => {
+                    // Deposit canceled but still a buyer: back to nurture.
+                    const backStage = inDeposit
+                      ? stageByName(/qualified/i, "Sales / Nurture") ?? stageByName(/warm/i)
+                      : undefined;
+                    void update({ status: "open", ...(backStage ? { stageId: backStage } : {}) });
+                  },
+                  "Back in play — reopens (and pulls a canceled deposit back to nurture)"
+                )}
+                {outcomeBtn(
+                  "deposit",
+                  "💰 Deposit",
+                  () => {
+                    const depositStage = stageByName(/deposit placed/i, "Order");
+                    if (depositStage) void update({ stageId: depositStage, status: "open" });
+                    setSchedType("call");
+                    setSchedSubject("Confirmation follow-up");
+                    setSchedDue("");
+                    setDepositFollow(true);
+                    setModal("schedule");
+                  },
+                  "Deposit placed — moves to Deposit Placed and prompts a confirmation follow-up"
+                )}
+                {outcomeBtn(
+                  "won",
+                  "✓ Confirmed",
+                  () => {
+                    const wonStage = stageByName(/confirmed/i, "Order");
+                    void update({ status: "won", ...(wonStage ? { stageId: wonStage } : {}) });
+                  },
+                  "Deal executed — archives as won"
+                )}
+                {outcomeBtn(
+                  "lost",
+                  "✗ Lost",
+                  () => {
+                    setLostReason("");
+                    setModal("lost");
+                  },
+                  "Requires a loss reason; deal moves to Cainen for re-prospecting"
+                )}
+              </div>
+            );
+          })()}
           {data.callStats && (
             <>
               <div className="panel-h">Call effort</div>
