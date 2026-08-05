@@ -8,6 +8,7 @@ interface Deal {
   status: string;
   value_cents: number | null;
   owner_pipedrive_id: number | null;
+  deal_sources: { name: string } | null;
   last_activity_at: string | null;
   updated_at: string;
   pd_add_time: string | null;
@@ -64,6 +65,8 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
   const [stage, setStage] = useState("");
   const [status, setStatus] = useState("open");
   const [owner, setOwner] = useState(defaultOwner);
+  const [srcFilter, setSrcFilter] = useState("");
+  const [sources, setSources] = useState<{ id: string; name: string }[]>([]);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("updated");
   const [dir, setDir] = useState<"asc" | "desc">("desc");
@@ -138,6 +141,7 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
     if (status) params.set("status", status);
     if (stage) params.set("stageId", stage);
     if (owner) params.set("owner", owner);
+    if (srcFilter) params.set("source", srcFilter);
     if (search.trim()) params.set("q", search.trim());
     try {
       const r = await fetch(`/api/crm/deals?${params}`);
@@ -150,7 +154,14 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
     } finally {
       setLoading(false);
     }
-  }, [page, sort, dir, status, stage, owner, search]);
+  }, [page, sort, dir, status, stage, owner, srcFilter, search]);
+
+  useEffect(() => {
+    fetch("/api/crm/sources")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setSources(d.sources ?? []))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     void loadMeta();
@@ -296,6 +307,13 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
             <option key={o.id} value={o.id}>{o.label}</option>
           ))}
         </select>
+        <select className="vmsel" style={{ width: "auto" }} value={srcFilter} onChange={(e) => { setSrcFilter(e.target.value); setPage(0); }}>
+          <option value="">Any source</option>
+          <option value="none">— No source —</option>
+          {sources.map((s) => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
         <input
           className="vmsel"
           style={{ width: 220 }}
@@ -366,16 +384,17 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
                   {label} {sort === key ? (dir === "desc" ? "↓" : "↑") : ""}
                 </th>
               ))}
+              <th>Source</th>
               <th>Owner</th>
               <th>Contact</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={isAdmin ? 8 : 7} style={{ color: "var(--text-3)", padding: "16px 10px" }}>Loading…</td></tr>
+              <tr><td colSpan={isAdmin ? 9 : 8} style={{ color: "var(--text-3)", padding: "16px 10px" }}>Loading…</td></tr>
             )}
             {!loading && deals.length === 0 && (
-              <tr><td colSpan={isAdmin ? 8 : 7} style={{ color: "var(--text-3)", padding: "16px 10px" }}>
+              <tr><td colSpan={isAdmin ? 9 : 8} style={{ color: "var(--text-3)", padding: "16px 10px" }}>
                 No deals in the mirror yet — run the import above.
               </td></tr>
             )}
@@ -398,6 +417,7 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
                 <td className="money">{d.value_cents != null ? `$${Math.round(d.value_cents / 100).toLocaleString()}` : "—"}</td>
                 <td style={{ color: "var(--text-3)", whiteSpace: "nowrap" }}>{fmtDate(d.last_activity_at)}</td>
                 <td style={{ color: "var(--text-3)", whiteSpace: "nowrap" }}>{fmtDate(d.updated_at)}</td>
+                <td style={{ whiteSpace: "nowrap", color: "var(--text-2)" }}>{d.deal_sources?.name ?? "—"}</td>
                 <td style={{ whiteSpace: "nowrap" }}>{d.owner_pipedrive_id ? OWNER_NAMES[d.owner_pipedrive_id] ?? d.owner_pipedrive_id : "—"}</td>
                 <td style={{ whiteSpace: "nowrap" }}>
                   {d.crm_contacts?.name ?? "—"}

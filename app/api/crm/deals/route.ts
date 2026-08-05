@@ -29,13 +29,16 @@ export async function GET(req: NextRequest) {
   let q = db
     .from("crm_deals")
     .select(
-      "id, title, status, value_cents, owner_pipedrive_id, stage_changed_at, last_activity_at, updated_at, pd_add_time, pipedrive_deal_id, crm_stages ( name, pipeline_id, crm_pipelines ( name ) ), crm_contacts ( name, phones )",
+      "id, title, status, value_cents, owner_pipedrive_id, stage_changed_at, last_activity_at, updated_at, pd_add_time, pipedrive_deal_id, crm_stages ( name, pipeline_id, crm_pipelines ( name ) ), crm_contacts ( name, phones ), deal_sources ( name )",
       { count: "exact" }
     );
 
   if (p.get("status")) q = q.eq("status", p.get("status"));
   if (p.get("stageId")) q = q.eq("stage_id", p.get("stageId"));
   if (p.get("owner")) q = q.eq("owner_pipedrive_id", Number(p.get("owner")));
+  const source = p.get("source");
+  if (source === "none") q = q.is("source_id", null);
+  else if (source) q = q.eq("source_id", source);
   const search = (p.get("q") ?? "").trim();
   if (search) q = q.ilike("title", `%${search.replace(/[%_]/g, "")}%`);
 
