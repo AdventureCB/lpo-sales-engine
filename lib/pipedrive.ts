@@ -182,12 +182,13 @@ export async function getHotLabelId(): Promise<number | null> {
 /** Write-through for CRM edits: stage move / status / owner. */
 export async function updateDealStage(
   dealId: number,
-  fields: { stage_id?: number; status?: string; owner_id?: number }
+  fields: { stage_id?: number; status?: string; owner_id?: number; lost_reason?: string }
 ): Promise<void> {
   const body: Record<string, unknown> = {};
   if (fields.stage_id) body.stage_id = fields.stage_id;
   if (fields.status) body.status = fields.status;
   if (fields.owner_id) body.owner_id = fields.owner_id;
+  if (fields.lost_reason) body.lost_reason = fields.lost_reason;
   if (Object.keys(body).length === 0) return;
   await pd(V2, `/deals/${dealId}`, { method: "PATCH", body: JSON.stringify(body) });
 }

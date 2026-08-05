@@ -144,6 +144,7 @@ export async function POST(req: NextRequest) {
     id?: string;
     stageId?: string;
     status?: string;
+    lostReason?: string;
     note?: string;
     ownerPipedriveId?: number;
     activity?: { type: string; subject: string; dueAt?: string | null };
@@ -384,28 +385,32 @@ export async function POST(req: NextRequest) {
       }
       update.status = body.status;
       if (body.status === "won") update.won_at = new Date().toISOString();
-      if (body.status === "lost") update.lost_at = new Date().toISOString();
+      if (body.status === "lost") {
+        update.lost_at = new Date().toISOString();
+        if (body.lostReason?.trim()) update.lost_reason = body.lostReason.trim();
+      }
     }
     const { error } = await db.from("crm_deals").update(update).eq("id", deal.id);
     if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+    const pdFields = {
+      stage_id: pdStageId ?? undefined,
+      status: body.status,
+      lost_reason: body.status === "lost" ? body.lostReason?.trim() || undefined : undefined,
+    };
     if (canWriteThrough) {
       try {
-        await updateDealStage(deal.pipedrive_deal_id!, {
-          stage_id: pdStageId ?? undefined,
-          status: body.status,
-        });
+        await updateDealStage(deal.pipedrive_deal_id!, pdFields);
       } catch {
-        await enqueuePdSync(db, "deal_update", {
-          dealId: deal.pipedrive_deal_id,
-          fields: { stage_id: pdStageId ?? undefined, status: body.status },
-        });
+        await enqueuePdSync(db, "deal_update", { dealId: deal.pipedrive_deal_id, fields: pdFields });
         writeThroughError = "Pipedrive busy — queued, will sync automatically";
       }
     }
     await db.from("crm_activities").insert({
       deal_id: deal.id,
       type: "system",
-      subject: body.stageId ? "Stage changed" : `Marked ${body.status}`,
+      subject: body.status
+        ? `Marked ${body.status}${body.lostReason ? ` — ${body.lostReason.trim()}` : ""}`
+        : "Stage changed",
       actor: user.email,
     });
   }

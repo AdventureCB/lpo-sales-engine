@@ -41,7 +41,9 @@ export function DealDetailView({ dealId }: { dealId: string }) {
   // Upcoming-activity inline editor
   const [editAct, setEditAct] = useState<{ id: string; subject: string; type: string; due: string } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [modal, setModal] = useState<null | "note" | "schedule" | "sprint">(null);
+  const [modal, setModal] = useState<null | "note" | "schedule" | "sprint" | "lost">(null);
+  const [depositFollow, setDepositFollow] = useState(false); // schedule modal opened by the Deposit flow
+  const [lostReason, setLostReason] = useState("");
   const [tlOpen, setTlOpen] = useState<Set<number>>(new Set());
 
   const load = useCallback(
@@ -83,6 +85,11 @@ export function DealDetailView({ dealId }: { dealId: string }) {
   const contact = d.crm_contacts;
   const phones = (contact?.phones ?? []) as { value: string; e164?: string; primary?: boolean }[];
   const emails = (contact?.emails ?? []) as { value: string; primary?: boolean }[];
+
+  /** Stage uuid by name pattern, preferring a pipeline; falls back anywhere. */
+  const stageByName = (pattern: RegExp, pipeline?: string): string | undefined =>
+    (data.stages.find((s) => pattern.test(s.name) && (!pipeline || s.crm_pipelines?.name === pipeline)) ??
+      data.stages.find((s) => pattern.test(s.name)))?.id;
 
   return (
     <>
@@ -147,6 +154,56 @@ export function DealDetailView({ dealId }: { dealId: string }) {
                 ))}
               </select>
             </div>
+            <div className="field" style={{ marginLeft: "auto" }}>
+              <label>Outcome</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                {d.status === "open" ? (
+                  <>
+                    <button
+                      className="btn"
+                      disabled={saving}
+                      title="Deposit placed — moves to Deposit Placed and prompts a confirmation follow-up"
+                      onClick={() => {
+                        const depositStage = stageByName(/deposit placed/i, "Order");
+                        if (depositStage) void update({ stageId: depositStage });
+                        setSchedType("call");
+                        setSchedSubject("Confirmation follow-up");
+                        setSchedDue("");
+                        setDepositFollow(true);
+                        setModal("schedule");
+                      }}
+                    >
+                      💰 Deposit
+                    </button>
+                    <button
+                      className="btn"
+                      disabled={saving}
+                      title="Deal executed — archives as won"
+                      onClick={() => {
+                        const wonStage = stageByName(/confirmed/i, "Order");
+                        void update({ status: "won", ...(wonStage ? { stageId: wonStage } : {}) });
+                      }}
+                    >
+                      ✓ Confirmed
+                    </button>
+                    <button
+                      className="btn ghost"
+                      disabled={saving}
+                      onClick={() => {
+                        setLostReason("");
+                        setModal("lost");
+                      }}
+                    >
+                      ✗ Lost
+                    </button>
+                  </>
+                ) : (
+                  <button className="btn ghost" disabled={saving} onClick={() => update({ status: "open" })}>
+                    Reopen ({d.status})
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
 
           <div className="card" style={{ marginBottom: 18 }}>
@@ -157,20 +214,6 @@ export function DealDetailView({ dealId }: { dealId: string }) {
               <button className="btn" onClick={() => setModal("sprint")}>
                 ⚡ Add to sprint{data.dealSprintIds.length > 0 ? ` (in ${data.dealSprintIds.length})` : ""}
               </button>
-              {d.status === "open" ? (
-                <>
-                  <button className="btn ghost" style={{ marginLeft: "auto" }} onClick={() => update({ status: "won" })} disabled={saving}>
-                    ✓ Won
-                  </button>
-                  <button className="btn ghost" onClick={() => update({ status: "lost" })} disabled={saving}>
-                    ✗ Lost
-                  </button>
-                </>
-              ) : (
-                <button className="btn ghost" style={{ marginLeft: "auto" }} onClick={() => update({ status: "open" })} disabled={saving}>
-                  Reopen
-                </button>
-              )}
             </div>
           </div>
 
@@ -203,7 +246,13 @@ export function DealDetailView({ dealId }: { dealId: string }) {
           )}
 
           {modal === "schedule" && (
-            <ActionModal title="Schedule activity" onClose={() => setModal(null)}>
+            <ActionModal
+              title={depositFollow ? "💰 Deposit placed — schedule the confirmation follow-up" : "Schedule activity"}
+              onClose={() => {
+                setDepositFollow(false);
+                setModal(null);
+              }}
+            >
               <div style={{ display: "grid", gap: 8 }}>
                 <select className="vmsel" value={schedType} onChange={(e) => setSchedType(e.target.value)}>
                   <option value="call">📞 Call</option>
@@ -227,21 +276,64 @@ export function DealDetailView({ dealId }: { dealId: string }) {
                 <div style={{ display: "flex", gap: 8 }}>
                   <button
                     className="btn primary"
-                    disabled={!schedSubject.trim() || saving}
+                    disabled={!schedSubject.trim() || saving || (depositFollow && !schedDue)}
                     onClick={async () => {
+                      const confSched = depositFollow ? stageByName(/confirmation scheduled/i, "Order") : undefined;
                       await update({
                         activity: {
                           type: schedType,
                           subject: schedSubject,
                           dueAt: schedDue ? new Date(schedDue).toISOString() : null,
                         },
+                        // Deposit flow: scheduling the confirmation IS the
+                        // "Confirmation Scheduled" stage.
+                        ...(confSched ? { stageId: confSched } : {}),
                       });
                       setSchedSubject("");
                       setSchedDue("");
+                      setDepositFollow(false);
                       setModal(null);
                     }}
                   >
                     Schedule
+                  </button>
+                  <button
+                    className="btn ghost"
+                    onClick={() => {
+                      setDepositFollow(false);
+                      setModal(null);
+                    }}
+                  >
+                    {depositFollow ? "Skip for now" : "Cancel"}
+                  </button>
+                </div>
+              </div>
+            </ActionModal>
+          )}
+
+          {modal === "lost" && (
+            <ActionModal title="Mark lost" onClose={() => setModal(null)}>
+              <div style={{ display: "grid", gap: 8 }}>
+                <input
+                  className="vmsel"
+                  placeholder="Loss reason… (e.g. Price, Timing, Went elsewhere)"
+                  value={lostReason}
+                  autoFocus
+                  onChange={(e) => setLostReason(e.target.value)}
+                />
+                <div style={{ fontSize: 13, color: "var(--text-3)" }}>
+                  The deal is unassigned from its owner and moved to Cainen for later re-prospecting.
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="btn primary"
+                    disabled={!lostReason.trim() || saving}
+                    onClick={async () => {
+                      await update({ status: "lost", lostReason: lostReason.trim(), ownerPipedriveId: 24723797 });
+                      setModal(null);
+                    }}
+                  >
+                    Mark lost
                   </button>
                   <button className="btn ghost" onClick={() => setModal(null)}>Cancel</button>
                 </div>
