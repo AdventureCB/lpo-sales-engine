@@ -36,6 +36,9 @@ export function DealDetailView({ dealId }: { dealId: string }) {
   const [callHint, setCallHint] = useState(false);
   const [newSprintName, setNewSprintName] = useState("");
   const [newSprintOwner, setNewSprintOwner] = useState("");
+  // Upcoming-activity inline editor
+  const [editAct, setEditAct] = useState<{ id: string; subject: string; type: string; due: string } | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const load = useCallback(
     () =>
@@ -278,26 +281,121 @@ export function DealDetailView({ dealId }: { dealId: string }) {
             return (
               <div className="card" style={{ marginBottom: 18 }}>
                 <div className="panel-h">Upcoming</div>
-                {upcoming.map((t) => (
-                  <div className="stmt-row" key={t.id} style={{ alignItems: "center" }}>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
-                      <span>{KIND_ICON[t.kind] ?? "•"}</span>
-                      <b style={{ fontSize: 14 }}>{t.title}</b>
-                      <span style={{ fontSize: 13, color: Date.parse(t.due!) < Date.now() ? "var(--crit)" : "var(--text-3)" }}>
-                        {Date.parse(t.due!) < Date.now() ? "overdue · " : "due "}
-                        {fmtWhen(t.due)}
+                {upcoming.map((t) => {
+                  const ea = editAct && editAct.id === t.id ? editAct : null;
+                  return ea ? (
+                    <div key={t.id} style={{ background: "var(--surface-2)", borderRadius: 10, padding: 10, margin: "6px 0", display: "grid", gap: 8 }}>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <select
+                          className="vmsel"
+                          style={{ width: "auto" }}
+                          value={ea.type}
+                          onChange={(e) => setEditAct((a) => a && { ...a, type: e.target.value })}
+                        >
+                          <option value="call">📞 Call</option>
+                          <option value="task">📋 Task</option>
+                          <option value="meeting">📅 Meeting</option>
+                          <option value="email">✉️ Email</option>
+                        </select>
+                        <input
+                          className="vmsel"
+                          style={{ flex: 1, minWidth: 150 }}
+                          value={ea.subject}
+                          onChange={(e) => setEditAct((a) => a && { ...a, subject: e.target.value })}
+                        />
+                        <input
+                          type="datetime-local"
+                          className="vmsel"
+                          style={{ width: "auto" }}
+                          value={ea.due}
+                          onChange={(e) => setEditAct((a) => a && { ...a, due: e.target.value })}
+                        />
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          className="btn primary"
+                          style={{ padding: "6px 14px", fontSize: 13.5 }}
+                          disabled={saving || !ea.subject.trim() || !ea.due}
+                          onClick={async () => {
+                            await update({
+                              editActivity: {
+                                activityId: ea.id,
+                                subject: ea.subject,
+                                type: ea.type,
+                                dueAt: new Date(ea.due).toISOString(),
+                              },
+                            });
+                            setEditAct(null);
+                          }}
+                        >
+                          Save
+                        </button>
+                        <button className="btn ghost" style={{ padding: "6px 12px", fontSize: 13.5 }} onClick={() => setEditAct(null)}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="stmt-row" key={t.id} style={{ alignItems: "center" }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
+                        <span>{KIND_ICON[t.kind] ?? "•"}</span>
+                        <b style={{ fontSize: 14 }}>{t.title}</b>
+                        <span style={{ fontSize: 13, color: Date.parse(t.due!) < Date.now() ? "var(--crit)" : "var(--text-3)" }}>
+                          {Date.parse(t.due!) < Date.now() ? "overdue · " : "due "}
+                          {fmtWhen(t.due)}
+                        </span>
+                      </div>
+                      <span style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                        <button
+                          className="btn ghost"
+                          style={{ padding: "4px 10px", fontSize: 13 }}
+                          disabled={saving}
+                          onClick={() => update({ completeActivityId: t.id })}
+                        >
+                          ✓ Done
+                        </button>
+                        <button
+                          className="btn ghost"
+                          style={{ padding: "4px 9px", fontSize: 13 }}
+                          title="Edit"
+                          onClick={() => {
+                            const d = t.due ? new Date(t.due) : new Date();
+                            const pad = (n: number) => String(n).padStart(2, "0");
+                            setEditAct({
+                              id: t.id!,
+                              subject: t.title,
+                              type: ["call", "task", "meeting", "email"].includes(t.kind) ? t.kind : "task",
+                              due: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`,
+                            });
+                          }}
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          className="btn ghost"
+                          style={{
+                            padding: "4px 9px",
+                            fontSize: 13,
+                            ...(confirmDeleteId === t.id ? { background: "var(--crit)", color: "#fff", boxShadow: "none" } : {}),
+                          }}
+                          disabled={saving}
+                          title="Delete"
+                          onClick={() => {
+                            if (confirmDeleteId === t.id) {
+                              setConfirmDeleteId(null);
+                              void update({ deleteActivityId: t.id });
+                            } else {
+                              setConfirmDeleteId(t.id!);
+                              setTimeout(() => setConfirmDeleteId((c) => (c === t.id ? null : c)), 3000);
+                            }
+                          }}
+                        >
+                          {confirmDeleteId === t.id ? "Sure?" : "🗑"}
+                        </button>
                       </span>
                     </div>
-                    <button
-                      className="btn ghost"
-                      style={{ padding: "4px 10px", fontSize: 13, flexShrink: 0 }}
-                      disabled={saving}
-                      onClick={() => update({ completeActivityId: t.id })}
-                    >
-                      ✓ Done
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             );
           })()}

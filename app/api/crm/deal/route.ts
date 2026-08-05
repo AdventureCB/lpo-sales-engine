@@ -121,6 +121,8 @@ export async function POST(req: NextRequest) {
     ownerPipedriveId?: number;
     activity?: { type: string; subject: string; dueAt?: string | null };
     completeActivityId?: string;
+    editActivity?: { activityId: string; subject?: string; type?: string; dueAt?: string | null };
+    deleteActivityId?: string;
     sprint?: { sprintId?: string; name?: string; owner?: string };
   };
   try {
@@ -206,6 +208,53 @@ export async function POST(req: NextRequest) {
         await enqueuePdSync(db, "activity_done", { pipedriveActivityId: act.pipedrive_activity_id });
         writeThroughError = "Pipedrive busy — queued, will sync automatically";
       }
+    }
+  }
+
+  // Reschedule / retitle / retype a scheduled activity.
+  if (body.editActivity?.activityId) {
+    const e = body.editActivity;
+    const { data: act } = await db
+      .from("crm_activities")
+      .select("id, pipedrive_activity_id")
+      .eq("id", e.activityId)
+      .maybeSingle();
+    if (!act) return NextResponse.json({ error: "activity not found" }, { status: 404 });
+    const patch: Record<string, unknown> = {};
+    if (e.subject?.trim()) patch.subject = e.subject.trim();
+    if (e.type && ["call", "sms", "email", "task", "note", "meeting"].includes(e.type)) patch.type = e.type;
+    if (e.dueAt !== undefined) patch.due_at = e.dueAt;
+    if (Object.keys(patch).length === 0) return NextResponse.json({ error: "nothing to change" }, { status: 400 });
+    const { error } = await db.from("crm_activities").update(patch).eq("id", act.id);
+    if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+    if (act.pipedrive_activity_id) {
+      const fields: Record<string, unknown> = {};
+      if (patch.subject) fields.subject = patch.subject;
+      if (patch.type) fields.type = patch.type;
+      if (e.dueAt) {
+        const d = new Date(e.dueAt);
+        fields.due_date = d.toISOString().slice(0, 10);
+        fields.due_time = d.toISOString().slice(11, 16);
+      }
+      await enqueuePdSync(db, "activity_edit", {
+        pipedriveActivityId: act.pipedrive_activity_id,
+        fields,
+      });
+    }
+  }
+
+  // Remove a scheduled activity outright.
+  if (body.deleteActivityId) {
+    const { data: act } = await db
+      .from("crm_activities")
+      .select("id, pipedrive_activity_id")
+      .eq("id", body.deleteActivityId)
+      .maybeSingle();
+    if (!act) return NextResponse.json({ error: "activity not found" }, { status: 404 });
+    const { error } = await db.from("crm_activities").delete().eq("id", act.id);
+    if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+    if (act.pipedrive_activity_id) {
+      await enqueuePdSync(db, "activity_delete", { pipedriveActivityId: act.pipedrive_activity_id });
     }
   }
 

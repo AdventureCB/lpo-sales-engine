@@ -10,6 +10,7 @@ import {
   createActivity,
   updateDealStage,
   updatePersonContacts,
+  deleteActivity,
 } from "./pipedrive";
 
 /**
@@ -27,7 +28,9 @@ export type PdSyncKind =
   | "activity_create"
   | "activity_done"
   | "deal_update"
-  | "person_update";
+  | "person_update"
+  | "activity_edit"
+  | "activity_delete";
 
 export async function enqueuePdSync(
   db: SupabaseClient,
@@ -98,6 +101,10 @@ async function runJob(db: SupabaseClient, kind: string, p: any): Promise<void> {
       return updateDealStage(p.dealId, p.fields ?? {});
     case "person_update":
       return updatePersonContacts(p.personId, { phones: p.phones, emails: p.emails });
+    case "activity_edit":
+      return updateActivity(p.pipedriveActivityId, p.fields ?? {});
+    case "activity_delete":
+      return deleteActivity(p.pipedriveActivityId);
     default:
       throw new Error(`unknown pd-sync kind: ${kind}`);
   }
