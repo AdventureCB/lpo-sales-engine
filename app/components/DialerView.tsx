@@ -249,6 +249,49 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [callSec, setCallSec] = useState(0);
   const [autoAdv, setAutoAdv] = useState(true);
   const [sess, setSess] = useState({ dials: 0, conn: 0, vm: 0, talkS: 0 });
+
+  // ── Momentum: today's totals, personal best, streak (goal-gradient) ──
+  const [today, setToday] = useState<{
+    goal: number;
+    dialsToday: number;
+    connectsToday: number;
+    talkSecToday: number;
+    bestDials: number;
+    bestDay: string | null;
+    streak: number;
+  } | null>(null);
+  const loadToday = useCallback(() => {
+    fetch("/api/dialer/today")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d?.stats && setToday(d.stats))
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    loadToday();
+    const iv = setInterval(loadToday, 60_000);
+    return () => clearInterval(iv);
+  }, [loadToday]);
+
+  // ── Micro-rewards: instant feedback per disposition, rare milestones ──
+  const [rewards, setRewards] = useState<{ id: number; label: string }[]>([]);
+  const [milestone, setMilestone] = useState<string | null>(null);
+  const [burstKey, setBurstKey] = useState(0);
+  const [popKey, setPopKey] = useState(0);
+  const rewardIdRef = useRef(0);
+  const pushReward = (label: string) => {
+    const id = ++rewardIdRef.current;
+    setRewards((rs) => [...rs, { id, label }]);
+    setTimeout(() => setRewards((rs) => rs.filter((r) => r.id !== id)), 950);
+  };
+  const celebrate = (msg: string) => {
+    setMilestone(msg);
+    setBurstKey((k) => k + 1);
+    setTimeout(() => setMilestone(null), 2600);
+  };
+
+  // ── Vigilance break: nudge after 50 min of continuous calling ──
+  const lastBreakRef = useRef<number>(Date.now());
+  const [showBreak, setShowBreak] = useState(false);
   const dialStartRef = useRef<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -571,6 +614,25 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       dueAt ? { type: nextType, subject: FOLLOW_UP_SUBJECT[dispo] ?? "Follow up", dueAt } : null,
       dispoNote.trim() || null
     );
+    // Instant feedback beats accurate feedback — predict locally, let the
+    // 60s server refresh true it up.
+    pushReward(dispo === "connected" ? "+1 connect ✓" : "+1 dial ✓");
+    setPopKey((k) => k + 1);
+    if (today) {
+      const newDials = today.dialsToday + 1;
+      const newConn = today.connectsToday + (dispo === "connected" ? 1 : 0);
+      if (dispo === "connected" && today.connectsToday === 0) celebrate("☀️ First connect of the day!");
+      else if (newDials === today.goal) celebrate(`🎯 Daily goal hit — ${today.goal} dials!`);
+      else if (today.bestDials > 0 && newDials === today.bestDials + 1) celebrate("🏆 New personal best!");
+      else if (newDials % 25 === 0) celebrate(`🔥 ${newDials} dials today`);
+      setToday({
+        ...today,
+        dialsToday: newDials,
+        connectsToday: newConn,
+        talkSecToday: today.talkSecToday + (dispo === "connected" ? callSecRef.current : 0),
+      });
+    }
+    if (Date.now() - lastBreakRef.current > 50 * 60_000) setShowBreak(true);
     setDispoNote("");
     setCallSec(0);
     callSecRef.current = 0;
@@ -755,8 +817,8 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       </div>
 
       <div className="dialer-grid">
-        {/* left: search + queues + filter */}
-        <div>
+        {/* left: search + queues + filter (steps back while a call is live) */}
+        <div className={`dim-panel ${inCall || awaitingDispo ? "dimmed" : ""}`}>
           <div className="panel-h">Find any deal</div>
           <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
             <input
@@ -881,7 +943,12 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
         </div>
 
         {/* center: lead card */}
-        <div className="card lead-card">
+        <div className="card lead-card" style={{ position: "relative" }}>
+          {rewards.map((r) => (
+            <span key={r.id} className="reward-float" style={{ right: 34, bottom: 96 }}>
+              {r.label}
+            </span>
+          ))}
           {loading && <div className="viewsub">Building queue…</div>}
           {!loading && !lead && (
             <div className="viewsub">
@@ -922,7 +989,6 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                         alignItems: "baseline",
                         padding: "5px 0",
                         fontSize: 14,
-                        borderBottom: i < activities.length - 1 ? "1px solid var(--border-soft)" : "none",
                       }}
                     >
                       <span>
@@ -973,6 +1039,33 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                   </div>
                 )}
               </div>
+              {showBreak && !inCall && (
+                <div
+                  style={{
+                    marginTop: 12,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    background: "var(--accent-2-soft)",
+                    border: "1px solid rgba(196,154,108,0.35)",
+                    borderRadius: 10,
+                    padding: "10px 14px",
+                    fontSize: 14,
+                  }}
+                >
+                  🧘 50 minutes of calls — take 20 seconds and look at something 20 feet away.
+                  <button
+                    className="btn ghost"
+                    style={{ marginLeft: "auto", padding: "4px 12px", fontSize: 13 }}
+                    onClick={() => {
+                      setShowBreak(false);
+                      lastBreakRef.current = Date.now();
+                    }}
+                  >
+                    Done ✓
+                  </button>
+                </div>
+              )}
               {inCall && dialMethod === "browser" && browserCallState && (
                 <div style={{ fontSize: 13.5, color: browserCallState.startsWith("error") ? "var(--crit)" : "var(--text-2)", marginTop: 8 }}>
                   {browserCallState === "connecting" && "🌐 Connecting…"}
@@ -1051,7 +1144,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                 </div>
               )}
               {awaitingDispo && !pendingDispo && !(isManualNoDeal && manualDealStage !== "skip") && (
-                <div className="dispo-row" style={{ display: "flex" }}>
+                <div className="dispo-row attn" style={{ display: "flex" }}>
                   {DISPOSITIONS.map(([key, num, label]) => (
                     <button key={key} className="btn" onClick={() => finalize(key)}>
                       {label} <kbd>{num}</kbd>
@@ -1112,13 +1205,43 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
           )}
         </div>
 
-        {/* right: session panel */}
-        <div className="side-panel">
+        {/* right: session panel (steps back while a call is live) */}
+        <div className={`side-panel dim-panel ${inCall || awaitingDispo ? "dimmed" : ""}`}>
+          {today && (
+            <div className="card">
+              <div className="panel-h">Today</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                <b style={{ fontSize: 24, fontVariantNumeric: "tabular-nums" }}>
+                  {today.dialsToday}
+                  <span style={{ fontSize: 13.5, color: "var(--text-3)", fontWeight: 600 }}> / {today.goal} dials</span>
+                </b>
+                {today.streak > 0 && <span className="streak-chip">🔥 {today.streak}-day streak</span>}
+              </div>
+              <div className="goalbar">
+                <div
+                  className={`fill ${today.dialsToday >= today.goal ? "done" : ""}`}
+                  style={{ width: `${Math.min(100, (100 * today.dialsToday) / today.goal)}%` }}
+                />
+              </div>
+              <div className="momentum-sub">
+                <span>
+                  {today.connectsToday} connects · {Math.round(today.talkSecToday / 60)}m talk
+                </span>
+                <span title={today.bestDay ?? undefined}>
+                  {today.bestDials > 0
+                    ? today.dialsToday > today.bestDials
+                      ? "🏆 new best!"
+                      : `best day: ${today.bestDials}`
+                    : ""}
+                </span>
+              </div>
+            </div>
+          )}
           <div className="card">
             <div className="panel-h">This session</div>
             <div className="session-stats">
-              <div className="sstat"><div className="n">{sess.dials}</div><div className="l">Dials</div></div>
-              <div className="sstat"><div className="n">{sess.conn}</div><div className="l">Connected</div></div>
+              <div className="sstat"><div key={`d${popKey}`} className={`n ${popKey ? "pop" : ""}`}>{sess.dials}</div><div className="l">Dials</div></div>
+              <div className="sstat"><div key={`c${popKey}`} className={`n ${popKey ? "pop" : ""}`}>{sess.conn}</div><div className="l">Connected</div></div>
               <div className="sstat"><div className="n">{sess.vm}</div><div className="l">VMs</div></div>
               <div className="sstat"><div className="n">{Math.round(sess.talkS / 60)}m</div><div className="l">Talk time</div></div>
             </div>
@@ -1212,6 +1335,13 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
           )}
         </span>
       </div>
+
+      {milestone && (
+        <>
+          <div className="milestone-banner">{milestone}</div>
+          <ConfettiBurst key={burstKey} />
+        </>
+      )}
 
       {keypadOpen && (
         <div
@@ -1319,5 +1449,32 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
     </>
+  );
+}
+
+/** Sub-second confetti under the milestone banner; hidden for reduced-motion. */
+function ConfettiBurst() {
+  const colors = ["#d95b31", "#c49a6c", "#4cc44c", "#fab219"];
+  const pieces = Array.from({ length: 16 }, (_, i) => ({
+    cx: (Math.random() * 2 - 1) * 150,
+    cy: 40 + Math.random() * 130,
+    cr: (Math.random() * 2 - 1) * 280,
+    color: colors[i % colors.length],
+  }));
+  return (
+    <div style={{ position: "fixed", top: 40, left: "50%", zIndex: 799, pointerEvents: "none" }}>
+      {pieces.map((p, i) => (
+        <span
+          key={i}
+          className="confetti"
+          style={{
+            background: p.color,
+            ["--cx" as string]: `${p.cx}px`,
+            ["--cy" as string]: `${p.cy}px`,
+            ["--cr" as string]: `${p.cr}deg`,
+          } as React.CSSProperties}
+        />
+      ))}
+    </div>
   );
 }

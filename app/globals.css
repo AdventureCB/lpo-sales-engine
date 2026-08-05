@@ -14,6 +14,8 @@
   --accent: #d95b31;
   --accent-hover: #ea6839;
   --accent-soft: rgba(217, 91, 49, 0.16);
+  --accent-2: #c49a6c;
+  --accent-2-soft: rgba(196, 154, 108, 0.14);
   --series-parker: #d95b31;
   --series-jackson: #4a94ec;
   --good: #4cc44c;
@@ -100,8 +102,8 @@ aside.sidenav {
 .sidenav nav a:hover { color: var(--text-1); background: var(--surface-2); }
 .sidenav nav a.active {
   color: var(--text-1);
-  background: var(--accent-soft);
-  box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px rgba(217, 91, 49, 0.25);
+  background: var(--accent-2-soft);
+  box-shadow: inset 3px 0 0 var(--accent-2), inset 0 0 0 1px rgba(196, 154, 108, 0.25);
   font-weight: 700;
 }
 .sidefoot {
@@ -187,13 +189,79 @@ kbd { font-family: inherit; font-size: 11.5px; background: rgba(255, 255, 255, 0
 @keyframes pulse { 50% { opacity: 0.35; } }
 .dispo-row { gap: 8px; margin-top: 16px; flex-wrap: wrap; }
 .dispo-row .btn { font-size: 14px; padding: 9px 15px; }
+/* Post-call: the disposition IS the next action — it inherits the spotlight. */
+.dispo-row.attn .btn:not(.ghost) {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px rgba(217, 91, 49, 0.45);
+  color: var(--text-1);
+}
+.dispo-row.attn .btn:not(.ghost):hover { background: rgba(217, 91, 49, 0.28); }
+
+/* Focus dimming: while a call (or its disposition) owns the screen, the
+   periphery steps back. */
+.dim-panel { transition: opacity 0.35s; }
+.dim-panel.dimmed { opacity: 0.5; }
+
+/* ---------- momentum panel (goal gradient + personal best) ---------- */
+.goalbar { height: 10px; border-radius: 999px; background: var(--surface-3); overflow: hidden; margin: 8px 0 6px; }
+.goalbar .fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-2), #d4a875);
+  transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.goalbar .fill.done { background: linear-gradient(90deg, var(--accent-hover), var(--accent)); box-shadow: 0 0 12px rgba(217, 91, 49, 0.5); }
+.momentum-sub { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.streak-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 700; color: var(--accent-2); background: var(--accent-2-soft); border-radius: 999px; padding: 3px 10px; }
+
+/* ---------- micro-rewards ---------- */
+@keyframes floatUp {
+  0% { opacity: 0; transform: translateY(6px) scale(0.9); }
+  20% { opacity: 1; transform: translateY(0) scale(1.06); }
+  100% { opacity: 0; transform: translateY(-26px) scale(1); }
+}
+.reward-float {
+  position: absolute;
+  pointer-events: none;
+  font-weight: 800;
+  font-size: 15px;
+  color: var(--good);
+  animation: floatUp 0.9s ease-out forwards;
+}
+@keyframes statPop { 0% { transform: scale(1); } 40% { transform: scale(1.25); color: var(--accent-hover); } 100% { transform: scale(1); } }
+.sstat .n.pop { animation: statPop 0.45s ease-out; }
+@keyframes confettiFly {
+  0% { opacity: 1; transform: translate(0, 0) rotate(0); }
+  100% { opacity: 0; transform: translate(var(--cx), var(--cy)) rotate(var(--cr)); }
+}
+.confetti { position: absolute; pointer-events: none; width: 8px; height: 8px; border-radius: 2px; animation: confettiFly 0.8s ease-out forwards; }
+.milestone-banner {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 800;
+  background: linear-gradient(180deg, var(--accent-hover), var(--accent));
+  color: #fff;
+  font-weight: 800;
+  font-size: 15px;
+  padding: 11px 22px;
+  border-radius: 999px;
+  box-shadow: 0 8px 30px rgba(217, 91, 49, 0.45);
+  animation: floatDown 0.35s ease-out;
+}
+@keyframes floatDown { from { opacity: 0; transform: translate(-50%, -12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@media (prefers-reduced-motion: reduce) {
+  .reward-float, .confetti { display: none; }
+  .sstat .n.pop { animation: none; }
+  .goalbar .fill { transition: none; }
+}
 .side-panel { display: flex; flex-direction: column; gap: 16px; }
 .session-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .sstat { background: var(--surface-2); border-radius: 10px; padding: 12px 13px; text-align: center; border: 1px solid var(--border-soft); }
 .sstat .n { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .sstat .l { font-size: 11.5px; color: var(--text-3); font-weight: 750; letter-spacing: 0.05em; text-transform: uppercase; margin-top: 2px; }
-.upnext .row { display: flex; justify-content: space-between; padding: 10px 4px; border-bottom: 1px solid var(--border-soft); font-size: 14px; }
-.upnext .row:last-child { border-bottom: none; }
+.upnext .row { display: flex; justify-content: space-between; padding: 8px 4px; font-size: 14px; }
 .upnext .who { font-weight: 650; }
 .upnext .why { color: var(--text-3); font-size: 12.5px; }
 .toggle { display: flex; align-items: center; gap: 9px; font-size: 14px; color: var(--text-2); cursor: pointer; }
@@ -228,7 +296,7 @@ input.vmsel::placeholder, textarea.vmsel::placeholder { color: var(--text-3); }
   font-size: 12.5px; font-weight: 800; letter-spacing: 0.08em;
   text-transform: uppercase; color: var(--text-2); margin-bottom: 12px;
 }
-.panel-h::before { content: ""; width: 3px; height: 13px; border-radius: 2px; background: var(--accent); flex-shrink: 0; }
+.panel-h::before { content: ""; width: 3px; height: 13px; border-radius: 2px; background: var(--accent-2); flex-shrink: 0; }
 .stmt-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 4px; border-bottom: 1px solid var(--border-soft); font-size: 14.5px; }
 .stmt-row:last-child { border-bottom: none; }
 table.data { width: 100%; border-collapse: collapse; font-size: 14.5px; }
