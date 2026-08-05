@@ -103,59 +103,135 @@ export function DealDetailView({ dealId }: { dealId: string }) {
       </div>
       {warn && <div className="viewsub" style={{ color: "var(--warn)" }}>{warn}</div>}
 
+      {/* Deal properties + outcome — one labeled row above everything. */}
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end", margin: "0 0 18px" }}>
+        <div className="field">
+          <label>Stage</label>
+          <select
+            className="vmsel"
+            style={{ width: "auto" }}
+            value={d.stage_id ?? ""}
+            onChange={(e) => update({ stageId: e.target.value })}
+            disabled={saving}
+          >
+            {data.stages.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.crm_pipelines?.name} ▸ {s.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>Owner</label>
+          <select
+            className="vmsel"
+            style={{ width: "auto" }}
+            value={d.owner_pipedrive_id ?? ""}
+            onChange={(e) => update({ ownerPipedriveId: e.target.value })}
+            disabled={saving}
+          >
+            <option value="" disabled>Owner…</option>
+            <option value="24081760">Parker</option>
+            <option value="24391245">Jackson</option>
+            <option value="24723797">Cainen</option>
+            <option value="23851101">Gabi</option>
+          </select>
+        </div>
+        <div className="field">
+          <label>Source</label>
+          <select
+            className="vmsel"
+            style={{ width: "auto" }}
+            value={d.source_id ?? ""}
+            onChange={(e) => update({ sourceId: e.target.value || null })}
+            disabled={saving}
+          >
+            <option value="">—</option>
+            {data.sources.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="field" style={{ marginLeft: "auto" }}>
+          <label>Outcome</label>
+          {(() => {
+            const stageName = d.crm_stages?.name ?? "";
+            const inDeposit = d.status === "open" && /deposit placed|confirmation scheduled/i.test(stageName);
+            const current: "open" | "deposit" | "won" | "lost" =
+              d.status === "won" ? "won" : d.status === "lost" ? "lost" : inDeposit ? "deposit" : "open";
+            const outcomeBtn = (
+              key: "open" | "deposit" | "won" | "lost",
+              label: string,
+              onClick: () => void,
+              title: string
+            ) => (
+              <button
+                className="btn"
+                disabled={saving || current === key}
+                title={title}
+                onClick={onClick}
+                style={
+                  current === key
+                    ? { background: "var(--accent-soft)", boxShadow: "inset 0 0 0 1px rgba(217, 91, 49, 0.5)", opacity: 1 }
+                    : undefined
+                }
+              >
+                {label}
+              </button>
+            );
+            return (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {outcomeBtn(
+                  "open",
+                  "🔄 Open",
+                  () => {
+                    const backStage = inDeposit
+                      ? stageByName(/qualified/i, "Sales / Nurture") ?? stageByName(/warm/i)
+                      : undefined;
+                    void update({ status: "open", ...(backStage ? { stageId: backStage } : {}) });
+                  },
+                  "Back in play — reopens (and pulls a canceled deposit back to nurture)"
+                )}
+                {outcomeBtn(
+                  "deposit",
+                  "💰 Deposit",
+                  () => {
+                    const depositStage = stageByName(/deposit placed/i, "Order");
+                    if (depositStage) void update({ stageId: depositStage, status: "open" });
+                    setSchedType("call");
+                    setSchedSubject("Confirmation follow-up");
+                    setSchedDue("");
+                    setDepositFollow(true);
+                    setModal("schedule");
+                  },
+                  "Deposit placed — moves to Deposit Placed and prompts a confirmation follow-up"
+                )}
+                {outcomeBtn(
+                  "won",
+                  "✓ Confirmed",
+                  () => {
+                    const wonStage = stageByName(/confirmed/i, "Order");
+                    void update({ status: "won", ...(wonStage ? { stageId: wonStage } : {}) });
+                  },
+                  "Deal executed — archives as won"
+                )}
+                {outcomeBtn(
+                  "lost",
+                  "✗ Lost",
+                  () => {
+                    setLostReason("");
+                    setModal("lost");
+                  },
+                  "Requires a loss reason; deal moves to Cainen for re-prospecting"
+                )}
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+
       <div className="split" style={{ marginTop: 0 }}>
         <div>
-          {/* Deal properties — labeled so nothing gets changed by accident. */}
-          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 16 }}>
-            <div className="field">
-              <label>Stage</label>
-              <select
-                className="vmsel"
-                style={{ width: "auto" }}
-                value={d.stage_id ?? ""}
-                onChange={(e) => update({ stageId: e.target.value })}
-                disabled={saving}
-              >
-                {data.stages.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.crm_pipelines?.name} ▸ {s.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
-              <label>Owner</label>
-              <select
-                className="vmsel"
-                style={{ width: "auto" }}
-                value={d.owner_pipedrive_id ?? ""}
-                onChange={(e) => update({ ownerPipedriveId: e.target.value })}
-                disabled={saving}
-              >
-                <option value="" disabled>Owner…</option>
-                <option value="24081760">Parker</option>
-                <option value="24391245">Jackson</option>
-                <option value="24723797">Cainen</option>
-                <option value="23851101">Gabi</option>
-              </select>
-            </div>
-            <div className="field">
-              <label>Source</label>
-              <select
-                className="vmsel"
-                style={{ width: "auto" }}
-                value={d.source_id ?? ""}
-                onChange={(e) => update({ sourceId: e.target.value || null })}
-                disabled={saving}
-              >
-                <option value="">—</option>
-                {data.sources.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
           <div className="card" style={{ marginBottom: 18 }}>
             <div className="panel-h">Actions</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -544,82 +620,6 @@ export function DealDetailView({ dealId }: { dealId: string }) {
         </div>
 
         <div className="card">
-          <div className="panel-h">Outcome</div>
-          {(() => {
-            const stageName = d.crm_stages?.name ?? "";
-            const inDeposit = d.status === "open" && /deposit placed|confirmation scheduled/i.test(stageName);
-            const current: "open" | "deposit" | "won" | "lost" =
-              d.status === "won" ? "won" : d.status === "lost" ? "lost" : inDeposit ? "deposit" : "open";
-            const outcomeBtn = (
-              key: "open" | "deposit" | "won" | "lost",
-              label: string,
-              onClick: () => void,
-              title: string
-            ) => (
-              <button
-                className="btn"
-                disabled={saving || current === key}
-                title={title}
-                onClick={onClick}
-                style={{
-                  justifyContent: "center",
-                  ...(current === key
-                    ? { background: "var(--accent-soft)", boxShadow: "inset 0 0 0 1px rgba(217, 91, 49, 0.5)", opacity: 1 }
-                    : {}),
-                }}
-              >
-                {label}
-              </button>
-            );
-            return (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
-                {outcomeBtn(
-                  "open",
-                  "🔄 Open",
-                  () => {
-                    // Deposit canceled but still a buyer: back to nurture.
-                    const backStage = inDeposit
-                      ? stageByName(/qualified/i, "Sales / Nurture") ?? stageByName(/warm/i)
-                      : undefined;
-                    void update({ status: "open", ...(backStage ? { stageId: backStage } : {}) });
-                  },
-                  "Back in play — reopens (and pulls a canceled deposit back to nurture)"
-                )}
-                {outcomeBtn(
-                  "deposit",
-                  "💰 Deposit",
-                  () => {
-                    const depositStage = stageByName(/deposit placed/i, "Order");
-                    if (depositStage) void update({ stageId: depositStage, status: "open" });
-                    setSchedType("call");
-                    setSchedSubject("Confirmation follow-up");
-                    setSchedDue("");
-                    setDepositFollow(true);
-                    setModal("schedule");
-                  },
-                  "Deposit placed — moves to Deposit Placed and prompts a confirmation follow-up"
-                )}
-                {outcomeBtn(
-                  "won",
-                  "✓ Confirmed",
-                  () => {
-                    const wonStage = stageByName(/confirmed/i, "Order");
-                    void update({ status: "won", ...(wonStage ? { stageId: wonStage } : {}) });
-                  },
-                  "Deal executed — archives as won"
-                )}
-                {outcomeBtn(
-                  "lost",
-                  "✗ Lost",
-                  () => {
-                    setLostReason("");
-                    setModal("lost");
-                  },
-                  "Requires a loss reason; deal moves to Cainen for re-prospecting"
-                )}
-              </div>
-            );
-          })()}
           {data.callStats && (
             <>
               <div className="panel-h">Call effort</div>
