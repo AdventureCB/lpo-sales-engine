@@ -2,6 +2,7 @@ import Link from "next/link";
 import { UserChip } from "./UserChip";
 import { RefreshButton } from "./RefreshButton";
 import { NavGroup } from "./NavGroup";
+import { NotificationBell } from "./NotificationBell";
 
 interface NavItem {
   label: string;
@@ -83,6 +84,7 @@ export function AppShell({
           })}
         </nav>
         <div className="sidefoot">
+          <NotificationBell />
           {user ? (
             <UserChip name={user.name} role={user.role} />
           ) : (
