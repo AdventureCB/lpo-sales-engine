@@ -6,8 +6,8 @@ import { envOptional } from "@/lib/env";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Daily dial goal — the momentum bar's target. */
-const DAILY_GOAL = 50;
+const DEFAULT_DIAL_GOAL = 50;
+const DEFAULT_TALK_GOAL_MIN = 45;
 
 const isWeekend = (dateStr: string) => {
   const d = new Date(`${dateStr}T12:00:00Z`).getUTCDay();
@@ -36,6 +36,13 @@ export async function GET() {
   const db = supabaseAdmin();
   const { data: days, error } = await db.rpc("rep_daily_dials", { p_rep: user.repId, p_tz: tz });
   if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+  const { data: repRow } = await db
+    .from("reps")
+    .select("daily_dial_goal, daily_talk_goal_min")
+    .eq("id", user.repId)
+    .maybeSingle();
+  const goal = repRow?.daily_dial_goal ?? DEFAULT_DIAL_GOAL;
+  const talkGoalMin = repRow?.daily_talk_goal_min ?? DEFAULT_TALK_GOAL_MIN;
 
   const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: tz });
   const byDay = new Map<string, { dials: number; connects: number; talk_s: number }>(
@@ -57,16 +64,17 @@ export async function GET() {
 
   // Workday streak of goal-hits, counting today once it's hit.
   let streak = 0;
-  if (!isWeekend(todayStr) && (byDay.get(todayStr)?.dials ?? 0) >= DAILY_GOAL) streak++;
+  if (!isWeekend(todayStr) && (byDay.get(todayStr)?.dials ?? 0) >= goal) streak++;
   let cursor = prevWorkday(todayStr);
-  while ((byDay.get(cursor)?.dials ?? 0) >= DAILY_GOAL) {
+  while ((byDay.get(cursor)?.dials ?? 0) >= goal) {
     streak++;
     cursor = prevWorkday(cursor);
   }
 
   return NextResponse.json({
     stats: {
-      goal: DAILY_GOAL,
+      goal,
+      talkGoalMin,
       dialsToday: today.dials,
       connectsToday: today.connects,
       talkSecToday: today.talk_s,

@@ -17,7 +17,7 @@ export async function GET() {
   // hold numbers for testing without appearing on the scoreboard.
   const { data: reps } = await db
     .from("reps")
-    .select("id, name, quo_phone_number, telnyx_number, active")
+    .select("id, name, quo_phone_number, telnyx_number, active, daily_dial_goal, daily_talk_goal_min")
     .order("sort_order");
 
   let numbers: string[] = [];
@@ -39,7 +39,12 @@ export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
-  let body: { repId?: string; telnyxNumber?: string | null };
+  let body: {
+    repId?: string;
+    telnyxNumber?: string | null;
+    dialGoal?: number;
+    talkGoalMin?: number;
+  };
   try {
     body = await req.json();
   } catch {
@@ -47,10 +52,18 @@ export async function POST(req: NextRequest) {
   }
   if (!body.repId) return NextResponse.json({ error: "repId required" }, { status: 400 });
   const db = supabaseAdmin();
-  const { error } = await db
-    .from("reps")
-    .update({ telnyx_number: body.telnyxNumber || null })
-    .eq("id", body.repId);
+  const update: Record<string, unknown> = {};
+  if ("telnyxNumber" in body) update.telnyx_number = body.telnyxNumber || null;
+  if (typeof body.dialGoal === "number" && body.dialGoal > 0) {
+    update.daily_dial_goal = Math.min(500, Math.round(body.dialGoal));
+  }
+  if (typeof body.talkGoalMin === "number" && body.talkGoalMin > 0) {
+    update.daily_talk_goal_min = Math.min(480, Math.round(body.talkGoalMin));
+  }
+  if (Object.keys(update).length === 0) {
+    return NextResponse.json({ error: "nothing to update" }, { status: 400 });
+  }
+  const { error } = await db.from("reps").update(update).eq("id", body.repId);
   if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
 
   // Assigning a number provisions the rep's calling identity (their own

@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { ensurePhone, getPhoneState, newOutboundCall, setOutboundHandler, subscribePhone } from "./phoneClient";
-import { VmPanel, type VmDrop } from "./VmPanel";
+import type { VmDrop } from "./VmPanel";
 
 declare global {
   interface Window {
@@ -123,6 +124,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [searchResults, setSearchResults] = useState<Lead[] | null>(null);
   const [searching, setSearching] = useState(false);
+  const [queuesOpen, setQueuesOpen] = useState(false);
 
   const [inCall, setInCall] = useState(false);
   // How calls are placed: Quo desktop app (tel: handoff), Quo web (clipboard
@@ -253,6 +255,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   // ── Momentum: today's totals, personal best, streak (goal-gradient) ──
   const [today, setToday] = useState<{
     goal: number;
+    talkGoalMin: number;
     dialsToday: number;
     connectsToday: number;
     talkSecToday: number;
@@ -640,8 +643,23 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     if (autoAdv) setLeadIdx((i) => i + 1);
   };
 
+  // VM drop selection lives in Settings → My profile (persisted per machine);
+  // fall back to the first available recording when nothing was chosen.
   const [vmDrop, setVmDrop] = useState<VmDrop | null>(null);
   const [vmPlaying, setVmPlaying] = useState(false);
+  useEffect(() => {
+    try {
+      const s = localStorage.getItem("vmDrop");
+      if (s) {
+        setVmDrop(JSON.parse(s));
+        return;
+      }
+    } catch {}
+    fetch("/api/vm-drops")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d?.drops?.[0] && setVmDrop(d.drops[0]))
+      .catch(() => {});
+  }, []);
 
   const dropVm = async () => {
     if (!inCall) return;
@@ -860,27 +878,47 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
           )}
 
           <div className="panel-h">Queues</div>
-          <div className="queue-list">
-            {queues.map((q) => (
-              <div
-                key={q.id}
-                className={`queue-item ${activeQueue?.id === q.id ? "active" : ""}`}
-                onClick={() => {
-                  setLoading(true);
-                  setQueueLabel(null);
-                  setSearchResults(null);
-                  loadQueue(q, ownerScope, nameFilter.trim())
-                    .catch((e) => setError(String(e)))
-                    .finally(() => setLoading(false));
-                }}
-              >
-                <span>
-                  {q.name}
-                  {q.is_primary && <span className="prim"> PRIMARY</span>}
-                </span>
-                <span className="count">{q.count ?? "…"}</span>
-              </div>
-            ))}
+          <div style={{ position: "relative" }}>
+            <button
+              className="btn"
+              style={{ width: "100%", justifyContent: "space-between", gap: 8 }}
+              onClick={() => setQueuesOpen((v) => !v)}
+            >
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                📋 {activeQueue?.name ?? "Pick a queue…"}
+              </span>
+              <span style={{ color: "var(--text-3)", fontSize: 13, flexShrink: 0 }}>
+                {activeQueue?.count != null ? `${activeQueue.count} ` : ""}▾
+              </span>
+            </button>
+            {queuesOpen && (
+              <>
+                <div style={{ position: "fixed", inset: 0, zIndex: 59 }} onClick={() => setQueuesOpen(false)} />
+                <div className="dropdown-menu">
+                  {queues.map((q) => (
+                    <div
+                      key={q.id}
+                      className={`queue-item ${activeQueue?.id === q.id ? "active" : ""}`}
+                      onClick={() => {
+                        setQueuesOpen(false);
+                        setLoading(true);
+                        setQueueLabel(null);
+                        setSearchResults(null);
+                        loadQueue(q, ownerScope, nameFilter.trim())
+                          .catch((e) => setError(String(e)))
+                          .finally(() => setLoading(false));
+                      }}
+                    >
+                      <span>
+                        {q.name}
+                        {q.is_primary && <span className="prim"> PRIMARY</span>}
+                      </span>
+                      <span className="count">{q.count ?? "…"}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
 
           <div className="panel-h" style={{ marginTop: 20 }}>Filter</div>
@@ -1223,10 +1261,20 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                   style={{ width: `${Math.min(100, (100 * today.dialsToday) / today.goal)}%` }}
                 />
               </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 10 }}>
+                <b style={{ fontSize: 17, fontVariantNumeric: "tabular-nums" }}>
+                  {Math.round(today.talkSecToday / 60)}
+                  <span style={{ fontSize: 13, color: "var(--text-3)", fontWeight: 600 }}> / {today.talkGoalMin}m talk</span>
+                </b>
+              </div>
+              <div className="goalbar">
+                <div
+                  className={`fill ${today.talkSecToday >= today.talkGoalMin * 60 ? "done" : ""}`}
+                  style={{ width: `${Math.min(100, (100 * today.talkSecToday) / (today.talkGoalMin * 60))}%` }}
+                />
+              </div>
               <div className="momentum-sub">
-                <span>
-                  {today.connectsToday} connects · {Math.round(today.talkSecToday / 60)}m talk
-                </span>
+                <span>{today.connectsToday} connects</span>
                 <span title={today.bestDay ?? undefined}>
                   {today.bestDials > 0
                     ? today.dialsToday > today.bestDials
@@ -1253,7 +1301,16 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
               <span className="tk" /> Auto-advance after call
             </div>
           </div>
-          <VmPanel selected={vmDrop} onSelect={setVmDrop} />
+          <div className="card" style={{ padding: "12px 16px" }}>
+            <div style={{ fontSize: 13.5, color: "var(--text-3)", display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                🎙 VM drop: <b style={{ color: "var(--text-2)" }}>{vmDrop?.name ?? "none"}</b>
+              </span>
+              <Link href="/settings/profile" style={{ color: "var(--accent-2)", flexShrink: 0 }}>
+                change
+              </Link>
+            </div>
+          </div>
           <div className="card">
             <div className="panel-h">Up next</div>
             <div className="upnext">

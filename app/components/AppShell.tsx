@@ -34,8 +34,12 @@ const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[]
       { label: "Quality", href: "/quality", adminOnly: true },
       { label: "CRM", href: "/crm", adminOnly: true },
       { label: "Commissions", href: "/commissions", adminOnly: true },
-      { label: "⚙ Settings", href: "/settings", adminOnly: true },
     ],
+  },
+  {
+    // Everyone: admins land on team config, reps on their profile page.
+    header: null,
+    items: [{ label: "⚙ Settings", href: "/settings" }],
   },
 ];
 
