@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface Deal {
   id: string;
@@ -149,8 +149,14 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
   const [tzFilter, setTzFilter] = useState("");
   const [colConfig, setColConfig] = useState<{ key: string; visible: boolean }[]>([]);
   const [colsOpen, setColsOpen] = useState(false);
+  // Pointer-based drag (works in the WKWebView companion; HTML5 DnD doesn't).
   const [dragKey, setDragKey] = useState<string | null>(null);
+  const [dropIdx, setDropIdx] = useState<number | null>(null);
+  const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const dropIdxRef = useRef<number | null>(null);
+  const colConfigRef = useRef<{ key: string; visible: boolean }[]>([]);
   useEffect(() => setColConfig(loadColConfig()), []);
+  useEffect(() => { colConfigRef.current = colConfig; }, [colConfig]);
   const saveCols = (next: { key: string; visible: boolean }[]) => {
     setColConfig(next);
     try {
@@ -159,16 +165,43 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
   };
   const toggleCol = (key: string) =>
     saveCols(colConfig.map((c) => (c.key === key ? { ...c, visible: !c.visible } : c)));
-  // Live reorder: move the dragged key to the hovered row's slot.
-  const moveTo = (targetKey: string) => {
-    if (!dragKey || dragKey === targetKey) return;
-    const from = colConfig.findIndex((c) => c.key === dragKey);
-    const to = colConfig.findIndex((c) => c.key === targetKey);
-    if (from < 0 || to < 0) return;
-    const next = [...colConfig];
-    const [moved] = next.splice(from, 1);
-    next.splice(to, 0, moved);
-    saveCols(next);
+
+  const startColDrag = (key: string, e: React.PointerEvent) => {
+    if ((e.target as HTMLElement).tagName === "INPUT") return; // let the checkbox click
+    e.preventDefault();
+    setDragKey(key);
+    const computeDrop = (clientY: number) => {
+      const list = colConfigRef.current;
+      let idx = list.length;
+      for (let i = 0; i < list.length; i++) {
+        const el = rowRefs.current.get(list[i].key);
+        if (!el) continue;
+        const r = el.getBoundingClientRect();
+        if (clientY < r.top + r.height / 2) { idx = i; break; }
+      }
+      dropIdxRef.current = idx;
+      setDropIdx(idx);
+    };
+    computeDrop(e.clientY);
+    const onMove = (ev: PointerEvent) => computeDrop(ev.clientY);
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      const list = colConfigRef.current;
+      const from = list.findIndex((c) => c.key === key);
+      const insert = dropIdxRef.current;
+      if (from >= 0 && insert != null) {
+        const next = [...list];
+        const [moved] = next.splice(from, 1);
+        next.splice(from < insert ? insert - 1 : insert, 0, moved);
+        saveCols(next);
+      }
+      setDragKey(null);
+      setDropIdx(null);
+      dropIdxRef.current = null;
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
   };
   const visibleCols = colConfig.filter((c) => c.visible).map((c) => COL_MAP.get(c.key)!).filter(Boolean);
   const colCount = visibleCols.length + (isAdmin ? 1 : 0);
@@ -482,43 +515,51 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
             <div style={{ position: "fixed", inset: 0, zIndex: 59 }} onClick={() => setColsOpen(false)} />
             <div className="dropdown-menu" style={{ left: "auto", right: 0, width: 240, top: "calc(100% + 4px)" }}>
               <div style={{ fontSize: 11.5, color: "var(--text-3)", padding: "2px 8px 6px" }}>
-                Check to show · drag to reorder
+                Check to show · drag ⠿ to reorder
               </div>
-              {colConfig.map((c) => {
+              {colConfig.map((c, i) => {
                 const def = COL_MAP.get(c.key);
                 if (!def) return null;
                 return (
-                  <div
-                    key={c.key}
-                    draggable
-                    onDragStart={(e) => {
-                      setDragKey(c.key);
-                      e.dataTransfer.effectAllowed = "move";
-                      e.dataTransfer.setData("text/plain", c.key); // required to start a drag
-                    }}
-                    onDragEnter={() => moveTo(c.key)}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      e.dataTransfer.dropEffect = "move";
-                    }}
-                    onDragEnd={() => setDragKey(null)}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      padding: "6px 8px",
-                      borderRadius: 7,
-                      cursor: "grab",
-                      opacity: dragKey === c.key ? 0.5 : 1,
-                      background: dragKey === c.key ? "var(--surface-3)" : "transparent",
-                    }}
-                  >
-                    <span style={{ color: "var(--text-3)", fontSize: 13, cursor: "grab" }}>⠿</span>
-                    <input type="checkbox" checked={c.visible} onChange={() => toggleCol(c.key)} draggable={false} />
-                    <span style={{ fontSize: 13.5, userSelect: "none" }}>{def.label}</span>
+                  <div key={c.key}>
+                    {dragKey && dropIdx === i && (
+                      <div style={{ height: 2, background: "var(--accent)", borderRadius: 2, margin: "1px 6px" }} />
+                    )}
+                    <div
+                      ref={(el) => {
+                        if (el) rowRefs.current.set(c.key, el);
+                        else rowRefs.current.delete(c.key);
+                      }}
+                      onPointerDown={(e) => startColDrag(c.key, e)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "7px 8px",
+                        borderRadius: 7,
+                        cursor: "grab",
+                        touchAction: "none",
+                        userSelect: "none",
+                        opacity: dragKey === c.key ? 0.4 : 1,
+                        background: dragKey === c.key ? "var(--surface-3)" : "transparent",
+                      }}
+                    >
+                      <span style={{ color: "var(--text-3)", fontSize: 14 }}>⠿</span>
+                      <input
+                        type="checkbox"
+                        checked={c.visible}
+                        onChange={() => toggleCol(c.key)}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        style={{ cursor: "pointer" }}
+                      />
+                      <span style={{ fontSize: 13.5 }}>{def.label}</span>
+                    </div>
                   </div>
                 );
               })}
+              {dragKey && dropIdx === colConfig.length && (
+                <div style={{ height: 2, background: "var(--accent)", borderRadius: 2, margin: "1px 6px" }} />
+              )}
             </div>
           </>
         )}
