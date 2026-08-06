@@ -26,11 +26,18 @@ export async function GET(req: NextRequest) {
   const asc = p.get("dir") === "asc";
   const PAGE_SIZE = 50;
 
+  // Filtering by timezone constrains the PARENT list, which needs an inner
+  // join on the embedded contact (a plain embed leaves deals unfiltered).
+  const tz = p.get("tz"); // west | central | east
+  const contactEmbed = tz
+    ? "crm_contacts!inner ( name, phones, tz_offset )"
+    : "crm_contacts ( name, phones, tz_offset )";
+
   const db = supabaseAdmin();
   let q = db
     .from("crm_deals")
     .select(
-      "id, title, status, value_cents, owner_pipedrive_id, stage_changed_at, last_activity_at, updated_at, pd_add_time, pipedrive_deal_id, crm_stages ( name, pipeline_id, crm_pipelines ( name ) ), crm_contacts ( name, phones, tz_offset ), deal_sources ( name )",
+      `id, title, status, value_cents, owner_pipedrive_id, stage_changed_at, last_activity_at, updated_at, pd_add_time, pipedrive_deal_id, crm_stages ( name, pipeline_id, crm_pipelines ( name ) ), ${contactEmbed}, deal_sources ( name )`,
       { count: "exact" }
     );
 
@@ -40,6 +47,10 @@ export async function GET(req: NextRequest) {
   const source = p.get("source");
   if (source === "none") q = q.is("source_id", null);
   else if (source) q = q.eq("source_id", source);
+  // West ≤ −7, Central = −6, East ≥ −5 (offsets are contiguous by region).
+  if (tz === "west") q = q.lte("crm_contacts.tz_offset", -7);
+  else if (tz === "central") q = q.eq("crm_contacts.tz_offset", -6);
+  else if (tz === "east") q = q.gte("crm_contacts.tz_offset", -5);
   const search = (p.get("q") ?? "").trim();
   if (search) q = q.ilike("title", `%${search.replace(/[%_]/g, "")}%`);
 

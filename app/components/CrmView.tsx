@@ -41,7 +41,14 @@ const OWNER_NAMES: Record<number, string> = {
   23851090: "Kecia",
 };
 
-const TZ_LABEL: Record<number, string> = { [-4]: "AT", [-5]: "ET", [-6]: "CT", [-7]: "MT", [-8]: "PT", [-9]: "AK", [-10]: "HI" };
+/** Three caller-facing buckets from the raw UTC offset. West = PT/MT/AK/HI
+ * (≤ −7), Central = −6, East = ET/AT (≥ −5). */
+function tzRegion(offset: number | null | undefined): string | null {
+  if (offset == null) return null;
+  if (offset <= -7) return "West";
+  if (offset === -6) return "Central";
+  return "East";
+}
 
 const COLUMNS: [string, string][] = [
   ["title", "Deal"],
@@ -69,6 +76,7 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
   const [status, setStatus] = useState("open");
   const [owner, setOwner] = useState(defaultOwner);
   const [srcFilter, setSrcFilter] = useState("");
+  const [tzFilter, setTzFilter] = useState("");
   const [sources, setSources] = useState<{ id: string; name: string }[]>([]);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("updated");
@@ -145,6 +153,7 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
     if (stage) params.set("stageId", stage);
     if (owner) params.set("owner", owner);
     if (srcFilter) params.set("source", srcFilter);
+    if (tzFilter) params.set("tz", tzFilter);
     if (search.trim()) params.set("q", search.trim());
     try {
       const r = await fetch(`/api/crm/deals?${params}`);
@@ -157,7 +166,7 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
     } finally {
       setLoading(false);
     }
-  }, [page, sort, dir, status, stage, owner, srcFilter, search]);
+  }, [page, sort, dir, status, stage, owner, srcFilter, tzFilter, search]);
 
   useEffect(() => {
     fetch("/api/crm/sources")
@@ -317,6 +326,12 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
             <option key={s.id} value={s.id}>{s.name}</option>
           ))}
         </select>
+        <select className="vmsel" style={{ width: "auto" }} value={tzFilter} onChange={(e) => { setTzFilter(e.target.value); setPage(0); }}>
+          <option value="">Any timezone</option>
+          <option value="west">🌎 West</option>
+          <option value="central">🌎 Central</option>
+          <option value="east">🌎 East</option>
+        </select>
         <input
           className="vmsel"
           style={{ width: 220 }}
@@ -414,9 +429,7 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
                   </a>
                 </td>
                 <td style={{ whiteSpace: "nowrap", color: "var(--text-2)", fontWeight: 650 }}>
-                  {d.crm_contacts?.tz_offset != null
-                    ? TZ_LABEL[d.crm_contacts.tz_offset] ?? `UTC${d.crm_contacts.tz_offset}`
-                    : "—"}
+                  {tzRegion(d.crm_contacts?.tz_offset) ?? "—"}
                 </td>
                 <td style={{ whiteSpace: "nowrap" }}>
                   {d.crm_stages?.name ?? "—"}
