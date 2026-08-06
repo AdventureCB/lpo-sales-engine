@@ -13,7 +13,7 @@ interface Deal {
   updated_at: string;
   pd_add_time: string | null;
   crm_stages: { name: string; pipeline_id: string; crm_pipelines: { name: string } | null } | null;
-  crm_contacts: { name: string; phones: { value: string; e164?: string }[] } | null;
+  crm_contacts: { name: string; phones: { value: string; e164?: string }[]; tz_offset: number | null } | null;
 }
 
 interface Meta {
@@ -41,8 +41,11 @@ const OWNER_NAMES: Record<number, string> = {
   23851090: "Kecia",
 };
 
+const TZ_LABEL: Record<number, string> = { [-4]: "AT", [-5]: "ET", [-6]: "CT", [-7]: "MT", [-8]: "PT", [-9]: "AK", [-10]: "HI" };
+
 const COLUMNS: [string, string][] = [
   ["title", "Deal"],
+  ["timezone", "TZ"],
   ["stage_changed", "Stage"],
   ["value", "Value"],
   ["activity", "Last activity"],
@@ -391,10 +394,10 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={isAdmin ? 9 : 8} style={{ color: "var(--text-3)", padding: "16px 10px" }}>Loading…</td></tr>
+              <tr><td colSpan={isAdmin ? 10 : 9} style={{ color: "var(--text-3)", padding: "16px 10px" }}>Loading…</td></tr>
             )}
             {!loading && deals.length === 0 && (
-              <tr><td colSpan={isAdmin ? 9 : 8} style={{ color: "var(--text-3)", padding: "16px 10px" }}>
+              <tr><td colSpan={isAdmin ? 10 : 9} style={{ color: "var(--text-3)", padding: "16px 10px" }}>
                 No deals in the mirror yet — run the import above.
               </td></tr>
             )}
@@ -409,6 +412,11 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
                   <a href={`/crm/deal/${d.id}`} style={{ color: "var(--text-1)", textDecoration: "none" }}>
                     <b>{d.title}</b>
                   </a>
+                </td>
+                <td style={{ whiteSpace: "nowrap", color: "var(--text-2)", fontWeight: 650 }}>
+                  {d.crm_contacts?.tz_offset != null
+                    ? TZ_LABEL[d.crm_contacts.tz_offset] ?? `UTC${d.crm_contacts.tz_offset}`
+                    : "—"}
                 </td>
                 <td style={{ whiteSpace: "nowrap" }}>
                   {d.crm_stages?.name ?? "—"}

@@ -6,6 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const SORTS: Record<string, string> = {
+  timezone: "crm_contacts(tz_offset)", // to-one embedded order (PostgREST 12+)
   updated: "updated_at",
   created: "pd_add_time",
   title: "title",
@@ -29,7 +30,7 @@ export async function GET(req: NextRequest) {
   let q = db
     .from("crm_deals")
     .select(
-      "id, title, status, value_cents, owner_pipedrive_id, stage_changed_at, last_activity_at, updated_at, pd_add_time, pipedrive_deal_id, crm_stages ( name, pipeline_id, crm_pipelines ( name ) ), crm_contacts ( name, phones ), deal_sources ( name )",
+      "id, title, status, value_cents, owner_pipedrive_id, stage_changed_at, last_activity_at, updated_at, pd_add_time, pipedrive_deal_id, crm_stages ( name, pipeline_id, crm_pipelines ( name ) ), crm_contacts ( name, phones, tz_offset ), deal_sources ( name )",
       { count: "exact" }
     );
 
