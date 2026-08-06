@@ -36,7 +36,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
   const [schedSubject, setSchedSubject] = useState("");
   const [schedDue, setSchedDue] = useState("");
   const [sprintPick, setSprintPick] = useState("");
-  const [callHint, setCallHint] = useState(false);
+  const [titleEdit, setTitleEdit] = useState<string | null>(null);
   const [newSprintName, setNewSprintName] = useState("");
   const [newSprintOwner, setNewSprintOwner] = useState("");
   // Upcoming-activity inline editor
@@ -173,23 +173,34 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
     </>
   );
   // Truck lives in the contact section (it's about the customer's vehicle).
+  // A Save button appears once you start editing (no accidental blur-saves).
+  const truckDirty = truckEdit !== null && truckEdit.trim() !== (d.truck_model ?? "");
   const truckFieldEl = (
     <div className="field" style={{ marginTop: 12 }}>
       <label>Truck model</label>
-      <input
-        className="vmsel"
-        style={{ maxWidth: 220 }}
-        placeholder="e.g. Toyota - Tacoma"
-        value={truckEdit ?? d.truck_model ?? ""}
-        disabled={saving}
-        onChange={(e) => setTruckEdit(e.target.value)}
-        onBlur={() => {
-          if (truckEdit !== null && truckEdit.trim() !== (d.truck_model ?? "")) {
-            void update({ truckModel: truckEdit.trim() || null });
-          }
-          setTruckEdit(null);
-        }}
-      />
+      <div style={{ display: "flex", gap: 6 }}>
+        <input
+          className="vmsel"
+          style={{ maxWidth: 220 }}
+          placeholder="e.g. Toyota - Tacoma"
+          value={truckEdit ?? d.truck_model ?? ""}
+          disabled={saving}
+          onChange={(e) => setTruckEdit(e.target.value)}
+        />
+        {truckDirty && (
+          <button
+            className="btn primary"
+            style={{ padding: "6px 12px", fontSize: 13 }}
+            disabled={saving}
+            onClick={async () => {
+              await update({ truckModel: (truckEdit ?? "").trim() || null });
+              setTruckEdit(null);
+            }}
+          >
+            Save
+          </button>
+        )}
+      </div>
     </div>
   );
   const commBarEl = (
@@ -199,6 +210,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
       hideCall={embedded}
       contact={contact ? { id: contact.id, name: contact.name, firstName: contact.first_name } : null}
       phone={phones.find((p) => p.primary)?.e164 ?? phones[0]?.e164 ?? phones[0]?.value ?? null}
+      allPhones={phones.map((p) => p.e164 ?? p.value).filter(Boolean)}
       email={emails.find((e) => e.primary)?.value ?? emails[0]?.value ?? null}
       onLogged={load}
     />
@@ -221,7 +233,46 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
           <div className="viewsub" style={{ marginBottom: 6 }}>
             <a href="/crm" style={{ color: "var(--text-3)", textDecoration: "none" }}>← All deals</a>
           </div>
-          <h2 className="viewtitle">{d.title}</h2>
+          {titleEdit === null ? (
+            <h2 className="viewtitle" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {d.title}
+              <button
+                className="btn ghost"
+                style={{ padding: "2px 10px", fontSize: 12, fontWeight: 600 }}
+                onClick={() => setTitleEdit(d.title)}
+              >
+                ✏️ Rename
+              </button>
+            </h2>
+          ) : (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+              <input
+                className="vmsel"
+                style={{ fontSize: 20, fontWeight: 700, maxWidth: 520 }}
+                value={titleEdit}
+                autoFocus
+                onChange={(e) => setTitleEdit(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && titleEdit.trim()) {
+                    void update({ title: titleEdit.trim() });
+                    setTitleEdit(null);
+                  }
+                  if (e.key === "Escape") setTitleEdit(null);
+                }}
+              />
+              <button
+                className="btn primary"
+                disabled={saving || !titleEdit.trim() || titleEdit.trim() === d.title}
+                onClick={() => {
+                  void update({ title: titleEdit.trim() });
+                  setTitleEdit(null);
+                }}
+              >
+                Save
+              </button>
+              <button className="btn ghost" onClick={() => setTitleEdit(null)}>Cancel</button>
+            </div>
+          )}
           <div className="viewsub">
             {d.crm_stages?.crm_pipelines?.name} ▸ {d.crm_stages?.name ?? "—"} · {d.status}
             {d.value_cents != null && <> · ${Math.round(d.value_cents / 100).toLocaleString()}</>}
@@ -765,67 +816,13 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
           {embedded && klaviyoEl}
           {!embedded && (
             <>
-          <div className="panel-h">Contact</div>
           {contact ? (
-            <>
-              <div style={{ fontSize: 17, fontWeight: 800 }}>{contact.name}</div>
-              {contact.org_name && <div style={{ color: "var(--text-2)", fontSize: 14 }}>{contact.org_name}</div>}
-              <div style={{ marginTop: 10 }}>
-                {phones.map((p, i) => {
-                  const num = p.e164 ?? p.value;
-                  return (
-                    <div key={i} style={{ fontSize: 14, fontVariantNumeric: "tabular-nums", padding: "3px 0" }}>
-                      📞{" "}
-                      <a
-                        href={`tel:${num}`}
-                        style={{ color: "var(--text-1)", textDecorationColor: "var(--text-3)" }}
-                        title={callHint ? "Number copied — paste in the Quo web tab" : "Call via Quo"}
-                        onClick={(e) => {
-                          // Same per-machine setting as the dialer: web mode
-                          // hands off via clipboard (Quo web has no dial URL).
-                          if (localStorage.getItem("dialMethod") === "web") {
-                            e.preventDefault();
-                            void navigator.clipboard?.writeText(num).catch(() => {});
-                            window.open("https://my.quo.com", "quo-web");
-                            setCallHint(true);
-                            setTimeout(() => setCallHint(false), 6000);
-                          }
-                        }}
-                      >
-                        {num}
-                      </a>
-                      {p.primary && <span style={{ fontSize: 11, color: "var(--text-3)" }}> · primary</span>}
-                    </div>
-                  );
-                })}
-                {callHint && (
-                  <div style={{ fontSize: 12.5, color: "var(--text-2)" }}>
-                    📋 Number copied — paste into the Quo web dialer (⌘V)
-                  </div>
-                )}
-                {emails.map((e, i) => (
-                  <div key={i} style={{ fontSize: 14, padding: "3px 0", color: "var(--text-2)" }}>
-                    ✉️{" "}
-                    <a
-                      href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(e.value)}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{ color: "var(--text-2)", textDecorationColor: "var(--text-3)" }}
-                      title="Compose in Gmail"
-                    >
-                      {e.value}
-                    </a>
-                  </div>
-                ))}
-                {phones.length === 0 && emails.length === 0 && (
-                  <div style={{ color: "var(--text-3)", fontSize: 14 }}>No contact details.</div>
-                )}
-                <AddContactDetail contactId={contact.id} onSaved={load} />
-              </div>
-              {truckFieldEl}
-            </>
+            <ContactCard contact={contact} phones={phones} emails={emails} truck={truckFieldEl} onSaved={load} />
           ) : (
-            <div style={{ color: "var(--text-3)", fontSize: 14 }}>No linked contact.</div>
+            <>
+              <div className="panel-h">Contact</div>
+              <div style={{ color: "var(--text-3)", fontSize: 14 }}>No linked contact.</div>
+            </>
           )}
             </>
           )}
@@ -1310,6 +1307,7 @@ function CommBar({
   pdDealId,
   contact,
   phone,
+  allPhones = [],
   email,
   onLogged,
   hideCall,
@@ -1318,6 +1316,7 @@ function CommBar({
   pdDealId: number | null;
   contact: { id: string; name: string; firstName: string | null } | null;
   phone: string | null;
+  allPhones?: string[];
   email: string | null;
   onLogged: () => void;
   hideCall?: boolean;
@@ -1407,8 +1406,12 @@ function CommBar({
     setBody((b) => (b ? `${b.trimEnd()} ${a.url}` : a.url));
   };
 
-  const startCall = () => {
-    if (!phone || awaitingDispo) return;
+  const [showNumPicker, setShowNumPicker] = useState(false);
+
+  const startCall = (target?: string) => {
+    const num = target ?? phone;
+    if (!num || awaitingDispo) return;
+    setShowNumPicker(false);
     dialStartedAtRef.current = new Date().toISOString();
     // Attempt log drives pool cooldown/fairness, same as the dialer.
     if (pdDealId) {
@@ -1431,7 +1434,7 @@ function CommBar({
           setAwaitingDispo(true);
         }
       });
-      newOutboundCall(phone)
+      newOutboundCall(num)
         .then((c) => {
           callRef.current = c;
           setCallState("ringing");
@@ -1440,15 +1443,21 @@ function CommBar({
     } else {
       // Call happens in Quo — log the outcome here when it wraps.
       if (method === "web") {
-        void navigator.clipboard?.writeText(phone).catch(() => {});
+        void navigator.clipboard?.writeText(num).catch(() => {});
         window.open("https://my.quo.com", "quo-web");
       } else if (window.__TAURI__) {
-        void window.__TAURI__.core.invoke("open_tel", { url: `tel:${phone}` }).catch(() => {});
+        void window.__TAURI__.core.invoke("open_tel", { url: `tel:${num}` }).catch(() => {});
       } else {
-        window.location.href = `tel:${phone}`;
+        window.location.href = `tel:${num}`;
       }
       setAwaitingDispo(true);
     }
+  };
+
+  /** Multiple numbers → let the rep pick which to try. */
+  const onCallClick = () => {
+    if (allPhones.length > 1) setShowNumPicker(true);
+    else startCall();
   };
 
   const endCall = () => {
@@ -1549,8 +1558,8 @@ function CommBar({
       {/* Floating buttons — no card, low visual weight. */}
       <div style={{ display: "grid", gridTemplateColumns: `repeat(${hideCall ? 3 : 4}, 1fr)`, gap: 10 }}>
         {!hideCall && (callState === null ? (
-          <button className="btn" style={btnStyle} disabled={!phone || awaitingDispo} title={phone ?? "No phone on contact"} onClick={startCall}>
-            📞 Call
+          <button className="btn" style={btnStyle} disabled={!phone || awaitingDispo} title={allPhones.length > 1 ? "Pick which number to try" : phone ?? "No phone on contact"} onClick={onCallClick}>
+            📞 Call{allPhones.length > 1 ? ` (${allPhones.length})` : ""}
           </button>
         ) : callState.startsWith("error") ? (
           <button className="btn" style={{ ...btnStyle, color: "var(--crit)" }} onClick={() => setCallState(null)} title={callState}>
@@ -1599,6 +1608,20 @@ function CommBar({
         </button>
       </div>
       {ok && <div style={{ color: "var(--good)", fontSize: 13.5, fontWeight: 700, marginTop: 8 }}>{ok}</div>}
+
+      {showNumPicker && (
+        <div className="card" style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 13.5, color: "var(--text-2)", marginBottom: 8 }}>Which number?</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {allPhones.map((n) => (
+              <button key={n} className="btn" style={{ fontVariantNumeric: "tabular-nums" }} onClick={() => startCall(n)}>
+                📞 {n}{n === phone ? " · primary" : ""}
+              </button>
+            ))}
+            <button className="btn ghost" onClick={() => setShowNumPicker(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
 
       {/* Disposition — appears when a call wraps, same flow as the dialer. */}
       {awaitingDispo && !pendingDispo && (
@@ -1739,6 +1762,219 @@ function ActionModal({ title, onClose, children }: { title: string; onClose: () 
         </div>
         {children}
       </div>
+    </div>
+  );
+}
+
+// ── Editable contact card (name / phones / emails, click-to-call) ──────────
+
+interface CardPhone { value: string; e164?: string; primary?: boolean }
+interface CardEmail { value: string; primary?: boolean }
+
+function ContactCard({
+  contact,
+  phones,
+  emails,
+  truck,
+  onSaved,
+}: {
+  contact: { id: string; name: string; first_name?: string | null; last_name?: string | null; org_name?: string | null };
+  phones: CardPhone[];
+  emails: CardEmail[];
+  truck: React.ReactNode;
+  onSaved: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [first, setFirst] = useState("");
+  const [last, setLast] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [callHint, setCallHint] = useState(false);
+
+  const post = async (payload: Record<string, unknown>) => {
+    setBusy(true);
+    const r = await fetch("/api/crm/contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contactId: contact.id, ...payload }),
+    }).catch(() => null);
+    setBusy(false);
+    if (r?.ok) onSaved();
+    return Boolean(r?.ok);
+  };
+
+  const startEdit = () => {
+    // Prefer stored first/last; else split the display name.
+    const parts = (contact.name ?? "").trim().split(/\s+/);
+    setFirst(contact.first_name ?? parts[0] ?? "");
+    setLast(contact.last_name ?? parts.slice(1).join(" ") ?? "");
+    setEditing(true);
+  };
+
+  const callNumber = (num: string) => {
+    const method = localStorage.getItem("dialMethod") ?? "desktop";
+    if (method === "web") {
+      void navigator.clipboard?.writeText(num).catch(() => {});
+      window.open("https://my.quo.com", "quo-web");
+      setCallHint(true);
+      setTimeout(() => setCallHint(false), 6000);
+    } else if (typeof window !== "undefined" && window.__TAURI__) {
+      void window.__TAURI__.core.invoke("open_tel", { url: `tel:${num}` }).catch(() => {});
+    } else {
+      window.location.href = `tel:${num}`;
+    }
+  };
+
+  const phoneKey = (p: CardPhone) => p.e164 ?? p.value;
+
+  return (
+    <>
+      <div className="panel-h" style={{ display: "flex", alignItems: "center" }}>
+        Contact
+        <button
+          className="btn ghost"
+          style={{ marginLeft: "auto", padding: "2px 10px", fontSize: 12 }}
+          onClick={() => (editing ? setEditing(false) : startEdit())}
+        >
+          {editing ? "Done" : "✏️ Edit"}
+        </button>
+      </div>
+
+      {editing ? (
+        <div style={{ display: "grid", gap: 8, marginBottom: 8 }}>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input className="vmsel" placeholder="First" value={first} onChange={(e) => setFirst(e.target.value)} />
+            <input className="vmsel" placeholder="Last" value={last} onChange={(e) => setLast(e.target.value)} />
+            <button
+              className="btn primary"
+              style={{ padding: "6px 12px", fontSize: 13 }}
+              disabled={busy || !(first.trim() || last.trim())}
+              onClick={() => post({ op: "rename", firstName: first, lastName: last })}
+            >
+              Save
+            </button>
+          </div>
+
+          {phones.map((p) => (
+            <EditableValue
+              key={phoneKey(p)}
+              icon="📞"
+              value={p.e164 ?? p.value}
+              primary={!!p.primary}
+              busy={busy}
+              onPrimary={() => post({ op: "set_primary_phone", value: phoneKey(p) })}
+              onSave={(v) => post({ op: "edit_phone", value: phoneKey(p), newValue: v })}
+              onRemove={() => post({ op: "remove_phone", value: phoneKey(p) })}
+            />
+          ))}
+          {emails.map((e) => (
+            <EditableValue
+              key={e.value}
+              icon="✉️"
+              value={e.value}
+              primary={!!e.primary}
+              busy={busy}
+              onPrimary={() => post({ op: "set_primary_email", value: e.value })}
+              onSave={(v) => post({ op: "edit_email", value: e.value, newValue: v })}
+              onRemove={() => post({ op: "remove_email", value: e.value })}
+            />
+          ))}
+          <AddContactDetail contactId={contact.id} onSaved={onSaved} />
+          {truck}
+        </div>
+      ) : (
+        <>
+          <div style={{ fontSize: 17, fontWeight: 800 }}>{contact.name}</div>
+          {contact.org_name && <div style={{ color: "var(--text-2)", fontSize: 14 }}>{contact.org_name}</div>}
+          <div style={{ marginTop: 10 }}>
+            {phones.map((p, i) => {
+              const num = p.e164 ?? p.value;
+              return (
+                <div key={i} style={{ fontSize: 14, fontVariantNumeric: "tabular-nums", padding: "3px 0" }}>
+                  📞{" "}
+                  <a
+                    href={`tel:${num}`}
+                    style={{ color: "var(--text-1)", textDecorationColor: "var(--text-3)" }}
+                    title="Call"
+                    onClick={(e) => {
+                      if (localStorage.getItem("dialMethod") === "web" || (typeof window !== "undefined" && window.__TAURI__)) {
+                        e.preventDefault();
+                        callNumber(num);
+                      }
+                    }}
+                  >
+                    {num}
+                  </a>
+                  {p.primary && <span style={{ fontSize: 11, color: "var(--text-3)" }}> · primary</span>}
+                </div>
+              );
+            })}
+            {callHint && <div style={{ fontSize: 12.5, color: "var(--text-2)" }}>📋 Number copied — paste into the Quo web dialer (⌘V)</div>}
+            {emails.map((e, i) => (
+              <div key={i} style={{ fontSize: 14, padding: "3px 0", color: "var(--text-2)" }}>
+                ✉️{" "}
+                <a
+                  href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(e.value)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: "var(--text-2)", textDecorationColor: "var(--text-3)" }}
+                  title="Compose in Gmail"
+                >
+                  {e.value}
+                </a>
+                {e.primary && <span style={{ fontSize: 11, color: "var(--text-3)" }}> · primary</span>}
+              </div>
+            ))}
+            {phones.length === 0 && emails.length === 0 && (
+              <div style={{ color: "var(--text-3)", fontSize: 14 }}>No contact details.</div>
+            )}
+          </div>
+          {truck}
+        </>
+      )}
+    </>
+  );
+}
+
+/** One editable phone/email row: edit value, ⭐ set primary, 🗑 remove. */
+function EditableValue({
+  icon,
+  value,
+  primary,
+  busy,
+  onPrimary,
+  onSave,
+  onRemove,
+}: {
+  icon: string;
+  value: string;
+  primary: boolean;
+  busy: boolean;
+  onPrimary: () => void;
+  onSave: (v: string) => void;
+  onRemove: () => void;
+}) {
+  const [v, setV] = useState(value);
+  return (
+    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      <span style={{ flexShrink: 0 }}>{icon}</span>
+      <input className="vmsel" style={{ flex: 1 }} value={v} onChange={(e) => setV(e.target.value)} />
+      <button
+        className="btn ghost"
+        style={{ padding: "4px 9px", fontSize: 12, color: primary ? "var(--accent)" : undefined }}
+        title={primary ? "Primary" : "Make primary"}
+        disabled={busy || primary}
+        onClick={onPrimary}
+      >
+        {primary ? "★" : "☆"}
+      </button>
+      {v.trim() !== value && (
+        <button className="btn primary" style={{ padding: "4px 10px", fontSize: 12 }} disabled={busy} onClick={() => onSave(v.trim())}>
+          Save
+        </button>
+      )}
+      <button className="btn ghost" style={{ padding: "4px 9px", fontSize: 12 }} title="Remove" disabled={busy} onClick={onRemove}>
+        🗑
+      </button>
     </div>
   );
 }

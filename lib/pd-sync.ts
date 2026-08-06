@@ -100,7 +100,7 @@ async function runJob(db: SupabaseClient, kind: string, p: any): Promise<void> {
     case "deal_update":
       return updateDealStage(p.dealId, p.fields ?? {});
     case "person_update":
-      return updatePersonContacts(p.personId, { phones: p.phones, emails: p.emails });
+      return updatePersonContacts(p.personId, { name: p.name, phones: p.phones, emails: p.emails });
     case "activity_edit":
       return updateActivity(p.pipedriveActivityId, p.fields ?? {});
     case "activity_delete":

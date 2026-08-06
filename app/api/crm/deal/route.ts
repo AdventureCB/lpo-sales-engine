@@ -144,6 +144,7 @@ export async function POST(req: NextRequest) {
 
   let body: {
     id?: string;
+    title?: string;
     stageId?: string;
     status?: string;
     lostReason?: string;
@@ -238,6 +239,21 @@ export async function POST(req: NextRequest) {
         await updateActivity(act.pipedrive_activity_id, { done: 1 });
       } catch {
         await enqueuePdSync(db, "activity_done", { pipedriveActivityId: act.pipedrive_activity_id });
+        writeThroughError = "Pipedrive busy — queued, will sync automatically";
+      }
+    }
+  }
+
+  // Rename the deal. CRM-first; title written through to Pipedrive.
+  if (body.title !== undefined) {
+    const title = body.title.trim();
+    if (!title) return NextResponse.json({ error: "title required" }, { status: 400 });
+    await db.from("crm_deals").update({ title, updated_at: new Date().toISOString() }).eq("id", deal.id);
+    if (canWriteThrough) {
+      try {
+        await updateDealStage(deal.pipedrive_deal_id!, { title });
+      } catch {
+        await enqueuePdSync(db, "deal_update", { dealId: deal.pipedrive_deal_id, fields: { title } });
         writeThroughError = "Pipedrive busy — queued, will sync automatically";
       }
     }

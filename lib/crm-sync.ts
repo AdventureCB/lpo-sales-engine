@@ -422,6 +422,12 @@ export async function upsertDeal(
     .single();
   if (error) throw new Error(`deal upsert: ${error.message}`);
 
+  // Recompute last_activity_at from existing activity (covers a deal created
+  // after its contact already had history — the bump trigger can't).
+  if (upserted) {
+    await db.rpc("refresh_one_deal_last_activity", { p_deal: upserted.id }).then(() => {}, () => {});
+  }
+
   if (opts.emitEvents && upserted) {
     const { enqueueEvent } = await import("./automations");
     if (!existing) {
