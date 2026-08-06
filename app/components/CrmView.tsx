@@ -159,7 +159,8 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
   };
   const toggleCol = (key: string) =>
     saveCols(colConfig.map((c) => (c.key === key ? { ...c, visible: !c.visible } : c)));
-  const dropOn = (targetKey: string) => {
+  // Live reorder: move the dragged key to the hovered row's slot.
+  const moveTo = (targetKey: string) => {
     if (!dragKey || dragKey === targetKey) return;
     const from = colConfig.findIndex((c) => c.key === dragKey);
     const to = colConfig.findIndex((c) => c.key === targetKey);
@@ -490,9 +491,16 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
                   <div
                     key={c.key}
                     draggable
-                    onDragStart={() => setDragKey(c.key)}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={() => dropOn(c.key)}
+                    onDragStart={(e) => {
+                      setDragKey(c.key);
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", c.key); // required to start a drag
+                    }}
+                    onDragEnter={() => moveTo(c.key)}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                    }}
                     onDragEnd={() => setDragKey(null)}
                     style={{
                       display: "flex",
@@ -501,12 +509,13 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
                       padding: "6px 8px",
                       borderRadius: 7,
                       cursor: "grab",
+                      opacity: dragKey === c.key ? 0.5 : 1,
                       background: dragKey === c.key ? "var(--surface-3)" : "transparent",
                     }}
                   >
-                    <span style={{ color: "var(--text-3)", fontSize: 13 }}>⠿</span>
-                    <input type="checkbox" checked={c.visible} onChange={() => toggleCol(c.key)} />
-                    <span style={{ fontSize: 13.5 }}>{def.label}</span>
+                    <span style={{ color: "var(--text-3)", fontSize: 13, cursor: "grab" }}>⠿</span>
+                    <input type="checkbox" checked={c.visible} onChange={() => toggleCol(c.key)} draggable={false} />
+                    <span style={{ fontSize: 13.5, userSelect: "none" }}>{def.label}</span>
                   </div>
                 );
               })}
