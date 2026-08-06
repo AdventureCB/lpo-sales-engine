@@ -42,9 +42,11 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
   // Upcoming-activity inline editor
   const [editAct, setEditAct] = useState<{ id: string; subject: string; type: string; due: string } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [modal, setModal] = useState<null | "note" | "schedule" | "sprint" | "lost">(null);
+  const [modal, setModal] = useState<null | "note" | "schedule" | "sprint" | "lost" | "reopen">(null);
   const [depositFollow, setDepositFollow] = useState(false); // schedule modal opened by the Deposit flow
   const [lostReason, setLostReason] = useState("");
+  const [reopenPipe, setReopenPipe] = useState("");
+  const [reopenStage, setReopenStage] = useState("");
   const [tlOpen, setTlOpen] = useState<Set<number>>(new Set());
   const [truckEdit, setTruckEdit] = useState<string | null>(null);
   // Pipeline dropdown selection (filters the stage dropdown); null = track the deal.
@@ -90,10 +92,14 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
   const phones = (contact?.phones ?? []) as { value: string; e164?: string; primary?: boolean }[];
   const emails = (contact?.emails ?? []) as { value: string; primary?: boolean }[];
 
-  /** Stage uuid by name pattern, preferring a pipeline; falls back anywhere. */
-  const stageByName = (pattern: RegExp, pipeline?: string): string | undefined =>
-    (data.stages.find((s) => pattern.test(s.name) && (!pipeline || s.crm_pipelines?.name === pipeline)) ??
-      data.stages.find((s) => pattern.test(s.name)))?.id;
+  // The confirmation flow lives in whichever pipeline holds "Confirmed (Won)";
+  // resolve Deposit/Confirmation-Scheduled within THAT pipeline so the two
+  // "Deposit Placed" stages don't get confused.
+  const wonStageObj = data.stages.find((s) => /confirmed/i.test(s.name));
+  const orderPipeId = wonStageObj?.pipeline_id ?? null;
+  const orderStageId = (re: RegExp): string | undefined =>
+    (orderPipeId ? data.stages.find((s) => re.test(s.name) && s.pipeline_id === orderPipeId) : undefined)?.id ??
+    data.stages.find((s) => re.test(s.name))?.id;
 
   // Shared pieces the embedded (dialer) layout re-arranges without forking.
   const propertyFields = (
@@ -260,18 +266,18 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
                   "open",
                   "🔄 Open",
                   () => {
-                    const backStage = inDeposit
-                      ? stageByName(/qualified/i, "Sales / Nurture") ?? stageByName(/warm/i)
-                      : undefined;
-                    void update({ status: "open", ...(backStage ? { stageId: backStage } : {}) });
+                    // Back in play — the rep chooses where it lands.
+                    setReopenPipe("");
+                    setReopenStage("");
+                    setModal("reopen");
                   },
-                  "Back in play — reopens (and pulls a canceled deposit back to nurture)"
+                  "Reopen — pick the pipeline & stage it should go back to"
                 )}
                 {outcomeBtn(
                   "deposit",
                   "💰 Deposit",
                   () => {
-                    const depositStage = stageByName(/deposit placed/i, "Order");
+                    const depositStage = orderStageId(/deposit placed/i);
                     if (depositStage) void update({ stageId: depositStage, status: "open" });
                     setSchedType("call");
                     setSchedSubject("Confirmation follow-up");
@@ -279,16 +285,16 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
                     setDepositFollow(true);
                     setModal("schedule");
                   },
-                  "Deposit placed — moves to Deposit Placed and prompts a confirmation follow-up"
+                  "Deposit placed — moves to the Deposit Placed stage and prompts a confirmation follow-up"
                 )}
                 {outcomeBtn(
                   "won",
                   "✓ Confirmed",
                   () => {
-                    const wonStage = stageByName(/confirmed/i, "Order");
+                    const wonStage = orderStageId(/confirmed/i);
                     void update({ status: "won", ...(wonStage ? { stageId: wonStage } : {}) });
                   },
-                  "Deal executed — archives as won"
+                  "Deal executed — archives as won in Confirmed (Won)"
                 )}
                 {outcomeBtn(
                   "lost",
@@ -383,7 +389,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
                     className="btn primary"
                     disabled={!schedSubject.trim() || saving || (depositFollow && !schedDue)}
                     onClick={async () => {
-                      const confSched = depositFollow ? stageByName(/confirmation scheduled/i, "Order") : undefined;
+                      const confSched = depositFollow ? orderStageId(/confirmation scheduled/i) : undefined;
                       await update({
                         activity: {
                           type: schedType,
@@ -411,6 +417,43 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
                   >
                     {depositFollow ? "Skip for now" : "Cancel"}
                   </button>
+                </div>
+              </div>
+            </ActionModal>
+          )}
+
+          {modal === "reopen" && (
+            <ActionModal title="Reopen deal" onClose={() => setModal(null)}>
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ fontSize: 13, color: "var(--text-3)" }}>
+                  Choose where this deal goes back into play.
+                </div>
+                <select className="vmsel" value={reopenPipe} onChange={(e) => { setReopenPipe(e.target.value); setReopenStage(""); }}>
+                  <option value="" disabled>Pipeline…</option>
+                  {data.pipelines.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+                <select className="vmsel" value={reopenStage} onChange={(e) => setReopenStage(e.target.value)} disabled={!reopenPipe}>
+                  <option value="" disabled>Stage…</option>
+                  {data.stages
+                    .filter((s) => s.pipeline_id === reopenPipe)
+                    .map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                </select>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="btn primary"
+                    disabled={!reopenStage || saving}
+                    onClick={async () => {
+                      await update({ status: "open", stageId: reopenStage });
+                      setModal(null);
+                    }}
+                  >
+                    Reopen here
+                  </button>
+                  <button className="btn ghost" onClick={() => setModal(null)}>Cancel</button>
                 </div>
               </div>
             </ActionModal>
