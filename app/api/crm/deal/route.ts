@@ -151,6 +151,7 @@ export async function POST(req: NextRequest) {
     note?: string;
     ownerPipedriveId?: number;
     activity?: { type: string; subject: string; dueAt?: string | null };
+    logActivity?: { type: string; subject: string; body?: string; occurredAt?: string };
     sourceId?: string | null;
     truckModel?: string | null;
     completeActivityId?: string;
@@ -175,6 +176,42 @@ export async function POST(req: NextRequest) {
 
   let writeThroughError: string | null = null;
   const canWriteThrough = Boolean(envOptional("PIPEDRIVE_API_TOKEN")) && deal.pipedrive_deal_id;
+
+  // Log something that already happened (manual timeline entry). Lands as a
+  // completed activity — bumps last_activity_at and shows on the timeline.
+  if (body.logActivity) {
+    const { type, subject, body: note, occurredAt } = body.logActivity;
+    if (!["call", "meeting", "email", "sms", "task", "note"].includes(type) || !subject?.trim()) {
+      return NextResponse.json({ error: "activity type/subject invalid" }, { status: 400 });
+    }
+    const at = occurredAt || new Date().toISOString();
+    const { data: inserted, error } = await db
+      .from("crm_activities")
+      .insert({
+        deal_id: deal.id,
+        contact_id: deal.contact_id,
+        type,
+        subject: subject.trim(),
+        body: note?.trim() || null,
+        actor: user.email,
+        occurred_at: at,
+        done_at: at, // it already happened
+      })
+      .select("id")
+      .single();
+    if (error || !inserted) return NextResponse.json({ error: "db error" }, { status: 500 });
+    // Pipedrive gets a completed activity (skip 'note' — no matching PD type).
+    if (canWriteThrough && type !== "note") {
+      await enqueuePdSync(db, "activity_create", {
+        dealId: deal.pipedrive_deal_id,
+        subject: subject.trim(),
+        type: type === "sms" ? "task" : type,
+        dueAtIso: at,
+        done: true,
+        crmActivityId: inserted.id,
+      });
+    }
+  }
 
   // Schedule an activity (call / task / meeting / email) with a due time.
   // CRM row first; Pipedrive immediately if possible, else via the outbox.

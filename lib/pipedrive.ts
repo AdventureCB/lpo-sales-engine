@@ -130,6 +130,7 @@ export async function createActivity(opts: {
   subject: string;
   type: string;
   dueAtIso?: string | null;
+  done?: boolean; // logging something that already happened
 }): Promise<number | null> {
   const body: Record<string, unknown> = {
     deal_id: opts.dealId,
@@ -141,6 +142,7 @@ export async function createActivity(opts: {
     body.due_date = d.toISOString().slice(0, 10);
     body.due_time = d.toISOString().slice(11, 16);
   }
+  if (opts.done) body.done = 1;
   const data = await pd(V1, "/activities", { method: "POST", body: JSON.stringify(body) });
   return data?.id ?? null;
 }

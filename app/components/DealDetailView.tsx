@@ -42,7 +42,11 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
   // Upcoming-activity inline editor
   const [editAct, setEditAct] = useState<{ id: string; subject: string; type: string; due: string } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [modal, setModal] = useState<null | "note" | "schedule" | "sprint" | "lost" | "reopen">(null);
+  const [modal, setModal] = useState<null | "note" | "schedule" | "sprint" | "lost" | "reopen" | "log">(null);
+  const [logType, setLogType] = useState("call");
+  const [logSubject, setLogSubject] = useState("");
+  const [logNote, setLogNote] = useState("");
+  const [logWhen, setLogWhen] = useState("");
   const [depositFollow, setDepositFollow] = useState(false); // schedule modal opened by the Deposit flow
   const [lostReason, setLostReason] = useState("");
   const [reopenPipe, setReopenPipe] = useState("");
@@ -473,6 +477,69 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
             </ActionModal>
           )}
 
+          {modal === "log" && (
+            <ActionModal title="Log an activity" onClose={() => setModal(null)}>
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ fontSize: 13, color: "var(--text-3)" }}>
+                  Record something that already happened (defaults to now).
+                </div>
+                <select className="vmsel" value={logType} onChange={(e) => setLogType(e.target.value)}>
+                  <option value="call">📞 Call</option>
+                  <option value="meeting">📅 Meeting</option>
+                  <option value="email">✉️ Email</option>
+                  <option value="sms">💬 Text</option>
+                  <option value="task">📋 Task</option>
+                  <option value="note">📝 Note</option>
+                </select>
+                <input
+                  className="vmsel"
+                  placeholder="What happened?"
+                  value={logSubject}
+                  autoFocus
+                  onChange={(e) => setLogSubject(e.target.value)}
+                />
+                <textarea
+                  className="vmsel"
+                  rows={3}
+                  style={{ resize: "vertical" }}
+                  placeholder="Details (optional)"
+                  value={logNote}
+                  onChange={(e) => setLogNote(e.target.value)}
+                />
+                <label style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+                  When (leave blank for now)
+                  <input
+                    type="datetime-local"
+                    className="vmsel"
+                    style={{ marginTop: 4 }}
+                    value={logWhen}
+                    onChange={(e) => setLogWhen(e.target.value)}
+                  />
+                </label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="btn primary"
+                    disabled={!logSubject.trim() || saving}
+                    onClick={async () => {
+                      await update({
+                        logActivity: {
+                          type: logType,
+                          subject: logSubject.trim(),
+                          body: logNote.trim() || undefined,
+                          occurredAt: logWhen ? new Date(logWhen).toISOString() : undefined,
+                        },
+                      });
+                      setModal(null);
+                    }}
+                  >
+                    Log it
+                  </button>
+                  <button className="btn ghost" onClick={() => setModal(null)}>Cancel</button>
+                </div>
+              </div>
+            </ActionModal>
+          )}
+
           {modal === "reopen" && (
             <ActionModal title="Reopen deal" onClose={() => setModal(null)}>
               <div style={{ display: "grid", gap: 8 }}>
@@ -730,7 +797,22 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
           })()}
 
           <div className="card">
-            <div className="panel-h">Timeline</div>
+            <div className="panel-h" style={{ display: "flex", alignItems: "center" }}>
+              Timeline
+              <button
+                className="btn ghost"
+                style={{ marginLeft: "auto", padding: "3px 11px", fontSize: 12.5 }}
+                onClick={() => {
+                  setLogType("call");
+                  setLogSubject("");
+                  setLogNote("");
+                  setLogWhen("");
+                  setModal("log");
+                }}
+              >
+                ＋ Log activity
+              </button>
+            </div>
             {data.timeline.length === 0 && (
               <div style={{ color: "var(--text-3)", fontSize: 14 }}>No activity yet.</div>
             )}

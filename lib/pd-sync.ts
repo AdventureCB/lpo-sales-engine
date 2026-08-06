@@ -86,6 +86,7 @@ async function runJob(db: SupabaseClient, kind: string, p: any): Promise<void> {
         subject: p.subject,
         type: p.type,
         dueAtIso: p.dueAtIso ?? null,
+        done: p.done ?? false,
       });
       if (pdId && p.crmActivityId) {
         await db
