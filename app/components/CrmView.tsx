@@ -1,6 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { INTERESTS } from "./interests";
+
+const SORT_OPTIONS: { label: string; sort: string; dir: "asc" | "desc" }[] = [
+  { label: "Recently updated", sort: "updated", dir: "desc" },
+  { label: "Newest deals", sort: "created", dir: "desc" },
+  { label: "Oldest deals", sort: "created", dir: "asc" },
+  { label: "Most recent activity", sort: "activity", dir: "desc" },
+  { label: "Longest since activity", sort: "activity", dir: "asc" },
+  { label: "Recently moved stage", sort: "stage_changed", dir: "desc" },
+  { label: "Highest value", sort: "value", dir: "desc" },
+  { label: "Lowest value", sort: "value", dir: "asc" },
+  { label: "Deal name A→Z", sort: "title", dir: "asc" },
+  { label: "Timezone West→East", sort: "timezone", dir: "asc" },
+];
 
 interface Deal {
   id: string;
@@ -13,6 +27,7 @@ interface Deal {
   updated_at: string;
   pd_add_time: string | null;
   truck_model: string | null;
+  interests: string[] | null;
   crm_stages: { name: string; pipeline_id: string; crm_pipelines: { name: string } | null } | null;
   crm_contacts: { name: string; phones: { value: string; e164?: string }[]; tz_offset: number | null } | null;
   // Enrichments computed per page by the API.
@@ -25,6 +40,7 @@ interface Deal {
 interface Meta {
   pipelines: { id: string; name: string }[];
   stages: { id: string; pipeline_id: string; name: string }[];
+  vehicleMakes?: string[];
   mirror: {
     deals: number;
     contacts: number;
@@ -114,6 +130,7 @@ const ALL_COLUMNS: ColDef[] = [
   { key: "source", label: "Source", nowrap: true, render: (d) => <span style={{ color: "var(--text-2)" }}>{d.deal_sources?.name ?? "—"}</span> },
   { key: "owner", label: "Owner", nowrap: true, render: (d) => (d.owner_pipedrive_id ? OWNER_NAMES[d.owner_pipedrive_id] ?? d.owner_pipedrive_id : "—") },
   { key: "truck", label: "Truck", nowrap: true, render: (d) => <span style={{ color: "var(--text-2)" }}>{d.truck_model ?? "—"}</span> },
+  { key: "interests", label: "Interests", nowrap: true, render: (d) => <span style={{ color: "var(--text-2)" }}>{d.interests?.length ? d.interests.join(", ") : "—"}</span> },
   {
     key: "next_activity",
     label: "Next activity",
@@ -199,6 +216,23 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
   const [owner, setOwner] = useState(defaultOwner);
   const [srcFilter, setSrcFilter] = useState("");
   const [tzFilter, setTzFilter] = useState("");
+  // Advanced filters (Filter popover)
+  const [hasActivity, setHasActivity] = useState(""); // "" | "yes" | "no"
+  const [actAfter, setActAfter] = useState("");
+  const [actBefore, setActBefore] = useState("");
+  const [makeFilter, setMakeFilter] = useState("");
+  const [interestFilter, setInterestFilter] = useState<string[]>([]);
+  const [valueMin, setValueMin] = useState("");
+  const [valueMax, setValueMax] = useState("");
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [sortOpen, setSortOpen] = useState(false);
+  const activeAdvCount =
+    (hasActivity ? 1 : 0) + (actAfter ? 1 : 0) + (actBefore ? 1 : 0) + (makeFilter ? 1 : 0) +
+    interestFilter.length + (valueMin ? 1 : 0) + (valueMax ? 1 : 0);
+  const clearAdv = () => {
+    setHasActivity(""); setActAfter(""); setActBefore(""); setMakeFilter("");
+    setInterestFilter([]); setValueMin(""); setValueMax(""); setPage(0);
+  };
   const [colConfig, setColConfig] = useState<{ key: string; visible: boolean }[]>([]);
   const [colsOpen, setColsOpen] = useState(false);
   // Pointer-based drag (works in the WKWebView companion; HTML5 DnD doesn't).
@@ -338,6 +372,13 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
     if (owner) params.set("owner", owner);
     if (srcFilter) params.set("source", srcFilter);
     if (tzFilter) params.set("tz", tzFilter);
+    if (hasActivity) params.set("hasActivity", hasActivity);
+    if (actAfter) params.set("activityAfter", new Date(actAfter).toISOString());
+    if (actBefore) params.set("activityBefore", new Date(actBefore).toISOString());
+    if (makeFilter) params.set("make", makeFilter);
+    if (interestFilter.length) params.set("interests", interestFilter.join(","));
+    if (valueMin) params.set("valueMin", valueMin);
+    if (valueMax) params.set("valueMax", valueMax);
     if (search.trim()) params.set("q", search.trim());
     try {
       const r = await fetch(`/api/crm/deals?${params}`);
@@ -350,7 +391,7 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
     } finally {
       setLoading(false);
     }
-  }, [page, sort, dir, status, stage, owner, srcFilter, tzFilter, search]);
+  }, [page, sort, dir, status, stage, owner, srcFilter, tzFilter, hasActivity, actAfter, actBefore, makeFilter, interestFilter, valueMin, valueMax, search]);
 
   useEffect(() => {
     fetch("/api/crm/sources")
@@ -516,10 +557,104 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
           <option value="central">🌎 Central</option>
           <option value="east">🌎 East</option>
         </select>
+
+        <div style={{ position: "relative" }}>
+          <button className={`btn ${activeAdvCount ? "primary" : "ghost"}`} style={{ padding: "8px 14px", fontSize: 13.5 }} onClick={() => { setFilterOpen((v) => !v); setSortOpen(false); }}>
+            🔎 Filter{activeAdvCount ? ` (${activeAdvCount})` : ""}
+          </button>
+          {filterOpen && (
+            <>
+              <div style={{ position: "fixed", inset: 0, zIndex: 59 }} onClick={() => setFilterOpen(false)} />
+              <div className="dropdown-menu" style={{ left: 0, width: 300, top: "calc(100% + 4px)", gap: 10, padding: 12 }}>
+                <div className="field">
+                  <label>Last activity</label>
+                  <select className="vmsel" value={hasActivity} onChange={(e) => { setHasActivity(e.target.value); setPage(0); }}>
+                    <option value="">Any</option>
+                    <option value="yes">Has activity</option>
+                    <option value="no">No activity</option>
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Activity after</label>
+                  <input type="date" className="vmsel" value={actAfter} onChange={(e) => { setActAfter(e.target.value); setPage(0); }} />
+                </div>
+                <div className="field">
+                  <label>Activity before</label>
+                  <input type="date" className="vmsel" value={actBefore} onChange={(e) => { setActBefore(e.target.value); setPage(0); }} />
+                </div>
+                <div className="field">
+                  <label>Vehicle make</label>
+                  <select className="vmsel" value={makeFilter} onChange={(e) => { setMakeFilter(e.target.value); setPage(0); }}>
+                    <option value="">Any</option>
+                    {(meta?.vehicleMakes ?? []).map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Value ($)</label>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input className="vmsel" style={{ width: "50%" }} placeholder="min" inputMode="numeric" value={valueMin} onChange={(e) => { setValueMin(e.target.value.replace(/[^\d]/g, "")); setPage(0); }} />
+                    <input className="vmsel" style={{ width: "50%" }} placeholder="max" inputMode="numeric" value={valueMax} onChange={(e) => { setValueMax(e.target.value.replace(/[^\d]/g, "")); setPage(0); }} />
+                  </div>
+                </div>
+                <div className="field">
+                  <label>Primary interest</label>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                    {INTERESTS.map((it) => {
+                      const on = interestFilter.includes(it);
+                      return (
+                        <button
+                          key={it}
+                          className={`btn ${on ? "primary" : "ghost"}`}
+                          style={{ padding: "3px 9px", fontSize: 12 }}
+                          onClick={() => { setInterestFilter((f) => on ? f.filter((x) => x !== it) : [...f, it]); setPage(0); }}
+                        >
+                          {it}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                {activeAdvCount > 0 && (
+                  <button className="btn ghost" style={{ padding: "6px 12px", fontSize: 13 }} onClick={clearAdv}>Clear filters</button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div style={{ position: "relative" }}>
+          <button className="btn ghost" style={{ padding: "8px 14px", fontSize: 13.5 }} onClick={() => { setSortOpen((v) => !v); setFilterOpen(false); }}>
+            ↕ Sort
+          </button>
+          {sortOpen && (
+            <>
+              <div style={{ position: "fixed", inset: 0, zIndex: 59 }} onClick={() => setSortOpen(false)} />
+              <div className="dropdown-menu" style={{ left: 0, width: 220, top: "calc(100% + 4px)" }}>
+                {SORT_OPTIONS.map((o) => {
+                  const active = sort === o.sort && dir === o.dir;
+                  return (
+                    <div
+                      key={o.label}
+                      className={`queue-item ${active ? "active" : ""}`}
+                      onClick={() => { setSort(o.sort); setDir(o.dir); setPage(0); setSortOpen(false); }}
+                    >
+                      {o.label}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
         <input
           className="vmsel"
-          style={{ width: 220 }}
-          placeholder="Search deals…"
+          style={{ width: 300, maxWidth: "100%" }}
+          placeholder="🔍 Search deals by name…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && (setPage(0), void loadDeals())}

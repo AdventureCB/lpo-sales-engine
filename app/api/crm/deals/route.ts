@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
   let q = db
     .from("crm_deals")
     .select(
-      `id, title, status, value_cents, owner_pipedrive_id, contact_id, stage_changed_at, last_activity_at, updated_at, pd_add_time, pipedrive_deal_id, truck_model, crm_stages ( name, pipeline_id, crm_pipelines ( name ) ), ${contactEmbed}, deal_sources ( name )`,
+      `id, title, status, value_cents, owner_pipedrive_id, contact_id, stage_changed_at, last_activity_at, updated_at, pd_add_time, pipedrive_deal_id, truck_model, interests, crm_stages ( name, pipeline_id, crm_pipelines ( name ) ), ${contactEmbed}, deal_sources ( name )`,
       { count: "exact" }
     );
 
@@ -51,6 +51,20 @@ export async function GET(req: NextRequest) {
   if (tz === "west") q = q.lte("crm_contacts.tz_offset", -7);
   else if (tz === "central") q = q.eq("crm_contacts.tz_offset", -6);
   else if (tz === "east") q = q.gte("crm_contacts.tz_offset", -5);
+
+  // ── Advanced filters ──
+  const hasAct = p.get("hasActivity"); // "yes" | "no"
+  if (hasAct === "yes") q = q.not("last_activity_at", "is", null);
+  else if (hasAct === "no") q = q.is("last_activity_at", null);
+  if (p.get("activityAfter")) q = q.gte("last_activity_at", p.get("activityAfter")!);
+  if (p.get("activityBefore")) q = q.lte("last_activity_at", p.get("activityBefore")!);
+  const make = p.get("make");
+  if (make) q = q.ilike("truck_model", `${make.replace(/[%_]/g, "")}%`);
+  const interests = (p.get("interests") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (interests.length) q = q.overlaps("interests", interests);
+  if (p.get("valueMin")) q = q.gte("value_cents", Math.round(Number(p.get("valueMin")) * 100));
+  if (p.get("valueMax")) q = q.lte("value_cents", Math.round(Number(p.get("valueMax")) * 100));
+
   const search = (p.get("q") ?? "").trim();
   if (search) q = q.ilike("title", `%${search.replace(/[%_]/g, "")}%`);
 

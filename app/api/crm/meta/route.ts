@@ -11,17 +11,19 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const db = supabaseAdmin();
-  const [pipelines, stages, dealCount, contactCount, importState] = await Promise.all([
+  const [pipelines, stages, dealCount, contactCount, importState, makes] = await Promise.all([
     db.from("crm_pipelines").select("id, name, sort_order").order("sort_order"),
     db.from("crm_stages").select("id, pipeline_id, name, sort_order").order("sort_order"),
     db.from("crm_deals").select("id", { count: "exact", head: true }),
     db.from("crm_contacts").select("id", { count: "exact", head: true }),
     db.from("crm_sync_state").select("value, updated_at").eq("key", "import").maybeSingle(),
+    db.rpc("vehicle_makes"),
   ]);
 
   return NextResponse.json({
     pipelines: pipelines.data ?? [],
     stages: stages.data ?? [],
+    vehicleMakes: (makes.data ?? []).map((m: any) => m.make).filter(Boolean),
     mirror: {
       deals: dealCount.count ?? 0,
       contacts: contactCount.count ?? 0,

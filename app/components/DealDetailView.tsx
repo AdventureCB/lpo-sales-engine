@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { newOutboundCall, setOutboundHandler } from "./phoneClient";
+import { INTERESTS } from "./interests";
 
 interface DealData {
   deal: any;
@@ -204,6 +205,32 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
             Save
           </button>
         )}
+      </div>
+    </div>
+  );
+
+  // Primary interests — toggle chips, saved immediately.
+  const dealInterests: string[] = d.interests ?? [];
+  const interestsEl = (
+    <div className="field" style={{ marginTop: 12 }}>
+      <label>Primary interests</label>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+        {INTERESTS.map((it) => {
+          const on = dealInterests.includes(it);
+          return (
+            <button
+              key={it}
+              className={`btn ${on ? "primary" : "ghost"}`}
+              style={{ padding: "3px 9px", fontSize: 12 }}
+              disabled={saving}
+              onClick={() =>
+                update({ interests: on ? dealInterests.filter((x) => x !== it) : [...dealInterests, it] })
+              }
+            >
+              {it}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -899,7 +926,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
           {!embedded && (
             <>
           {contact ? (
-            <ContactCard contact={contact} phones={phones} emails={emails} truck={truckFieldEl} onSaved={load} />
+            <ContactCard contact={contact} phones={phones} emails={emails} truck={<>{truckFieldEl}{interestsEl}</>} onSaved={load} />
           ) : (
             <>
               <div className="panel-h">Contact</div>
@@ -922,6 +949,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
               <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16, minWidth: 210 }}>
                 {propertyFields}
                 {truckFieldEl}
+                {interestsEl}
               </div>
             )}
           </div>
