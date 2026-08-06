@@ -177,6 +177,24 @@ const ACTIVITY_TYPE_MAP: Record<string, string> = {
   lunch: "meeting",
 };
 
+/** Pipedrive activity → crm_activities row. occurred_at reflects when the
+ * activity actually happened — the completion time for done activities, else
+ * creation time — so both the timeline and last_activity_at are accurate. */
+function activityRow(a: any, dealUuid: string | null, contactUuid: string | null) {
+  return {
+    pipedrive_activity_id: a.id,
+    deal_id: dealUuid,
+    contact_id: contactUuid,
+    type: ACTIVITY_TYPE_MAP[a.type] ?? "task",
+    subject: a.subject ?? null,
+    body: stripHtml(a.note),
+    due_at: a.due_date ? `${a.due_date}T${a.due_time || "00:00"}:00Z` : null,
+    done_at: a.marked_as_done_time || null,
+    occurred_at: a.marked_as_done_time || a.add_time || new Date().toISOString(),
+    meta: { pipedrive_owner_id: a.owner_id ?? a.user_id ?? null },
+  };
+}
+
 /** Importer: a page of Pipedrive activities → crm_activities. */
 export async function upsertActivitiesBatch(db: SupabaseClient, activities: any[]): Promise<void> {
   if (activities.length === 0) return;
@@ -184,18 +202,7 @@ export async function upsertActivitiesBatch(db: SupabaseClient, activities: any[
   const contactMap = await pdIdMap(db, "crm_contacts", "pipedrive_person_id", activities.map((a) => a.person_id));
   const rows = new Map(
     activities
-      .map((a) => ({
-        pipedrive_activity_id: a.id,
-        deal_id: a.deal_id ? dealMap.get(a.deal_id) ?? null : null,
-        contact_id: a.person_id ? contactMap.get(a.person_id) ?? null : null,
-        type: ACTIVITY_TYPE_MAP[a.type] ?? "task",
-        subject: a.subject ?? null,
-        body: stripHtml(a.note),
-        due_at: a.due_date ? `${a.due_date}T${a.due_time || "00:00"}:00Z` : null,
-        done_at: a.marked_as_done_time || null,
-        occurred_at: a.add_time ?? new Date().toISOString(),
-        meta: { pipedrive_owner_id: a.owner_id ?? a.user_id ?? null },
-      }))
+      .map((a) => activityRow(a, a.deal_id ? dealMap.get(a.deal_id) ?? null : null, a.person_id ? contactMap.get(a.person_id) ?? null : null))
       .filter((r) => r.deal_id || r.contact_id)
       .map((r) => [r.pipedrive_activity_id, r])
   );
@@ -204,6 +211,31 @@ export async function upsertActivitiesBatch(db: SupabaseClient, activities: any[
     .from("crm_activities")
     .upsert([...rows.values()], { onConflict: "pipedrive_activity_id" });
   if (error) throw new Error(`activities batch upsert: ${error.message}`);
+}
+
+/** Live webhook path: one Pipedrive activity → crm_activities (create/edit/
+ * complete). Returns true when it landed (had a deal or contact to attach to). */
+export async function upsertActivity(db: SupabaseClient, a: any): Promise<boolean> {
+  const dealUuid = await crmDealId(db, a.deal_id ?? null);
+  const contactUuid = await crmContactId(db, a.person_id ?? null);
+  if (!dealUuid && !contactUuid) return false;
+  const { error } = await db
+    .from("crm_activities")
+    .upsert(activityRow(a, dealUuid, contactUuid), { onConflict: "pipedrive_activity_id" });
+  if (error) throw new Error(`activity upsert: ${error.message}`);
+  return true;
+}
+
+/** Delete a mirrored activity; recompute the affected deal's date after. */
+export async function deleteActivityByPdId(db: SupabaseClient, pipedriveActivityId: number): Promise<void> {
+  await db.from("crm_activities").delete().eq("pipedrive_activity_id", pipedriveActivityId);
+  await db.rpc("refresh_deal_last_activity").then(() => {}, () => {});
+}
+
+async function crmDealId(db: SupabaseClient, pipedriveDealId: number | null): Promise<string | null> {
+  if (!pipedriveDealId) return null;
+  const { data } = await db.from("crm_deals").select("id").eq("pipedrive_deal_id", pipedriveDealId).maybeSingle();
+  return data?.id ?? null;
 }
 
 /**
@@ -349,7 +381,9 @@ function dealRowFromPipedrive(
     lost_at: d.lost_time || null,
     lost_reason: d.lost_reason ?? null,
     pd_add_time: d.add_time ?? null,
-    last_activity_at: d.last_activity_date ?? null,
+    // last_activity_at is NOT mirrored — crm_activities is the source of
+    // truth (kept fresh by the bump trigger). Omitted so deal upserts don't
+    // overwrite our derived value.
     updated_at: new Date().toISOString(),
     // Only carry source when Pipedrive actually has a channel — a null here
     // would clobber manual assignments on every webhook re-upsert.

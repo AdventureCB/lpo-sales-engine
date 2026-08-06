@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { env } from "@/lib/env";
-import { upsertContact, upsertDeal } from "@/lib/crm-sync";
+import { upsertContact, upsertDeal, upsertActivity, deleteActivityByPdId } from "@/lib/crm-sync";
 import crypto from "node:crypto";
 
 export const runtime = "nodejs";
@@ -41,6 +41,12 @@ export async function POST(req: NextRequest) {
     } else if (entity === "deal" && action !== "delete") {
       // Live changes emit automation events; the bulk importer does not.
       await upsertDeal(db, data, { emitEvents: true });
+    } else if (entity === "activity" && action !== "delete") {
+      // Keeps last_activity_at accurate: Pipedrive-logged/completed
+      // activities flow into crm_activities (our source of truth).
+      await upsertActivity(db, data);
+    } else if (entity === "activity" && action === "delete") {
+      await deleteActivityByPdId(db, payload?.meta?.entity_id ?? payload?.previous?.id);
     } else if (action === "delete") {
       await db.from("crm_sync_state").upsert(
         {

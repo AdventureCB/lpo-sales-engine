@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
       .map((h: any) => `${h.event_object}:${h.event_action}`)
   );
   const created: string[] = [];
-  for (const obj of ["person", "deal"]) {
+  for (const obj of ["person", "deal", "activity"]) {
     if (have.has(`${obj}:*`)) continue;
     await pdV1("/webhooks", "POST", {
       subscription_url: target,
