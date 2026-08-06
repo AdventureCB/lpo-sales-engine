@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
   let q = db
     .from("crm_deals")
     .select(
-      `id, title, status, value_cents, owner_pipedrive_id, stage_changed_at, last_activity_at, updated_at, pd_add_time, pipedrive_deal_id, crm_stages ( name, pipeline_id, crm_pipelines ( name ) ), ${contactEmbed}, deal_sources ( name )`,
+      `id, title, status, value_cents, owner_pipedrive_id, stage_changed_at, last_activity_at, updated_at, pd_add_time, pipedrive_deal_id, truck_model, crm_stages ( name, pipeline_id, crm_pipelines ( name ) ), ${contactEmbed}, deal_sources ( name )`,
       { count: "exact" }
     );
 

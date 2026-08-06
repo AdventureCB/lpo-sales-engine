@@ -12,6 +12,7 @@ interface Deal {
   last_activity_at: string | null;
   updated_at: string;
   pd_add_time: string | null;
+  truck_model: string | null;
   crm_stages: { name: string; pipeline_id: string; crm_pipelines: { name: string } | null } | null;
   crm_contacts: { name: string; phones: { value: string; e164?: string }[]; tz_offset: number | null } | null;
 }
@@ -50,18 +51,87 @@ function tzRegion(offset: number | null | undefined): string | null {
   return "East";
 }
 
-const COLUMNS: [string, string][] = [
-  ["title", "Deal"],
-  ["timezone", "TZ"],
-  ["stage_changed", "Stage"],
-  ["value", "Value"],
-  ["activity", "Last activity"],
-  ["updated", "Updated"],
-];
-
 function fmtDate(iso: string | null) {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+interface ColDef {
+  key: string;
+  label: string;
+  sortKey?: string; // header sort → /api/crm/deals sort param
+  nowrap?: boolean;
+  render: (d: Deal) => React.ReactNode;
+}
+
+// The full column catalog. Visibility + order are user-configurable.
+const ALL_COLUMNS: ColDef[] = [
+  {
+    key: "title",
+    label: "Deal",
+    sortKey: "title",
+    render: (d) => (
+      <a href={`/crm/deal/${d.id}`} style={{ color: "var(--text-1)", textDecoration: "none" }}>
+        <b>{d.title}</b>
+      </a>
+    ),
+  },
+  { key: "tz", label: "TZ", sortKey: "timezone", nowrap: true, render: (d) => <span style={{ color: "var(--text-2)", fontWeight: 650 }}>{tzRegion(d.crm_contacts?.tz_offset) ?? "—"}</span> },
+  {
+    key: "stage",
+    label: "Stage",
+    sortKey: "stage_changed",
+    nowrap: true,
+    render: (d) => (
+      <>
+        {d.crm_stages?.name ?? "—"}
+        <div style={{ fontSize: 12, color: "var(--text-3)" }}>{d.crm_stages?.crm_pipelines?.name}</div>
+      </>
+    ),
+  },
+  { key: "value", label: "Value", sortKey: "value", render: (d) => (d.value_cents != null ? `$${Math.round(d.value_cents / 100).toLocaleString()}` : "—") },
+  { key: "activity", label: "Last activity", sortKey: "activity", nowrap: true, render: (d) => <span style={{ color: "var(--text-3)" }}>{fmtDate(d.last_activity_at)}</span> },
+  { key: "updated", label: "Updated", sortKey: "updated", nowrap: true, render: (d) => <span style={{ color: "var(--text-3)" }}>{fmtDate(d.updated_at)}</span> },
+  { key: "created", label: "Created", sortKey: "created", nowrap: true, render: (d) => <span style={{ color: "var(--text-3)" }}>{fmtDate(d.pd_add_time)}</span> },
+  { key: "source", label: "Source", nowrap: true, render: (d) => <span style={{ color: "var(--text-2)" }}>{d.deal_sources?.name ?? "—"}</span> },
+  { key: "owner", label: "Owner", nowrap: true, render: (d) => (d.owner_pipedrive_id ? OWNER_NAMES[d.owner_pipedrive_id] ?? d.owner_pipedrive_id : "—") },
+  { key: "truck", label: "Truck", nowrap: true, render: (d) => <span style={{ color: "var(--text-2)" }}>{d.truck_model ?? "—"}</span> },
+  {
+    key: "contact",
+    label: "Contact",
+    nowrap: true,
+    render: (d) => (
+      <>
+        {d.crm_contacts?.name ?? "—"}
+        {d.crm_contacts?.phones?.[0] && (
+          <div style={{ fontSize: 12, color: "var(--text-3)" }}>
+            {d.crm_contacts.phones[0].e164 ?? d.crm_contacts.phones[0].value}
+          </div>
+        )}
+      </>
+    ),
+  },
+];
+
+const COL_MAP = new Map(ALL_COLUMNS.map((c) => [c.key, c]));
+const DEFAULT_COLS = ["title", "tz", "stage", "value", "activity", "updated", "source", "owner", "contact"];
+const COLS_LS_KEY = "crmColumns";
+
+/** Persisted column config = ordered {key, visible}. Reconciled with the
+ * catalog so newly-added columns appear (hidden) instead of vanishing. */
+function loadColConfig(): { key: string; visible: boolean }[] {
+  let saved: { key: string; visible: boolean }[] = [];
+  try {
+    const raw = localStorage.getItem(COLS_LS_KEY);
+    if (raw) saved = JSON.parse(raw);
+  } catch {}
+  if (!Array.isArray(saved) || saved.length === 0) {
+    return ALL_COLUMNS.map((c) => ({ key: c.key, visible: DEFAULT_COLS.includes(c.key) }));
+  }
+  const seen = new Set(saved.map((c) => c.key));
+  const reconciled = saved.filter((c) => COL_MAP.has(c.key));
+  for (const c of ALL_COLUMNS) if (!seen.has(c.key)) reconciled.push({ key: c.key, visible: false });
+  return reconciled;
 }
 
 export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOwner: string }) {
@@ -77,6 +147,30 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
   const [owner, setOwner] = useState(defaultOwner);
   const [srcFilter, setSrcFilter] = useState("");
   const [tzFilter, setTzFilter] = useState("");
+  const [colConfig, setColConfig] = useState<{ key: string; visible: boolean }[]>([]);
+  const [colsOpen, setColsOpen] = useState(false);
+  const [dragKey, setDragKey] = useState<string | null>(null);
+  useEffect(() => setColConfig(loadColConfig()), []);
+  const saveCols = (next: { key: string; visible: boolean }[]) => {
+    setColConfig(next);
+    try {
+      localStorage.setItem(COLS_LS_KEY, JSON.stringify(next));
+    } catch {}
+  };
+  const toggleCol = (key: string) =>
+    saveCols(colConfig.map((c) => (c.key === key ? { ...c, visible: !c.visible } : c)));
+  const dropOn = (targetKey: string) => {
+    if (!dragKey || dragKey === targetKey) return;
+    const from = colConfig.findIndex((c) => c.key === dragKey);
+    const to = colConfig.findIndex((c) => c.key === targetKey);
+    if (from < 0 || to < 0) return;
+    const next = [...colConfig];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    saveCols(next);
+  };
+  const visibleCols = colConfig.filter((c) => c.visible).map((c) => COL_MAP.get(c.key)!).filter(Boolean);
+  const colCount = visibleCols.length + (isAdmin ? 1 : 0);
   const [sources, setSources] = useState<{ id: string; name: string }[]>([]);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("updated");
@@ -378,7 +472,50 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
       )}
       {sprintMsg && <div className="viewsub" style={{ color: "var(--good)" }}>{sprintMsg}</div>}
 
-      <div className="card" style={{ padding: "6px 12px" }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8, position: "relative" }}>
+        <button className="btn ghost" style={{ padding: "6px 12px", fontSize: 13 }} onClick={() => setColsOpen((v) => !v)}>
+          ⚙ Columns
+        </button>
+        {colsOpen && (
+          <>
+            <div style={{ position: "fixed", inset: 0, zIndex: 59 }} onClick={() => setColsOpen(false)} />
+            <div className="dropdown-menu" style={{ left: "auto", right: 0, width: 240, top: "calc(100% + 4px)" }}>
+              <div style={{ fontSize: 11.5, color: "var(--text-3)", padding: "2px 8px 6px" }}>
+                Check to show · drag to reorder
+              </div>
+              {colConfig.map((c) => {
+                const def = COL_MAP.get(c.key);
+                if (!def) return null;
+                return (
+                  <div
+                    key={c.key}
+                    draggable
+                    onDragStart={() => setDragKey(c.key)}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={() => dropOn(c.key)}
+                    onDragEnd={() => setDragKey(null)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "6px 8px",
+                      borderRadius: 7,
+                      cursor: "grab",
+                      background: dragKey === c.key ? "var(--surface-3)" : "transparent",
+                    }}
+                  >
+                    <span style={{ color: "var(--text-3)", fontSize: 13 }}>⠿</span>
+                    <input type="checkbox" checked={c.visible} onChange={() => toggleCol(c.key)} />
+                    <span style={{ fontSize: 13.5 }}>{def.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="card" style={{ padding: "6px 12px", overflowX: "auto" }}>
         <table className="data">
           <thead>
             <tr>
@@ -397,23 +534,24 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
                   />
                 </th>
               )}
-              {COLUMNS.map(([key, label]) => (
-                <th key={key} style={{ cursor: "pointer" }} onClick={() => clickSort(key)}>
-                  {label} {sort === key ? (dir === "desc" ? "↓" : "↑") : ""}
+              {visibleCols.map((col) => (
+                <th
+                  key={col.key}
+                  style={{ cursor: col.sortKey ? "pointer" : "default" }}
+                  onClick={() => col.sortKey && clickSort(col.sortKey)}
+                >
+                  {col.label} {col.sortKey && sort === col.sortKey ? (dir === "desc" ? "↓" : "↑") : ""}
                 </th>
               ))}
-              <th>Source</th>
-              <th>Owner</th>
-              <th>Contact</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={isAdmin ? 10 : 9} style={{ color: "var(--text-3)", padding: "16px 10px" }}>Loading…</td></tr>
+              <tr><td colSpan={colCount} style={{ color: "var(--text-3)", padding: "16px 10px" }}>Loading…</td></tr>
             )}
             {!loading && deals.length === 0 && (
-              <tr><td colSpan={isAdmin ? 10 : 9} style={{ color: "var(--text-3)", padding: "16px 10px" }}>
-                No deals in the mirror yet — run the import above.
+              <tr><td colSpan={colCount} style={{ color: "var(--text-3)", padding: "16px 10px" }}>
+                No deals match.
               </td></tr>
             )}
             {!loading && deals.map((d) => (
@@ -423,31 +561,11 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
                     <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} />
                   </td>
                 )}
-                <td>
-                  <a href={`/crm/deal/${d.id}`} style={{ color: "var(--text-1)", textDecoration: "none" }}>
-                    <b>{d.title}</b>
-                  </a>
-                </td>
-                <td style={{ whiteSpace: "nowrap", color: "var(--text-2)", fontWeight: 650 }}>
-                  {tzRegion(d.crm_contacts?.tz_offset) ?? "—"}
-                </td>
-                <td style={{ whiteSpace: "nowrap" }}>
-                  {d.crm_stages?.name ?? "—"}
-                  <div style={{ fontSize: 12, color: "var(--text-3)" }}>{d.crm_stages?.crm_pipelines?.name}</div>
-                </td>
-                <td className="money">{d.value_cents != null ? `$${Math.round(d.value_cents / 100).toLocaleString()}` : "—"}</td>
-                <td style={{ color: "var(--text-3)", whiteSpace: "nowrap" }}>{fmtDate(d.last_activity_at)}</td>
-                <td style={{ color: "var(--text-3)", whiteSpace: "nowrap" }}>{fmtDate(d.updated_at)}</td>
-                <td style={{ whiteSpace: "nowrap", color: "var(--text-2)" }}>{d.deal_sources?.name ?? "—"}</td>
-                <td style={{ whiteSpace: "nowrap" }}>{d.owner_pipedrive_id ? OWNER_NAMES[d.owner_pipedrive_id] ?? d.owner_pipedrive_id : "—"}</td>
-                <td style={{ whiteSpace: "nowrap" }}>
-                  {d.crm_contacts?.name ?? "—"}
-                  {d.crm_contacts?.phones?.[0] && (
-                    <div style={{ fontSize: 12, color: "var(--text-3)" }}>
-                      {d.crm_contacts.phones[0].e164 ?? d.crm_contacts.phones[0].value}
-                    </div>
-                  )}
-                </td>
+                {visibleCols.map((col) => (
+                  <td key={col.key} style={col.nowrap ? { whiteSpace: "nowrap" } : undefined} className={col.key === "value" ? "money" : undefined}>
+                    {col.render(d)}
+                  </td>
+                ))}
               </tr>
             ))}
           </tbody>
