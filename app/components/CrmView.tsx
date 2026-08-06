@@ -15,6 +15,11 @@ interface Deal {
   truck_model: string | null;
   crm_stages: { name: string; pipeline_id: string; crm_pipelines: { name: string } | null } | null;
   crm_contacts: { name: string; phones: { value: string; e164?: string }[]; tz_offset: number | null } | null;
+  // Enrichments computed per page by the API.
+  next_activity_at?: string | null;
+  dials?: number;
+  conversations?: number;
+  buy_signal?: { metric: string; at: string } | null;
 }
 
 interface Meta {
@@ -51,9 +56,22 @@ function tzRegion(offset: number | null | undefined): string | null {
   return "East";
 }
 
-function fmtDate(iso: string | null) {
+function fmtDate(iso: string | null | undefined) {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function signalLabel(metric: string): string {
+  const s = metric.toLowerCase();
+  if (/save.*build|3d builder/.test(s)) return "🏗 Saved build";
+  if (/add.*cart/.test(s)) return "🛒 Cart add";
+  if (/checkout/.test(s)) return "🛒 Checkout";
+  return `⚡ ${metric}`;
+}
+
+function relDays(iso: string): string {
+  const days = Math.floor((Date.now() - Date.parse(iso)) / 86_400_000);
+  return days <= 0 ? "today" : `${days}d ago`;
 }
 
 interface ColDef {
@@ -96,6 +114,40 @@ const ALL_COLUMNS: ColDef[] = [
   { key: "source", label: "Source", nowrap: true, render: (d) => <span style={{ color: "var(--text-2)" }}>{d.deal_sources?.name ?? "—"}</span> },
   { key: "owner", label: "Owner", nowrap: true, render: (d) => (d.owner_pipedrive_id ? OWNER_NAMES[d.owner_pipedrive_id] ?? d.owner_pipedrive_id : "—") },
   { key: "truck", label: "Truck", nowrap: true, render: (d) => <span style={{ color: "var(--text-2)" }}>{d.truck_model ?? "—"}</span> },
+  {
+    key: "next_activity",
+    label: "Next activity",
+    nowrap: true,
+    render: (d) =>
+      d.next_activity_at ? (
+        <span style={{ color: Date.parse(d.next_activity_at) < Date.now() ? "var(--crit)" : "var(--text-2)" }}>
+          {fmtDate(d.next_activity_at)}
+        </span>
+      ) : (
+        "—"
+      ),
+  },
+  { key: "dials", label: "Dials", render: (d) => <span style={{ fontVariantNumeric: "tabular-nums" }}>{d.dials ?? 0}</span> },
+  { key: "conversations", label: "Convos", render: (d) => <span style={{ fontVariantNumeric: "tabular-nums" }}>{d.conversations ?? 0}</span> },
+  {
+    key: "answer_rate",
+    label: "Answer %",
+    render: (d) => ((d.dials ?? 0) > 0 ? `${Math.round((100 * (d.conversations ?? 0)) / (d.dials ?? 1))}%` : "—"),
+  },
+  {
+    key: "buy_signal",
+    label: "Buy signal",
+    nowrap: true,
+    render: (d) =>
+      d.buy_signal ? (
+        <span style={{ fontWeight: 700, color: "var(--accent)" }}>
+          {signalLabel(d.buy_signal.metric)}{" "}
+          <span style={{ fontWeight: 500, color: "var(--text-3)", fontSize: 12 }}>{relDays(d.buy_signal.at)}</span>
+        </span>
+      ) : (
+        <span style={{ color: "var(--text-3)" }}>—</span>
+      ),
+  },
   {
     key: "contact",
     label: "Contact",
