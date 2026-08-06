@@ -327,6 +327,11 @@ table.data { width: 100%; border-collapse: collapse; font-size: 14.5px; }
 table.data th { text-align: left; font-size: 11.5px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); font-weight: 800; padding: 9px 10px; border-bottom: 1px solid var(--border); }
 table.data td { padding: 12px 10px; border-bottom: 1px solid var(--border-soft); vertical-align: middle; }
 table.data tr:hover td { background: var(--surface-2); }
+/* Frozen columns: stay visible while the rest scroll horizontally. Solid
+   background so scrolled cells don't bleed through; header sits above body. */
+table.data th.sticky-col, table.data td.sticky-col { position: sticky; background: #1e1b17; z-index: 2; }
+table.data th.sticky-col { z-index: 3; }
+table.data tr:hover td.sticky-col { background: #26221d; }
 .btn {
   display: inline-flex; align-items: center; gap: 8px;
   border: none; cursor: pointer;

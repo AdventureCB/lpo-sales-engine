@@ -255,8 +255,12 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
   };
-  const visibleCols = colConfig.filter((c) => c.visible).map((c) => COL_MAP.get(c.key)!).filter(Boolean);
+  const rawVisible = colConfig.filter((c) => c.visible).map((c) => COL_MAP.get(c.key)!).filter(Boolean);
+  // Deal (title) is the frozen anchor — always render it first so it can stick.
+  const titleCol = rawVisible.find((c) => c.key === "title");
+  const visibleCols = titleCol ? [titleCol, ...rawVisible.filter((c) => c.key !== "title")] : rawVisible;
   const colCount = visibleCols.length + (isAdmin ? 1 : 0);
+  const checkW = 38; // frozen checkbox column width (title sticks after it)
   const [sources, setSources] = useState<{ id: string; name: string }[]>([]);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("updated");
@@ -622,7 +626,7 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
           <thead>
             <tr>
               {isAdmin && (
-                <th style={{ width: 30 }}>
+                <th className="sticky-col" style={{ width: checkW, minWidth: checkW, maxWidth: checkW, left: 0 }}>
                   <input
                     type="checkbox"
                     checked={deals.length > 0 && deals.every((d) => selected.has(d.id))}
@@ -636,15 +640,19 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
                   />
                 </th>
               )}
-              {visibleCols.map((col) => (
-                <th
-                  key={col.key}
-                  style={{ cursor: col.sortKey ? "pointer" : "default" }}
-                  onClick={() => col.sortKey && clickSort(col.sortKey)}
-                >
-                  {col.label} {col.sortKey && sort === col.sortKey ? (dir === "desc" ? "↓" : "↑") : ""}
-                </th>
-              ))}
+              {visibleCols.map((col, ci) => {
+                const sticky = ci === 0 && col.key === "title";
+                return (
+                  <th
+                    key={col.key}
+                    className={sticky ? "sticky-col" : undefined}
+                    style={{ cursor: col.sortKey ? "pointer" : "default", ...(sticky ? { left: isAdmin ? checkW : 0 } : {}) }}
+                    onClick={() => col.sortKey && clickSort(col.sortKey)}
+                  >
+                    {col.label} {col.sortKey && sort === col.sortKey ? (dir === "desc" ? "↓" : "↑") : ""}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
@@ -659,15 +667,23 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
             {!loading && deals.map((d) => (
               <tr key={d.id}>
                 {isAdmin && (
-                  <td>
+                  <td className="sticky-col" style={{ left: 0 }}>
                     <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} />
                   </td>
                 )}
-                {visibleCols.map((col) => (
-                  <td key={col.key} style={col.nowrap ? { whiteSpace: "nowrap" } : undefined} className={col.key === "value" ? "money" : undefined}>
-                    {col.render(d)}
-                  </td>
-                ))}
+                {visibleCols.map((col, ci) => {
+                  const sticky = ci === 0 && col.key === "title";
+                  const cls = [sticky ? "sticky-col" : "", col.key === "value" ? "money" : ""].filter(Boolean).join(" ") || undefined;
+                  return (
+                    <td
+                      key={col.key}
+                      className={cls}
+                      style={{ ...(col.nowrap ? { whiteSpace: "nowrap" } : {}), ...(sticky ? { left: isAdmin ? checkW : 0 } : {}) }}
+                    >
+                      {col.render(d)}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
