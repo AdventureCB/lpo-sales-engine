@@ -54,6 +54,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
   const [reopenStage, setReopenStage] = useState("");
   const [tlOpen, setTlOpen] = useState<Set<number>>(new Set());
   const [truckEdit, setTruckEdit] = useState<string | null>(null);
+  const [valueEdit, setValueEdit] = useState<string | null>(null);
   // Pipeline dropdown selection (filters the stage dropdown); null = track the deal.
   const [pipelineSel, setPipelineSel] = useState<string | null>(null);
 
@@ -174,6 +175,39 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
                     <option key={s.id} value={s.id}>{s.name}</option>
                   ))}
                 </select>
+              </div>
+              <div className="field">
+                <label>Value ($)</label>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input
+                    className="vmsel"
+                    style={{ width: 120, fontVariantNumeric: "tabular-nums" }}
+                    inputMode="numeric"
+                    placeholder="—"
+                    value={valueEdit ?? (d.value_cents != null ? String(Math.round(d.value_cents / 100)) : "")}
+                    disabled={saving}
+                    onChange={(e) => setValueEdit(e.target.value.replace(/[^\d]/g, ""))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && valueEdit !== null) {
+                        void update({ valueDollars: valueEdit === "" ? null : Number(valueEdit) });
+                        setValueEdit(null);
+                      }
+                    }}
+                  />
+                  {valueEdit !== null && valueEdit !== (d.value_cents != null ? String(Math.round(d.value_cents / 100)) : "") && (
+                    <button
+                      className="btn primary"
+                      style={{ padding: "6px 12px", fontSize: 13 }}
+                      disabled={saving}
+                      onClick={async () => {
+                        await update({ valueDollars: valueEdit === "" ? null : Number(valueEdit) });
+                        setValueEdit(null);
+                      }}
+                    >
+                      Save
+                    </button>
+                  )}
+                </div>
               </div>
     </>
   );

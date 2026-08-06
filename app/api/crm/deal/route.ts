@@ -145,6 +145,7 @@ export async function POST(req: NextRequest) {
   let body: {
     id?: string;
     title?: string;
+    valueDollars?: number | null;
     stageId?: string;
     status?: string;
     lostReason?: string;
@@ -292,6 +293,23 @@ export async function POST(req: NextRequest) {
         await updateDealStage(deal.pipedrive_deal_id!, { title });
       } catch {
         await enqueuePdSync(db, "deal_update", { dealId: deal.pipedrive_deal_id, fields: { title } });
+        writeThroughError = "Pipedrive busy — queued, will sync automatically";
+      }
+    }
+  }
+
+  // Deal value. CRM-first; written through to Pipedrive.
+  if (body.valueDollars !== undefined) {
+    const cents = body.valueDollars == null ? null : Math.round(body.valueDollars * 100);
+    if (cents != null && (!Number.isFinite(cents) || cents < 0)) {
+      return NextResponse.json({ error: "invalid value" }, { status: 400 });
+    }
+    await db.from("crm_deals").update({ value_cents: cents, updated_at: new Date().toISOString() }).eq("id", deal.id);
+    if (canWriteThrough) {
+      try {
+        await updateDealStage(deal.pipedrive_deal_id!, { value: body.valueDollars ?? 0 });
+      } catch {
+        await enqueuePdSync(db, "deal_update", { dealId: deal.pipedrive_deal_id, fields: { value: body.valueDollars ?? 0 } });
         writeThroughError = "Pipedrive busy — queued, will sync automatically";
       }
     }
