@@ -59,11 +59,10 @@ export async function GET(req: NextRequest) {
     db.from("crm_sprint_items").select("sprint_id").eq("deal_id", deal.id),
     db.from("app_users").select("email, role").order("email"),
   ]);
-  const { data: sources } = await db
-    .from("deal_sources")
-    .select("id, name")
-    .order("sort_order")
-    .order("name");
+  const [{ data: sources }, { data: pipelines }] = await Promise.all([
+    db.from("deal_sources").select("id, name").order("sort_order").order("name"),
+    db.from("crm_pipelines").select("id, name").order("sort_order").order("name"),
+  ]);
 
   const timeline = [
     ...(activities.data ?? []).map((a) => ({
@@ -125,6 +124,7 @@ export async function GET(req: NextRequest) {
     timeline,
     callStats,
     sources: sources ?? [],
+    pipelines: pipelines ?? [],
     stages: stages.data ?? [],
     sprints: sprints.data ?? [],
     dealSprintIds: (dealSprints.data ?? []).map((s) => s.sprint_id),

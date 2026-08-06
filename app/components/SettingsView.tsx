@@ -187,6 +187,7 @@ export function SettingsView() {
 
       <CommLibraryAdmin />
       <DealSourcesAdmin />
+      <PipelineAdmin />
     </>
   );
 }
@@ -484,6 +485,153 @@ function DealSourcesAdmin() {
           onClick={() => post({ op: "save", source: { name: newName.trim() } }).then((ok) => ok && setNewName(""))}
         >
           Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Pipelines & stages editor (prefilled from Pipedrive, editable in-app) ──
+
+interface PLStage {
+  id: string;
+  name: string;
+  pipeline_id: string;
+  sort_order: number;
+  dealCount: number;
+}
+interface PLPipeline {
+  id: string;
+  name: string;
+  sort_order: number;
+  stages: PLStage[];
+}
+
+function PipelineAdmin() {
+  const [pipelines, setPipelines] = useState<PLPipeline[]>([]);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [newPipeline, setNewPipeline] = useState("");
+  const [newStage, setNewStage] = useState<Record<string, string>>({}); // pipelineId → name
+  const [nameEdits, setNameEdits] = useState<Record<string, string>>({}); // id → name buffer
+
+  const load = useCallback(
+    () =>
+      fetch("/api/crm/pipelines")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => d && setPipelines(d.pipelines ?? [])),
+    []
+  );
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const post = async (payload: Record<string, unknown>) => {
+    const r = await fetch("/api/crm/pipelines", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).catch(() => null);
+    const d = await r?.json().catch(() => ({}));
+    setMsg(r?.ok ? "✓ Saved" : d?.error ?? "Save failed");
+    setTimeout(() => setMsg(null), 3000);
+    await load();
+    return Boolean(r?.ok);
+  };
+
+  const nameFor = (id: string, current: string) => nameEdits[id] ?? current;
+
+  return (
+    <div className="card" style={{ maxWidth: 680, marginTop: 18 }}>
+      <div className="panel-h">Pipelines &amp; stages</div>
+      <div style={{ fontSize: 13.5, color: "var(--text-3)", marginBottom: 12 }}>
+        Prefilled from Pipedrive; edits here stay in the app (not written back).
+        Deleting is blocked while deals still occupy a stage or pipeline.
+        {msg && <b style={{ marginLeft: 8, color: "var(--text-2)" }}>{msg}</b>}
+      </div>
+
+      {pipelines.map((p) => (
+        <div key={p.id} style={{ border: "1px solid var(--border-soft)", borderRadius: 10, padding: 12, marginBottom: 12 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+            <input
+              className="vmsel"
+              style={{ flex: 1, fontWeight: 700 }}
+              value={nameFor(p.id, p.name)}
+              onChange={(e) => setNameEdits((m) => ({ ...m, [p.id]: e.target.value }))}
+              onBlur={() => {
+                const v = nameFor(p.id, p.name).trim();
+                if (v && v !== p.name) void post({ op: "pipeline_save", id: p.id, name: v });
+              }}
+            />
+            <button
+              className="btn ghost"
+              style={{ padding: "6px 11px", fontSize: 12.5 }}
+              title="Delete pipeline"
+              onClick={() => post({ op: "pipeline_delete", id: p.id })}
+            >
+              🗑
+            </button>
+          </div>
+          {p.stages.map((s, i) => (
+            <div key={s.id} className="stmt-row" style={{ alignItems: "center", gap: 6, padding: "6px 0" }}>
+              <input
+                className="vmsel"
+                style={{ flex: 1 }}
+                value={nameFor(s.id, s.name)}
+                onChange={(e) => setNameEdits((m) => ({ ...m, [s.id]: e.target.value }))}
+                onBlur={() => {
+                  const v = nameFor(s.id, s.name).trim();
+                  if (v && v !== s.name) void post({ op: "stage_save", id: s.id, name: v });
+                }}
+              />
+              <span style={{ fontSize: 12, color: "var(--text-3)", width: 62, textAlign: "right", flexShrink: 0 }}>
+                {s.dealCount} deal{s.dealCount === 1 ? "" : "s"}
+              </span>
+              <button className="btn ghost" style={{ padding: "3px 8px", fontSize: 12 }} disabled={i === 0} title="Move up" onClick={() => post({ op: "stage_reorder", id: s.id, dir: "up" })}>▲</button>
+              <button className="btn ghost" style={{ padding: "3px 8px", fontSize: 12 }} disabled={i === p.stages.length - 1} title="Move down" onClick={() => post({ op: "stage_reorder", id: s.id, dir: "down" })}>▼</button>
+              <button className="btn ghost" style={{ padding: "3px 8px", fontSize: 12 }} title="Delete stage" onClick={() => post({ op: "stage_delete", id: s.id })}>🗑</button>
+            </div>
+          ))}
+          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+            <input
+              className="vmsel"
+              style={{ flex: 1 }}
+              placeholder="Add a stage…"
+              value={newStage[p.id] ?? ""}
+              onChange={(e) => setNewStage((m) => ({ ...m, [p.id]: e.target.value }))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (newStage[p.id] ?? "").trim()) {
+                  void post({ op: "stage_save", pipelineId: p.id, name: newStage[p.id].trim() }).then((ok) => ok && setNewStage((m) => ({ ...m, [p.id]: "" })));
+                }
+              }}
+            />
+            <button
+              className="btn"
+              style={{ padding: "7px 12px", fontSize: 13 }}
+              disabled={!(newStage[p.id] ?? "").trim()}
+              onClick={() => post({ op: "stage_save", pipelineId: p.id, name: newStage[p.id].trim() }).then((ok) => ok && setNewStage((m) => ({ ...m, [p.id]: "" })))}
+            >
+              + Stage
+            </button>
+          </div>
+        </div>
+      ))}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+        <input
+          className="vmsel"
+          style={{ flex: 1 }}
+          placeholder="New pipeline name…"
+          value={newPipeline}
+          onChange={(e) => setNewPipeline(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && newPipeline.trim() && post({ op: "pipeline_save", name: newPipeline.trim() }).then((ok) => ok && setNewPipeline(""))}
+        />
+        <button
+          className="btn primary"
+          style={{ padding: "8px 14px", fontSize: 13.5 }}
+          disabled={!newPipeline.trim()}
+          onClick={() => post({ op: "pipeline_save", name: newPipeline.trim() }).then((ok) => ok && setNewPipeline(""))}
+        >
+          Add pipeline
         </button>
       </div>
     </div>

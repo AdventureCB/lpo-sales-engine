@@ -8,7 +8,8 @@ interface DealData {
   timeline: { id?: string; kind: string; at: string | null; title: string; body: string | null; actor: string | null; done: boolean; due: string | null }[];
   callStats: { dials: number; answered: number; talkS: number; inbound: number } | null;
   sources: { id: string; name: string }[];
-  stages: { id: string; name: string; crm_pipelines: { name: string } | null }[];
+  pipelines: { id: string; name: string }[];
+  stages: { id: string; name: string; pipeline_id: string; crm_pipelines: { name: string } | null }[];
   sprints: { id: string; name: string; owner: string }[];
   dealSprintIds: string[];
   sprintOwners: string[];
@@ -46,6 +47,8 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
   const [lostReason, setLostReason] = useState("");
   const [tlOpen, setTlOpen] = useState<Set<number>>(new Set());
   const [truckEdit, setTruckEdit] = useState<string | null>(null);
+  // Pipeline dropdown selection (filters the stage dropdown); null = track the deal.
+  const [pipelineSel, setPipelineSel] = useState<string | null>(null);
 
   const load = useCallback(
     () =>
@@ -96,19 +99,38 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
   const propertyFields = (
     <>
               <div className="field">
+                <label>Pipeline</label>
+                <select
+                  className="vmsel"
+                  style={{ width: "auto" }}
+                  value={pipelineSel ?? d.crm_stages?.pipeline_id ?? ""}
+                  onChange={(e) => setPipelineSel(e.target.value)}
+                  disabled={saving}
+                >
+                  {data.pipelines.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
                 <label>Stage</label>
                 <select
                   className="vmsel"
                   style={{ width: "auto" }}
-                  value={d.stage_id ?? ""}
-                  onChange={(e) => update({ stageId: e.target.value })}
+                  value={pipelineSel && pipelineSel !== d.crm_stages?.pipeline_id ? "" : d.stage_id ?? ""}
+                  onChange={(e) => {
+                    if (!e.target.value) return;
+                    void update({ stageId: e.target.value });
+                    setPipelineSel(null); // re-track the deal after reload
+                  }}
                   disabled={saving}
                 >
-                  {data.stages.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.crm_pipelines?.name} ▸ {s.name}
-                    </option>
-                  ))}
+                  <option value="" disabled>Pick a stage…</option>
+                  {data.stages
+                    .filter((s) => s.pipeline_id === (pipelineSel ?? d.crm_stages?.pipeline_id))
+                    .map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
                 </select>
               </div>
               <div className="field">
@@ -142,24 +164,27 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
                   ))}
                 </select>
               </div>
-              <div className="field">
-                <label>Truck</label>
-                <input
-                  className="vmsel"
-                  style={{ width: 150 }}
-                  placeholder="e.g. Tacoma"
-                  value={truckEdit ?? d.truck_model ?? ""}
-                  disabled={saving}
-                  onChange={(e) => setTruckEdit(e.target.value)}
-                  onBlur={() => {
-                    if (truckEdit !== null && truckEdit.trim() !== (d.truck_model ?? "")) {
-                      void update({ truckModel: truckEdit.trim() || null });
-                    }
-                    setTruckEdit(null);
-                  }}
-                />
-              </div>
     </>
+  );
+  // Truck lives in the contact section (it's about the customer's vehicle).
+  const truckFieldEl = (
+    <div className="field" style={{ marginTop: 12 }}>
+      <label>Truck model</label>
+      <input
+        className="vmsel"
+        style={{ maxWidth: 220 }}
+        placeholder="e.g. Toyota - Tacoma"
+        value={truckEdit ?? d.truck_model ?? ""}
+        disabled={saving}
+        onChange={(e) => setTruckEdit(e.target.value)}
+        onBlur={() => {
+          if (truckEdit !== null && truckEdit.trim() !== (d.truck_model ?? "")) {
+            void update({ truckModel: truckEdit.trim() || null });
+          }
+          setTruckEdit(null);
+        }}
+      />
+    </div>
   );
   const commBarEl = (
     <CommBar
@@ -754,6 +779,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
                 )}
                 <AddContactDetail contactId={contact.id} onSaved={load} />
               </div>
+              {truckFieldEl}
             </>
           ) : (
             <div style={{ color: "var(--text-3)", fontSize: 14 }}>No linked contact.</div>
@@ -773,6 +799,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
             {embedded && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16, minWidth: 210 }}>
                 {propertyFields}
+                {truckFieldEl}
               </div>
             )}
           </div>
