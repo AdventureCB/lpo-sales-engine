@@ -99,14 +99,17 @@ export async function GET(req: NextRequest) {
         .or(`deal_id.in.(${dealIds.join(",")})${contactIds.length ? `,contact_id.in.(${contactIds.join(",")})` : ""}`)
         .order("due_at"),
       db.rpc("deals_call_stats", { p_deals: dealIds }),
+      // Buy signal reads engagement_events (broad — the hot-list cron sweeps
+      // it), NOT klaviyo_events (only synced on page-view, ~16 contacts).
+      // Buy-intent types are Shopify-sourced: checkout_started, builder_save.
       emails.length
         ? db
-            .from("klaviyo_events")
-            .select("email, metric, event_at")
-            .in("email", emails)
-            .gte("event_at", sevenAgo)
-            .filter("metric", "imatch", "(add.*cart|checkout started|started checkout|save.*build|3d builder)")
-            .order("event_at", { ascending: false })
+            .from("engagement_events")
+            .select("person_email, type, occurred_at")
+            .in("person_email", emails)
+            .gte("occurred_at", sevenAgo)
+            .filter("type", "imatch", "(cart|checkout|builder_save|save.?build|abandon|3d)")
+            .order("occurred_at", { ascending: false })
         : Promise.resolve({ data: [] as any[] }),
     ]);
 
@@ -118,10 +121,13 @@ export async function GET(req: NextRequest) {
       if (a.contact_id && !nextByContact.has(a.contact_id)) nextByContact.set(a.contact_id, a.due_at);
     }
     const statByDeal = new Map((callStats ?? []).map((s: any) => [s.deal_id, s]));
+    const prettyMetric = (t: string) =>
+      ({ checkout_started: "Checkout started", builder_save: "Saved build", added_to_cart: "Added to cart" } as Record<string, string>)[t] ??
+      t.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
     const signalByEmail = new Map<string, { metric: string; at: string }>();
     for (const s of signals ?? []) {
-      const key = (s.email ?? "").toLowerCase();
-      if (!signalByEmail.has(key)) signalByEmail.set(key, { metric: s.metric, at: s.event_at });
+      const key = (s.person_email ?? "").toLowerCase();
+      if (!signalByEmail.has(key)) signalByEmail.set(key, { metric: prettyMetric(s.type), at: s.occurred_at });
     }
 
     for (const d of deals) {

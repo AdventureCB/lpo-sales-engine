@@ -39,23 +39,45 @@ export async function GET(req: NextRequest) {
     countedAt: countByQueue.get(q.id)?.at ?? null,
   }));
 
-  // Sprints assigned to this user surface as queues (⚡). Sprint dialing
-  // runs entirely off the CRM mirror — zero Pipedrive calls.
+  // Sprint Lists + manual sprints surface as queues — dialed entirely off the
+  // CRM mirror (zero Pipedrive calls). Daily lists show 📋; manual/assigned ⚡.
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
   const { data: sprints } = await db
     .from("crm_sprints")
-    .select("id, name, crm_sprint_items ( called_at )")
+    .select("id, name, kind, slot, for_date, crm_sprint_items ( called_at, removed_at )")
     .eq("owner", user.email)
     .eq("status", "active")
     .order("created_at", { ascending: false });
-  for (const s of sprints ?? []) {
-    const remainingCount = (s.crm_sprint_items ?? []).filter((i: any) => !i.called_at).length;
+
+  const all = sprints ?? [];
+  const dailyToday = all.filter((s: any) => s.kind === "daily" && s.for_date === today);
+  const hasList3 = dailyToday.some((s: any) => s.slot === 3);
+  // Once List 3 is generated, Lists 1 & 2 drop from the dialer to avoid a
+  // data mismatch — List 3 already carries their undialed leads forward.
+  const visibleDaily = dailyToday
+    .filter((s: any) => !(hasList3 && (s.slot === 1 || s.slot === 2)))
+    .sort((a: any, b: any) => (a.slot ?? 9) - (b.slot ?? 9));
+  const manual = all.filter((s: any) => s.kind !== "daily");
+
+  for (const s of [...visibleDaily, ...manual]) {
+    const items = (s as any).crm_sprint_items ?? [];
+    const remaining = items.filter((i: any) => !i.called_at && !i.removed_at).length;
+    const isDaily = (s as any).kind === "daily";
     out.push({
       id: `sprint:${s.id}`,
-      name: `⚡ ${s.name}`,
+      name: `${isDaily ? "📋" : "⚡"} ${s.name}`,
       is_primary: false,
       pool_mode: false,
       sprint: true,
-      count: remainingCount,
+      daily: isDaily,
+      slot: (s as any).slot ?? null,
+      count: remaining,
     });
   }
   return NextResponse.json({ queues: out });

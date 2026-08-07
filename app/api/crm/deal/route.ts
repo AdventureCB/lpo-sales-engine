@@ -4,6 +4,7 @@ import { getSessionUser } from "@/lib/auth";
 import { envOptional } from "@/lib/env";
 import { updateDealStage, addDealNote, createActivity, updateActivity } from "@/lib/pipedrive";
 import { enqueuePdSync } from "@/lib/pd-sync";
+import { resolveReprospect } from "@/lib/reprospect";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -258,6 +259,15 @@ export async function POST(req: NextRequest) {
         writeThroughError = "Pipedrive busy — queued, will sync automatically";
       }
     }
+    // Scheduling a future activity on a reprospecting-pool deal reclaims it.
+    if (dueAt) {
+      await resolveReprospect(db, {
+        crmDealId: deal.id,
+        repEmail: user.email,
+        repPipedriveId: user.pipedriveUserId,
+        event: "scheduled",
+      });
+    }
   }
 
   // Mark a scheduled activity done (write-through to Pipedrive when linked).
@@ -504,6 +514,15 @@ export async function POST(req: NextRequest) {
         : "Stage changed",
       actor: user.email,
     });
+    // Marking a reprospecting-pool deal lost ends its 3-day hold.
+    if (body.status === "lost") {
+      await resolveReprospect(db, {
+        crmDealId: deal.id,
+        repEmail: user.email,
+        repPipedriveId: user.pipedriveUserId,
+        event: "lost",
+      });
+    }
   }
 
   return NextResponse.json({ ok: true, writeThroughError });

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
 import { enqueuePdSync } from "@/lib/pd-sync";
+import { resolveReprospect } from "@/lib/reprospect";
 
 export const runtime = "nodejs";
 
@@ -96,11 +97,12 @@ export async function POST(req: NextRequest) {
   };
 
   // The rep's next step, scheduled in the same gesture as the disposition.
-  const scheduleNext = async () => {
+  // Returns true when an activity was actually scheduled.
+  const scheduleNext = async (): Promise<boolean> => {
     const n = body.next;
-    if (!n?.dueAt || !["call", "task", "meeting", "email"].includes(n.type ?? "")) return;
+    if (!n?.dueAt || !["call", "task", "meeting", "email"].includes(n.type ?? "")) return false;
     const deal = await resolveCrmDeal();
-    if (!deal) return;
+    if (!deal) return false;
     const subject = n.subject?.trim() || `Follow up (${disposition})`;
     const { data: inserted } = await db
       .from("crm_activities")
@@ -124,6 +126,26 @@ export async function POST(req: NextRequest) {
         crmActivityId: inserted.id,
       });
     }
+    return !!inserted;
+  };
+
+  // Reprospecting pool lifecycle: a scheduled follow-up reclaims the deal;
+  // a plain conversation just ends the 3-day hold. No-op for normal deals.
+  const resolveReprospectAfterCall = async (scheduled: boolean) => {
+    const deal = await resolveCrmDeal();
+    if (!deal) return;
+    const ev = scheduled
+      ? "scheduled"
+      : disposition === "connected" || disposition === "confirmation"
+        ? "conversation"
+        : null;
+    if (!ev) return;
+    await resolveReprospect(db, {
+      crmDealId: deal.id,
+      repEmail: user.email,
+      repPipedriveId: user.pipedriveUserId,
+      event: ev,
+    });
   };
 
   if (call) {
@@ -139,7 +161,8 @@ export async function POST(req: NextRequest) {
     // CRM row is saved — Pipedrive catches up via the outbox as budget allows.
     if (dealId) await enqueuePdSync(db, "disposition", { dealId, disposition, dialStartedAt });
     await saveNote();
-    await scheduleNext();
+    const scheduled = await scheduleNext();
+    await resolveReprospectAfterCall(scheduled);
     return NextResponse.json({ ok: true, attached: true });
   }
 
@@ -161,7 +184,8 @@ export async function POST(req: NextRequest) {
     }
     if (dealId) await enqueuePdSync(db, "disposition", { dealId, disposition, dialStartedAt });
     await saveNote();
-    await scheduleNext();
+    const scheduled = await scheduleNext();
+    await resolveReprospectAfterCall(scheduled);
     return NextResponse.json({ ok: true, attached: false, synthesized: true });
   }
 

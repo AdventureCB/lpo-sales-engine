@@ -39,10 +39,11 @@ export async function GET(req: NextRequest) {
     const { data: items, error } = await db
       .from("crm_sprint_items")
       .select(
-        "position, called_at, crm_deals ( id, title, pipedrive_deal_id, crm_stages ( name ), crm_contacts ( name, phones ) )"
+        "position, called_at, flag, crm_deals ( id, title, pipedrive_deal_id, crm_stages ( name ), crm_contacts ( name, phones ) )"
       )
       .eq("sprint_id", sprintId)
       .is("called_at", null)
+      .is("removed_at", null)
       .order("position");
     if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
     let skippedNoPhone = 0;
@@ -66,8 +67,8 @@ export async function GET(req: NextRequest) {
           personName: d.crm_contacts?.name ?? null,
           phone,
           stageName: d.crm_stages?.name ?? "—",
-          hot: false,
-          hotReason: null,
+          hot: !!it.flag,
+          hotReason: it.flag ?? null,
         };
       })
       .filter(Boolean);

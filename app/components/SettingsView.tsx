@@ -188,7 +188,104 @@ export function SettingsView() {
       <CommLibraryAdmin />
       <DealSourcesAdmin />
       <PipelineAdmin />
+      <SprintListConfigAdmin />
     </>
+  );
+}
+
+// ── Sprint List tuning: caps, tier windows, clock, hot-signal regex ────────
+
+function SprintListConfigAdmin() {
+  const [cfg, setCfg] = useState<any>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/crm/sprint-lists/config")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d) => setCfg(d.config))
+      .catch(() => {});
+  }, []);
+
+  if (!cfg) return null;
+
+  const num = (path: string[], v: string) => {
+    setCfg((c: any) => {
+      const next = structuredClone(c);
+      let o = next;
+      for (let i = 0; i < path.length - 1; i++) o = o[path[i]];
+      o[path[path.length - 1]] = v === "" ? null : Number(v);
+      return next;
+    });
+  };
+  const txt = (path: string[], v: string) => {
+    setCfg((c: any) => {
+      const next = structuredClone(c);
+      let o = next;
+      for (let i = 0; i < path.length - 1; i++) o = o[path[i]];
+      o[path[path.length - 1]] = v;
+      return next;
+    });
+  };
+
+  async function save() {
+    setSaving(true);
+    setMsg(null);
+    const r = await fetch("/api/crm/sprint-lists/config", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(cfg),
+    });
+    setSaving(false);
+    setMsg(r.ok ? "✓ Saved" : "⚠ Save failed");
+  }
+
+  const W = cfg.windows;
+  const numField = (label: string, path: string[], val: any) => (
+    <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12.5, color: "var(--text-3)" }}>
+      {label}
+      <input className="vmsel" style={{ width: 90 }} type="number" value={val ?? ""} onChange={(e) => num(path, e.target.value)} />
+    </label>
+  );
+
+  return (
+    <div className="card" style={{ maxWidth: 680, marginTop: 18 }}>
+      <h3 style={{ margin: "0 0 4px" }}>📋 Sprint List tuning</h3>
+      <p className="viewsub" style={{ marginTop: 0 }}>Caps, tier windows (days), and hot-signal matching for the daily call lists.</p>
+
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 12 }}>
+        {numField("List cap", ["cap"], cfg.cap)}
+        {numField("Reprospect sub-cap", ["reprospect_subcap"], cfg.reprospect_subcap)}
+        {numField("Checkout hold (days)", ["checkout_hold_days"], cfg.checkout_hold_days)}
+      </div>
+
+      <div style={{ fontSize: 13, fontWeight: 600, margin: "6px 0" }}>Tier windows (days)</div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+        {numField("Hot (1a/1b)", ["windows", "hot_days"], W.hot_days)}
+        {numField("New deal", ["windows", "new_deal_days"], W.new_deal_days)}
+        {numField("Marketing signal", ["windows", "marketing_signal_days"], W.marketing_signal_days)}
+        {numField("Recent activity", ["windows", "recent_activity_days"], W.recent_activity_days)}
+        {numField("Scheduled ahead", ["windows", "scheduled_ahead_days"], W.scheduled_ahead_days)}
+        {numField("No conversation", ["windows", "no_conversation_days"], W.no_conversation_days)}
+        {numField("Stale min", ["windows", "stale_min_days"], W.stale_min_days)}
+        {numField("Stale max", ["windows", "stale_max_days"], W.stale_max_days)}
+      </div>
+
+      <div style={{ fontSize: 13, fontWeight: 600, margin: "6px 0" }}>Hot-signal matching (regex on engagement_events.type)</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+        <label style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+          1a — buy intent
+          <input className="vmsel" style={{ width: "100%", marginTop: 3 }} value={cfg.hot_1a_regex} onChange={(e) => txt(["hot_1a_regex"], e.target.value)} />
+        </label>
+        <label style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+          1b — active engagement (excludes email_open)
+          <input className="vmsel" style={{ width: "100%", marginTop: 3 }} value={cfg.hot_1b_regex} onChange={(e) => txt(["hot_1b_regex"], e.target.value)} />
+        </label>
+      </div>
+
+      <button className="btn primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+      {msg && <span style={{ marginLeft: 10, fontSize: 13, color: msg.startsWith("✓") ? "var(--good)" : "var(--bad)" }}>{msg}</span>}
+    </div>
   );
 }
 
