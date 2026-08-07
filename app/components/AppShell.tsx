@@ -3,6 +3,7 @@ import { UserChip } from "./UserChip";
 import { RefreshButton } from "./RefreshButton";
 import { NavGroup } from "./NavGroup";
 import { NotificationBell } from "./NotificationBell";
+import { ThemeToggle } from "./ThemeToggle";
 
 interface NavItem {
   label: string;
@@ -94,6 +95,7 @@ export function AppShell({
             </div>
           )}
           <RefreshButton />
+          <ThemeToggle />
         </div>
       </aside>
       <main>{children}</main>
