@@ -35,6 +35,9 @@ interface Deal {
   dials?: number;
   conversations?: number;
   buy_signal?: { metric: string; at: string } | null;
+  ad_source?: string | null;
+  ad_channel?: string | null;
+  lead_cost_cents?: number | null;
 }
 
 interface Meta {
@@ -130,6 +133,32 @@ const ALL_COLUMNS: ColDef[] = [
   { key: "source", label: "Source", nowrap: true, render: (d) => <span style={{ color: "var(--text-2)" }}>{d.deal_sources?.name ?? "—"}</span> },
   { key: "owner", label: "Owner", nowrap: true, render: (d) => (d.owner_pipedrive_id ? OWNER_NAMES[d.owner_pipedrive_id] ?? d.owner_pipedrive_id : "—") },
   { key: "truck", label: "Truck", nowrap: true, render: (d) => <span style={{ color: "var(--text-2)" }}>{d.truck_model ?? "—"}</span> },
+  {
+    key: "ad_source",
+    label: "Ad source",
+    nowrap: true,
+    render: (d) =>
+      d.ad_source ? (
+        <span style={{ color: d.ad_channel ? "var(--accent)" : "var(--text-2)", fontWeight: d.ad_channel ? 650 : 400 }}>
+          {d.ad_source}
+        </span>
+      ) : (
+        <span style={{ color: "var(--text-3)" }}>—</span>
+      ),
+  },
+  {
+    key: "lead_cost",
+    label: "Lead cost",
+    nowrap: true,
+    render: (d) =>
+      d.lead_cost_cents != null ? (
+        <span style={{ fontVariantNumeric: "tabular-nums" }} title="Estimated: 30-day channel spend ÷ channel-attributed leads">
+          ~${Math.round(d.lead_cost_cents / 100).toLocaleString()}
+        </span>
+      ) : (
+        <span style={{ color: "var(--text-3)" }}>—</span>
+      ),
+  },
   { key: "interests", label: "Interests", nowrap: true, render: (d) => <span style={{ color: "var(--text-2)" }}>{d.interests?.length ? d.interests.join(", ") : "—"}</span> },
   {
     key: "next_activity",

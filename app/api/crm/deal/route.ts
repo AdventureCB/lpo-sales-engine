@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
   let q = db
     .from("crm_deals")
     .select(
-      "*, crm_stages ( id, name, pipeline_id, crm_pipelines ( id, name ) ), crm_contacts ( id, name, emails, phones, org_name )"
+      "*, crm_stages ( id, name, pipeline_id, crm_pipelines ( id, name ) ), crm_contacts ( id, name, emails, phones, org_name, attribution )"
     );
   q = id ? q.eq("id", id) : q.eq("pipedrive_deal_id", Number(pdId));
   const { data: deal, error } = await q.maybeSingle();
@@ -120,10 +120,23 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Ad attribution chip: contact's source/campaign + estimated channel CPL.
+  let adInfo: { source: string | null; campaign: string | null; channel: string | null; leadCostCents: number | null } | null = null;
+  try {
+    const { contactAdInfo, cachedLeadCost } = await import("@/lib/lead-cost");
+    const info = contactAdInfo(deal.crm_contacts?.attribution);
+    if (info.source || info.channel) {
+      const report = await cachedLeadCost(db, 30);
+      const cpl = info.channel ? report.channels.find((c) => c.channel === info.channel)?.cplCents ?? null : null;
+      adInfo = { ...info, leadCostCents: cpl };
+    }
+  } catch {}
+
   return NextResponse.json({
     deal,
     timeline,
     callStats,
+    adInfo,
     sources: sources ?? [],
     pipelines: pipelines ?? [],
     stages: stages.data ?? [],

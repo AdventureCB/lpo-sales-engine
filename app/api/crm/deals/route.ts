@@ -30,8 +30,8 @@ export async function GET(req: NextRequest) {
   // join on the embedded contact (a plain embed leaves deals unfiltered).
   const tz = p.get("tz"); // west | central | east
   const contactEmbed = tz
-    ? "crm_contacts!inner ( name, phones, emails, tz_offset )"
-    : "crm_contacts ( name, phones, emails, tz_offset )";
+    ? "crm_contacts!inner ( name, phones, emails, tz_offset, attribution )"
+    : "crm_contacts ( name, phones, emails, tz_offset, attribution )";
 
   const db = supabaseAdmin();
   let q = db
@@ -130,6 +130,15 @@ export async function GET(req: NextRequest) {
       if (!signalByEmail.has(key)) signalByEmail.set(key, { metric: prettyMetric(s.type), at: s.occurred_at });
     }
 
+    // Ad source + estimated lead cost (channel CPL, cached 10 min).
+    let cpl: Map<string, number | null> | null = null;
+    try {
+      const { cachedLeadCost } = await import("@/lib/lead-cost");
+      const report = await cachedLeadCost(db, 30);
+      cpl = new Map(report.channels.map((c) => [c.channel, c.cplCents]));
+    } catch {}
+    const { contactAdInfo } = await import("@/lib/lead-cost");
+
     for (const d of deals) {
       d.next_activity_at = nextByDeal.get(d.id) ?? (d.contact_id ? nextByContact.get(d.contact_id) : null) ?? null;
       const st = statByDeal.get(d.id) as any;
@@ -137,6 +146,10 @@ export async function GET(req: NextRequest) {
       d.conversations = Number(st?.conversations ?? 0);
       const em = ((d.crm_contacts?.emails as any[]) ?? []).map((e) => (e.value ?? "").toLowerCase());
       d.buy_signal = em.map((e: string) => signalByEmail.get(e)).find(Boolean) ?? null;
+      const ad = contactAdInfo(d.crm_contacts?.attribution);
+      d.ad_source = ad.source;
+      d.ad_channel = ad.channel;
+      d.lead_cost_cents = ad.channel && cpl ? cpl.get(ad.channel) ?? null : null;
     }
   }
 

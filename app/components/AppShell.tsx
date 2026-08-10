@@ -38,6 +38,7 @@ const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[]
     items: [
       { label: "Quality", href: "/quality", adminOnly: true },
       { label: "⏱ Engagement", href: "/engagement", adminOnly: true },
+      { label: "💰 Ad ROI", href: "/ad-roi", adminOnly: true },
       { label: "Commissions", href: "/commissions", adminOnly: true },
     ],
   },

@@ -8,6 +8,7 @@ interface DealData {
   deal: any;
   timeline: { id?: string; kind: string; at: string | null; title: string; body: string | null; actor: string | null; done: boolean; due: string | null }[];
   callStats: { dials: number; answered: number; talkS: number; inbound: number } | null;
+  adInfo?: { source: string | null; campaign: string | null; channel: string | null; leadCostCents: number | null } | null;
   sources: { id: string; name: string }[];
   pipelines: { id: string; name: string }[];
   stages: { id: string; name: string; pipeline_id: string; crm_pipelines: { name: string } | null }[];
@@ -176,6 +177,18 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
                   ))}
                 </select>
               </div>
+              {data.adInfo && (data.adInfo.source || data.adInfo.channel) && (
+                <div className="field">
+                  <label>Ad</label>
+                  <div style={{ fontSize: 13.5, paddingTop: 7, whiteSpace: "nowrap" }} title="From Triple Whale pixel / first-party capture">
+                    <span style={{ color: "var(--accent)", fontWeight: 650 }}>{data.adInfo.source ?? data.adInfo.channel}</span>
+                    {data.adInfo.campaign && <span style={{ color: "var(--text-3)" }}> · {String(data.adInfo.campaign).slice(0, 16)}</span>}
+                    {data.adInfo.leadCostCents != null && (
+                      <span style={{ color: "var(--text-2)" }}> · ~${Math.round(data.adInfo.leadCostCents / 100)}/lead</span>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="field">
                 <label>Value ($)</label>
                 <div style={{ display: "flex", gap: 6 }}>
