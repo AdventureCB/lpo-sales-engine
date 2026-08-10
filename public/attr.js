@@ -56,6 +56,18 @@
     } catch (e) {}
   }
 
+  // Persistent visitor id — the tiny pointer that identity events carry so
+  // the server can link this browser's touch history to a contact.
+  var vid = null;
+  try {
+    vid = localStorage.getItem("lpo_vid");
+    if (!vid) {
+      vid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+        : "v-" + Date.now().toString(16) + "-" + Math.random().toString(16).slice(2, 10);
+      localStorage.setItem("lpo_vid", vid);
+    }
+  } catch (e) {}
+
   var attr = load();
   var fresh = readParams();
   if (fresh) {
@@ -80,6 +92,26 @@
                    ref: document.referrer.slice(0, 300), at: new Date().toISOString() };
     save(attr);
   }
+  // Beacon unsynced touches DIRECTLY to our app (no third-party porting).
+  // text/plain body → simple CORS request, no preflight; fire-and-forget.
+  (function syncTouches() {
+    try {
+      if (!vid || !attr.touches || attr.touches.length === 0) return;
+      var synced = 0;
+      try { synced = parseInt(localStorage.getItem("lpo_attr_synced") || "0", 10) || 0; } catch (e) {}
+      if (synced >= attr.touches.length) return;
+      var pending = attr.touches.slice(synced);
+      fetch("https://lpo-sales-engine.vercel.app/api/attr/touch", {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({ vid: vid, touches: pending }),
+        keepalive: true,
+      }).then(function (r) {
+        if (r.ok) try { localStorage.setItem("lpo_attr_synced", String(attr.touches.length)); } catch (e) {}
+      }).catch(function () {});
+    } catch (e) {}
+  })();
+
   if (!attr.first) return; // nothing to propagate
 
   function flat() {
@@ -102,30 +134,9 @@
     return out;
   }
   var props = flat();
-
-  // Compact serialized touch history, trimmed oldest-first to fit `max` chars.
-  function touchesJson(max) {
-    try {
-      var arr = (attr.touches || []).map(function (t) {
-        var o = { at: t.at };
-        if (t.utm_source) o.s = t.utm_source;
-        if (t.utm_medium) o.m = t.utm_medium;
-        if (t.utm_campaign) o.c = t.utm_campaign;
-        if (t.utm_content) o.n = t.utm_content;
-        if (t.utm_term) o.t = t.utm_term;
-        if (t.gclid) o.g = 1; else if (t.gbraid || t.wbraid) o.g = 1;
-        if (t.fbclid) o.f = 1;
-        if (t.msclkid) o.ms = 1;
-        if (t.ttclid) o.tt = 1;
-        return o;
-      });
-      var s = JSON.stringify(arr);
-      while (s.length > max && arr.length > 1) { arr.shift(); s = JSON.stringify(arr); }
-      return s.length <= max ? s : null;
-    } catch (e) { return null; }
-  }
-  var tjKlaviyo = touchesJson(4000);
-  if (tjKlaviyo) props.attr_touches = tjKlaviyo;
+  // Identity events carry only the visitor-id pointer — the touch history
+  // itself lives in our app via the beacon above.
+  if (vid) props.attr_vid = vid;
 
   // ── Klaviyo profile stamp (merges onto the anonymous profile; sticks when
   //    the visitor later identifies via any form/checkout) ──
@@ -150,9 +161,6 @@
           if (localStorage.getItem(sig) === mark) return;
           var attributes = {};
           Object.keys(props).forEach(function (k) { attributes[k] = String(props[k]); });
-          // Cart attribute values are size-constrained — ship a shorter history.
-          var tjCart = touchesJson(1200);
-          if (tjCart) attributes.attr_touches = tjCart; else delete attributes.attr_touches;
           fetch("/cart/update.js", {
             method: "POST",
             credentials: "same-origin",
@@ -176,6 +184,7 @@
         var v = l[k] || f[k];
         if (v && !u.searchParams.has(k)) u.searchParams.set(k, v);
       });
+      if (vid && !u.searchParams.has("vid")) u.searchParams.set("vid", vid);
       a.href = u.toString();
     } catch (e) {}
   }, true);

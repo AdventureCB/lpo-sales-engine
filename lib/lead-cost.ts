@@ -261,9 +261,25 @@ export async function computeAdJourney(
     }
   }
 
-  // First-party captured touches (attr.js): full multi-touch history when
-  // present, plus first/last as fallback for pre-multi-touch captures.
+  // First-party touches: the visitor's beaconed history (web_touches via
+  // attr_vid links) is canonical; attribution.first/last/touches remain as
+  // fallback for pre-beacon captures.
+  const beaconTouches: any[] = [];
+  if (norm.length > 0) {
+    const { data: links } = await db.from("web_visitor_links").select("visitor_id").in("email", norm);
+    const vids = (links ?? []).map((l) => l.visitor_id);
+    if (vids.length > 0) {
+      const { data: wt } = await db
+        .from("web_touches")
+        .select("at, source, medium, campaign, content, gclid, gbraid, wbraid, fbclid, msclkid")
+        .in("visitor_id", vids)
+        .order("at", { ascending: false })
+        .limit(100);
+      for (const t of wt ?? []) beaconTouches.push({ ...t, source: t.source, campaign: t.campaign });
+    }
+  }
   const siteTouches: any[] = [
+    ...beaconTouches,
     ...((contactAttribution?.touches as any[]) ?? []),
     contactAttribution?.first,
     contactAttribution?.last,

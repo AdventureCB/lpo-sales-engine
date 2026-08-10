@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
     // Ad attribution: cart attributes stamped by attr.js arrive as
     // note_attributes; landing_site is Shopify's own first-page capture.
     try {
-      const { touchesFromFlat, mergeContactAttribution } = await import("@/lib/attribution");
+      const { touchesFromFlat, mergeContactAttribution, linkVisitor } = await import("@/lib/attribution");
       const flat: Record<string, unknown> = {};
       for (const na of order.note_attributes ?? []) {
         if (na?.name && typeof na.value === "string") flat[na.name] = na.value;
@@ -94,6 +94,7 @@ export async function POST(req: NextRequest) {
       if (!flat.attr_landing && typeof order.landing_site === "string") flat.attr_landing = order.landing_site;
       if (!flat.attr_referrer && typeof order.referring_site === "string") flat.attr_referrer = order.referring_site;
       await mergeContactAttribution(db, row.customer_email, touchesFromFlat(flat));
+      await linkVisitor(db, flat, row.customer_email);
     } catch (e) {
       console.error("attribution merge failed", e);
     }

@@ -68,6 +68,24 @@ export function touchesFromFlat(
   return { first, last, touches };
 }
 
+/**
+ * Link a visitor id (attr_vid pointer carried by an identity event) to an
+ * email so the visitor's beaconed touch history joins the contact's journey.
+ */
+export async function linkVisitor(
+  db: SupabaseClient,
+  flatIn: Record<string, unknown>,
+  email: string | null | undefined
+): Promise<boolean> {
+  const vid = typeof flatIn.attr_vid === "string" ? flatIn.attr_vid.trim().slice(0, 64) : null;
+  const norm = email?.trim().toLowerCase();
+  if (!vid || !norm || !/^[a-f0-9-]{16,64}$/i.test(vid)) return false;
+  const { error } = await db
+    .from("web_visitor_links")
+    .upsert({ visitor_id: vid, email: norm, linked_at: new Date().toISOString() }, { onConflict: "visitor_id" });
+  return !error;
+}
+
 /** Merge captured touches into a contact found by email. No-op when unmatched. */
 export async function mergeContactAttribution(
   db: SupabaseClient,

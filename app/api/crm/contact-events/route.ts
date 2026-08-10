@@ -59,10 +59,12 @@ export async function GET(req: NextRequest) {
           break;
         }
       }
-      // Ad attribution stamped by attr.js lands as attr_* profile properties.
+      // Ad attribution stamped by attr.js lands as attr_* profile properties;
+      // attr_vid links the visitor's beaconed touch history to this contact.
       try {
-        const { touchesFromFlat, mergeContactAttribution } = await import("@/lib/attribution");
+        const { touchesFromFlat, mergeContactAttribution, linkVisitor } = await import("@/lib/attribution");
         await mergeContactAttribution(db, email, touchesFromFlat(profile.properties ?? {}));
+        await linkVisitor(db, profile.properties ?? {}, email);
       } catch {}
     }
 
