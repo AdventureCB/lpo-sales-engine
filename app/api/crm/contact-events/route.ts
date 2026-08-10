@@ -59,6 +59,11 @@ export async function GET(req: NextRequest) {
           break;
         }
       }
+      // Ad attribution stamped by attr.js lands as attr_* profile properties.
+      try {
+        const { touchesFromFlat, mergeContactAttribution } = await import("@/lib/attribution");
+        await mergeContactAttribution(db, email, touchesFromFlat(profile.properties ?? {}));
+      } catch {}
     }
 
     if (profileId && profileId !== "none" && (needsSync || needsProfile)) {

@@ -1,0 +1,143 @@
+/**
+ * LPO first-party ad-attribution capture. Included on lonepeakoverland.com:
+ *   <script src="https://lpo-sales-engine.vercel.app/attr.js" defer></script>
+ *
+ * Persists UTMs + ad click IDs (gclid/gbraid/wbraid/fbclid/msclkid/ttclid)
+ * for 90 days as first-touch (set once) + last-touch (updated only on visits
+ * that carry new params — a later direct visit never erases a paid click).
+ * Stamps them into: Klaviyo profile properties (attr_*), Shopify cart
+ * attributes (→ order note_attributes → our CRM), and outbound Typeform
+ * links (→ hidden fields). Everything is fail-silent.
+ */
+(function () {
+  "use strict";
+  var KEYS = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
+              "gclid", "gbraid", "wbraid", "fbclid", "msclkid", "ttclid"];
+  var STORE = "lpo_attr";
+  var TTL_MS = 90 * 24 * 3600 * 1000;
+
+  function readParams() {
+    try {
+      var q = new URLSearchParams(location.search);
+      var out = {};
+      var found = false;
+      for (var i = 0; i < KEYS.length; i++) {
+        var v = q.get(KEYS[i]);
+        if (v) { out[KEYS[i]] = v.slice(0, 200); found = true; }
+      }
+      if (!found) return null;
+      out.lp = (location.origin + location.pathname).slice(0, 300);
+      if (document.referrer && document.referrer.indexOf(location.hostname) === -1) {
+        out.ref = document.referrer.slice(0, 300);
+      }
+      out.at = new Date().toISOString();
+      return out;
+    } catch (e) { return null; }
+  }
+
+  function load() {
+    try {
+      var raw = localStorage.getItem(STORE);
+      if (!raw) return {};
+      var d = JSON.parse(raw);
+      // Expire the whole record off first-touch age.
+      if (d.first && d.first.at && Date.now() - Date.parse(d.first.at) > TTL_MS) return {};
+      return d && typeof d === "object" ? d : {};
+    } catch (e) { return {}; }
+  }
+
+  function save(d) {
+    try { localStorage.setItem(STORE, JSON.stringify(d)); } catch (e) {}
+    try {
+      // Cookie mirror (apex domain) so other subdomains can read it too.
+      var host = location.hostname.split(".").slice(-2).join(".");
+      document.cookie = STORE + "=" + encodeURIComponent(JSON.stringify(d)) +
+        ";path=/;domain=." + host + ";max-age=" + Math.floor(TTL_MS / 1000) + ";SameSite=Lax";
+    } catch (e) {}
+  }
+
+  var attr = load();
+  var fresh = readParams();
+  if (fresh) {
+    if (!attr.first) attr.first = fresh;
+    attr.last = fresh; // last NON-DIRECT touch: only param-carrying visits update it
+    save(attr);
+  } else if (!attr.first && document.referrer && document.referrer.indexOf(location.hostname) === -1) {
+    // Organic first visit: record landing/referrer so "organic" is explicit.
+    attr.first = { lp: (location.origin + location.pathname).slice(0, 300),
+                   ref: document.referrer.slice(0, 300), at: new Date().toISOString() };
+    save(attr);
+  }
+  if (!attr.first) return; // nothing to propagate
+
+  function flat() {
+    var out = {};
+    var f = attr.first || {}, l = attr.last || {};
+    var map = { utm_source: "source", utm_medium: "medium", utm_campaign: "campaign",
+                utm_content: "content", utm_term: "term" };
+    Object.keys(map).forEach(function (k) {
+      if (f[k]) out["attr_first_" + map[k]] = f[k];
+      if (l[k]) out["attr_last_" + map[k]] = l[k];
+    });
+    ["gclid", "gbraid", "wbraid", "fbclid", "msclkid", "ttclid"].forEach(function (k) {
+      if (l[k]) out["attr_" + k] = l[k];
+      else if (f[k]) out["attr_" + k] = f[k];
+    });
+    if (f.lp) out.attr_landing = f.lp;
+    if (f.ref) out.attr_referrer = f.ref;
+    if (f.at) out.attr_first_at = f.at;
+    if (l.at) out.attr_last_at = l.at;
+    return out;
+  }
+  var props = flat();
+
+  // ── Klaviyo profile stamp (merges onto the anonymous profile; sticks when
+  //    the visitor later identifies via any form/checkout) ──
+  var tries = 0;
+  (function stampKlaviyo() {
+    try {
+      var k = window.klaviyo || window._learnq;
+      if (k && typeof k.push === "function") { k.push(["identify", props]); return; }
+    } catch (e) {}
+    if (++tries < 20) setTimeout(stampKlaviyo, 1500);
+  })();
+
+  // ── Shopify cart attributes (→ order.note_attributes → CRM) ──
+  function stampCart() {
+    try {
+      var sig = STORE + "_stamped";
+      fetch("/cart.js", { credentials: "same-origin" })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (cart) {
+          if (!cart || !cart.token) return;
+          var mark = cart.token + ":" + (props.attr_last_at || props.attr_first_at || "");
+          if (localStorage.getItem(sig) === mark) return;
+          var attributes = {};
+          Object.keys(props).forEach(function (k) { attributes[k] = String(props[k]); });
+          fetch("/cart/update.js", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ attributes: attributes }),
+          }).then(function (r) { if (r.ok) try { localStorage.setItem(sig, mark); } catch (e) {} });
+        })
+        .catch(function () {});
+    } catch (e) {}
+  }
+  if (location.hostname.indexOf("lonepeakoverland") !== -1) stampCart();
+
+  // ── Typeform link decoration (→ declared hidden fields) ──
+  document.addEventListener("click", function (ev) {
+    try {
+      var a = ev.target && ev.target.closest ? ev.target.closest("a[href*='typeform.com']") : null;
+      if (!a) return;
+      var u = new URL(a.href);
+      var f = attr.first || {}, l = attr.last || {};
+      KEYS.forEach(function (k) {
+        var v = l[k] || f[k];
+        if (v && !u.searchParams.has(k)) u.searchParams.set(k, v);
+      });
+      a.href = u.toString();
+    } catch (e) {}
+  }, true);
+})();
