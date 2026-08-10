@@ -199,6 +199,36 @@ export interface AdJourney {
   unpriced: number;
 }
 
+/**
+ * Campaign-level stats (name + real CPC) from direct platform APIs.
+ * Key: `${channel}|${campaignId}`. Names fall back across days (latest wins).
+ */
+export async function campaignStats(
+  db: SupabaseClient,
+  days = 30
+): Promise<Map<string, { name: string | null; cpcCents: number | null }>> {
+  const startDay = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  const { data } = await db
+    .from("ad_campaign_daily")
+    .select("channel, campaign_id, day, name, spend_cents, clicks")
+    .gte("day", startDay)
+    .order("day");
+  const agg = new Map<string, { name: string | null; spend: number; clicks: number }>();
+  for (const r of data ?? []) {
+    const key = `${r.channel}|${r.campaign_id}`;
+    const a = agg.get(key) ?? { name: null, spend: 0, clicks: 0 };
+    if (r.name) a.name = r.name; // rows ordered by day → latest name wins
+    a.spend += r.spend_cents ?? 0;
+    a.clicks += r.clicks ?? 0;
+    agg.set(key, a);
+  }
+  const out = new Map<string, { name: string | null; cpcCents: number | null }>();
+  for (const [key, a] of agg) {
+    out.set(key, { name: a.name, cpcCents: a.clicks > 0 ? Math.round(a.spend / a.clicks) : null });
+  }
+  return out;
+}
+
 /** Real channel CPC (spend ÷ clicks) over the window; only channels with click data. */
 export async function channelCpcCents(db: SupabaseClient, days = 30): Promise<Map<string, number>> {
   const startDay = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
@@ -302,14 +332,17 @@ export async function computeAdJourney(
 
   if (seen.size === 0) return null;
 
-  const cpc = await channelCpcCents(db, 30);
+  const [cpc, campaigns] = await Promise.all([channelCpcCents(db, 30), campaignStats(db, 90)]);
   let total = 0, priced = 0, unpriced = 0;
   const interactions = [...seen.values()]
     .map((i) => {
-      const cost = i.channel ? cpc.get(i.channel) ?? null : null;
+      // Campaign-level CPC + name when the platform API has this campaign;
+      // channel-average CPC otherwise.
+      const camp = i.channel && i.campaign ? campaigns.get(`${i.channel}|${i.campaign}`) : null;
+      const cost = camp?.cpcCents ?? (i.channel ? cpc.get(i.channel) ?? null : null);
       if (cost != null) { total += cost; priced++; }
       else if (i.channel) unpriced++; // paid channel, no click data → cost unknown
-      return { ...i, costCents: cost };
+      return { ...i, campaign: camp?.name ?? i.campaign, costCents: cost };
     })
     .sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""))
     .slice(0, 60);

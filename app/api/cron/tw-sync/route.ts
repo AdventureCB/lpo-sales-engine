@@ -45,6 +45,30 @@ export async function GET(req: Request) {
     }
   }
 
+  // ── 1b. Meta campaign-level daily (names + per-campaign CPC) ──
+  let campaignRows = 0;
+  const campaignErrors: string[] = [];
+  try {
+    const { metaConfigured, metaCampaignDaily } = await import("@/lib/meta-ads");
+    if (metaConfigured()) {
+      const since = laDay(spendDays - 1);
+      const until = laDay(0);
+      const days = await metaCampaignDaily(since, until);
+      for (const c of days) {
+        await db.from("ad_campaign_daily").upsert(
+          {
+            channel: "facebook", campaign_id: c.campaignId, day: c.day, name: c.name,
+            spend_cents: c.spendCents, clicks: c.clicks, updated_at: new Date().toISOString(),
+          },
+          { onConflict: "channel,campaign_id,day" }
+        );
+        campaignRows++;
+      }
+    }
+  } catch (e) {
+    campaignErrors.push(e instanceof Error ? e.message : "meta campaigns failed");
+  }
+
   // ── 2. Journeys ──
   const endIso = new Date().toISOString();
   const startIso = new Date(Date.now() - journeyDays * 86_400_000).toISOString();
@@ -70,8 +94,9 @@ export async function GET(req: Request) {
   }
 
   return NextResponse.json({
-    ok: true, spendDays, spendRows, orders, contactsStamped: stamped,
+    ok: true, spendDays, spendRows, campaignRows, orders, contactsStamped: stamped,
     ...(spendErrors.length ? { spendErrors: spendErrors.slice(0, 5) } : {}),
+    ...(campaignErrors.length ? { campaignErrors: campaignErrors.slice(0, 3) } : {}),
     ...(journeyErrors.length ? { journeyErrors: journeyErrors.slice(0, 5) } : {}),
   });
 }

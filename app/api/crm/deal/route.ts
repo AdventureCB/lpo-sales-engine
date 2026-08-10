@@ -124,11 +124,16 @@ export async function GET(req: NextRequest) {
   let adInfo: { source: string | null; campaign: string | null; channel: string | null; leadCostCents: number | null } | null = null;
   let adJourney: unknown = null;
   try {
-    const { contactAdInfo, cachedLeadCost, computeAdJourney } = await import("@/lib/lead-cost");
+    const { contactAdInfo, cachedLeadCost, computeAdJourney, campaignStats } = await import("@/lib/lead-cost");
     const info = contactAdInfo(deal.crm_contacts?.attribution);
     if (info.source || info.channel) {
       const report = await cachedLeadCost(db, 30);
       const cpl = info.channel ? report.channels.find((c) => c.channel === info.channel)?.cplCents ?? null : null;
+      // Resolve raw campaign ids to names where the platform API knows them.
+      if (info.channel && info.campaign) {
+        const camp = (await campaignStats(db, 90)).get(`${info.channel}|${info.campaign}`);
+        if (camp?.name) info.campaign = camp.name;
+      }
       adInfo = { ...info, leadCostCents: cpl };
     }
     const contactEmails = ((deal.crm_contacts?.emails as any[]) ?? []).map((e) => e.value).filter(Boolean);
