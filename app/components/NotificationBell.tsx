@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 
 interface Notif {
@@ -86,7 +87,10 @@ export function NotificationBell() {
         )}
       </button>
 
-      {open && (
+      {/* Portaled to <body>: the sidebar is a stacking context (z-index 50),
+          so a fixed panel rendered inside it would paint UNDER any page
+          element with a higher z-index (dispo bar, phone dock, sticky cols). */}
+      {open && typeof document !== "undefined" && createPortal(
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 890 }} onClick={() => setOpen(false)} />
           <div
@@ -156,7 +160,8 @@ export function NotificationBell() {
               </div>
             ))}
           </div>
-        </>
+        </>,
+        document.body
       )}
     </>
   );
