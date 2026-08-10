@@ -9,6 +9,12 @@ interface DealData {
   timeline: { id?: string; kind: string; at: string | null; title: string; body: string | null; actor: string | null; done: boolean; due: string | null }[];
   callStats: { dials: number; answered: number; talkS: number; inbound: number } | null;
   adInfo?: { source: string | null; campaign: string | null; channel: string | null; leadCostCents: number | null } | null;
+  adJourney?: {
+    interactions: { at: string | null; source: string; channel: string | null; campaign: string | null; adId: string | null; origin: string; costCents: number | null }[];
+    totalCostCents: number;
+    priced: number;
+    unpriced: number;
+  } | null;
   sources: { id: string; name: string }[];
   pipelines: { id: string; name: string }[];
   stages: { id: string; name: string; pipeline_id: string; crm_pipelines: { name: string } | null }[];
@@ -303,6 +309,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
       onSaved={load}
     />
   ) : null;
+  const adJourneyEl = data.adJourney ? <AdJourneySection journey={data.adJourney} /> : null;
 
   return (
     <>
@@ -970,6 +977,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
             </>
           )}
           {embedded && klaviyoEl}
+          {embedded && adJourneyEl}
           {!embedded && (
             <>
           {contact ? (
@@ -1001,7 +1009,67 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
             )}
           </div>
           {!embedded && klaviyoEl}
+          {!embedded && adJourneyEl}
         </div>
+      </div>
+    </>
+  );
+}
+
+// ── Ad interactions (below marketing signals) ──────────────────────────────
+// Every recorded ad touch for this person — TW pixel journey clicks across
+// all their orders + first-party captured touches — each paid click priced
+// at the channel's real CPC, summed into an actual acquisition cost.
+
+const CHANNEL_BADGE: Record<string, string> = {
+  google: "#4a94ec", facebook: "#7b6be0", chatgpt: "#4cc44c", microsoft: "#3aa0a0",
+  tiktok: "#d95b7a", pinterest: "#c0392b", snapchat: "#d9c53a", reddit: "#e8623a",
+  linkedin: "#3a7ac0", twitter: "#5aa0d0",
+};
+
+function AdJourneySection({ journey }: { journey: NonNullable<DealData["adJourney"]> }) {
+  const [open, setOpen] = useState(false);
+  const shown = open ? journey.interactions : journey.interactions.slice(0, 6);
+  return (
+    <>
+      <div className="panel-h" style={{ marginTop: 16 }}>
+        Ad interactions
+        <span style={{ fontWeight: 600, fontSize: 12.5, color: "var(--text-2)", marginLeft: 8 }}>
+          ~${Math.round(journey.totalCostCents / 100).toLocaleString()} ad cost
+          <span style={{ color: "var(--text-3)" }}>
+            {" "}· {journey.priced} priced click{journey.priced === 1 ? "" : "s"}
+            {journey.unpriced > 0 ? ` · ${journey.unpriced} unpriced` : ""}
+          </span>
+        </span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {shown.map((i, idx) => {
+          const color = i.channel ? CHANNEL_BADGE[i.channel] ?? "var(--accent)" : "var(--text-3)";
+          return (
+            <div key={idx} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 13, padding: "3px 2px" }}>
+              <span style={{ color: "var(--text-3)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", minWidth: 92 }}>
+                {i.at
+                  ? new Date(i.at).toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric", year: "2-digit" })
+                  : "—"}
+              </span>
+              <span style={{ color, fontWeight: i.channel ? 650 : 500, whiteSpace: "nowrap" }}>{i.source}</span>
+              {i.campaign && (
+                <span style={{ color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }} title={i.campaign}>
+                  {i.campaign}
+                </span>
+              )}
+              {i.origin === "site" && <span style={{ fontSize: 11, color: "var(--text-3)" }}>(site)</span>}
+              <span style={{ marginLeft: "auto", fontVariantNumeric: "tabular-nums", color: i.costCents != null ? "var(--text-1)" : "var(--text-3)", whiteSpace: "nowrap" }}>
+                {i.costCents != null ? `$${(i.costCents / 100).toFixed(2)}` : i.channel ? "?" : ""}
+              </span>
+            </div>
+          );
+        })}
+        {journey.interactions.length > 6 && (
+          <button className="btn ghost" style={{ alignSelf: "flex-start", padding: "3px 10px", fontSize: 12.5 }} onClick={() => setOpen(!open)}>
+            {open ? "Show less" : `Show all ${journey.interactions.length}`}
+          </button>
+        )}
       </div>
     </>
   );

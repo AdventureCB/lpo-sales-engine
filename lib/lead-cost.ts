@@ -179,3 +179,118 @@ export async function cachedLeadCost(db: SupabaseClient, days = 30): Promise<Lea
   cache = { at: Date.now(), days, report };
   return report;
 }
+
+// ── Per-person ad journey: every recorded ad interaction, priced at real CPC ──
+
+export interface AdInteraction {
+  at: string | null;
+  source: string;
+  channel: string | null; // paid channel slug when recognized
+  campaign: string | null;
+  adId: string | null;
+  origin: "tw" | "site"; // TW pixel journey vs first-party capture
+  costCents: number | null; // channel CPC when priced; null = untracked cost
+}
+
+export interface AdJourney {
+  interactions: AdInteraction[];
+  totalCostCents: number;
+  priced: number;
+  unpriced: number;
+}
+
+/** Real channel CPC (spend ÷ clicks) over the window; only channels with click data. */
+export async function channelCpcCents(db: SupabaseClient, days = 30): Promise<Map<string, number>> {
+  const startDay = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  const { data } = await db.from("ad_spend").select("channel, spend_cents, clicks").gte("day", startDay);
+  const agg = new Map<string, { spend: number; clicks: number }>();
+  for (const r of data ?? []) {
+    const a = agg.get(r.channel) ?? { spend: 0, clicks: 0 };
+    a.spend += r.spend_cents ?? 0;
+    a.clicks += r.clicks ?? 0;
+    agg.set(r.channel, a);
+  }
+  const out = new Map<string, number>();
+  for (const [ch, a] of agg) if (a.clicks > 0) out.set(ch, Math.round(a.spend / a.clicks));
+  return out;
+}
+
+/**
+ * All recorded ad interactions for a contact: TW pixel journey clicks
+ * (linearAll ∪ first/last, across every order) + first-party captured
+ * touches. Each paid-channel click is priced at the channel's real CPC —
+ * the accumulated total is "what we paid for this person's clicks".
+ */
+export async function computeAdJourney(
+  db: SupabaseClient,
+  emails: string[],
+  contactAttribution: any
+): Promise<AdJourney | null> {
+  const norm = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))];
+  const seen = new Map<string, AdInteraction>();
+
+  if (norm.length > 0) {
+    const { data: orders } = await db
+      .from("sales_orders")
+      .select("shopify_order_id")
+      .in("customer_email", norm);
+    const ids = (orders ?? []).map((o) => o.shopify_order_id).filter(Boolean);
+    if (ids.length > 0) {
+      const { data: twoa } = await db
+        .from("tw_order_attribution")
+        .select("attribution_raw")
+        .in("shopify_order_id", ids);
+      for (const row of twoa ?? []) {
+        const raw = (row.attribution_raw ?? {}) as Record<string, any[]>;
+        for (const listName of ["linearAll", "fullFirstClick", "fullLastClick", "lastPlatformClick"]) {
+          for (const c of raw[listName] ?? []) {
+            if (!c?.source || c.source === "Excluded") continue;
+            const key = `${c.source}|${c.campaignId ?? ""}|${c.clickDate ?? ""}`;
+            if (seen.has(key)) continue;
+            seen.set(key, {
+              at: c.clickDate ? new Date(c.clickDate).toISOString() : null,
+              source: String(c.source).slice(0, 60),
+              channel: normalizeChannel(c.source),
+              campaign: c.campaignId ? String(c.campaignId).slice(0, 80) : null,
+              adId: c.adId ? String(c.adId).slice(0, 40) : null,
+              origin: "tw",
+            } as AdInteraction);
+          }
+        }
+      }
+    }
+  }
+
+  // First-party captured touches (attr.js → contact.attribution first/last).
+  for (const t of [contactAttribution?.first, contactAttribution?.last]) {
+    if (!t?.source && !t?.gclid && !t?.fbclid) continue;
+    const source = t.source ?? (t.gclid || t.gbraid || t.wbraid ? "google" : t.fbclid ? "facebook" : null);
+    if (!source) continue;
+    const key = `site|${source}|${t.at ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.set(key, {
+      at: t.at ?? null,
+      source: String(source).slice(0, 60),
+      channel: normalizeChannel(source),
+      campaign: t.campaign ? String(t.campaign).slice(0, 80) : null,
+      adId: null,
+      origin: "site",
+    } as AdInteraction);
+  }
+
+  if (seen.size === 0) return null;
+
+  const cpc = await channelCpcCents(db, 30);
+  let total = 0, priced = 0, unpriced = 0;
+  const interactions = [...seen.values()]
+    .map((i) => {
+      const cost = i.channel ? cpc.get(i.channel) ?? null : null;
+      if (cost != null) { total += cost; priced++; }
+      else if (i.channel) unpriced++; // paid channel, no click data → cost unknown
+      return { ...i, costCents: cost };
+    })
+    .sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""))
+    .slice(0, 60);
+
+  return { interactions, totalCostCents: total, priced, unpriced };
+}

@@ -35,7 +35,7 @@ export async function GET(req: Request) {
       const spends = await twDailySpend(day);
       for (const s of spends) {
         await db.from("ad_spend").upsert(
-          { day, channel: s.channel, spend_cents: s.spendCents, updated_at: new Date().toISOString() },
+          { day, channel: s.channel, spend_cents: s.spendCents, clicks: s.clicks, updated_at: new Date().toISOString() },
           { onConflict: "day,channel" }
         );
         spendRows++;

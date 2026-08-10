@@ -122,14 +122,17 @@ export async function GET(req: NextRequest) {
 
   // Ad attribution chip: contact's source/campaign + estimated channel CPL.
   let adInfo: { source: string | null; campaign: string | null; channel: string | null; leadCostCents: number | null } | null = null;
+  let adJourney: unknown = null;
   try {
-    const { contactAdInfo, cachedLeadCost } = await import("@/lib/lead-cost");
+    const { contactAdInfo, cachedLeadCost, computeAdJourney } = await import("@/lib/lead-cost");
     const info = contactAdInfo(deal.crm_contacts?.attribution);
     if (info.source || info.channel) {
       const report = await cachedLeadCost(db, 30);
       const cpl = info.channel ? report.channels.find((c) => c.channel === info.channel)?.cplCents ?? null : null;
       adInfo = { ...info, leadCostCents: cpl };
     }
+    const contactEmails = ((deal.crm_contacts?.emails as any[]) ?? []).map((e) => e.value).filter(Boolean);
+    adJourney = await computeAdJourney(db, contactEmails, deal.crm_contacts?.attribution);
   } catch {}
 
   return NextResponse.json({
@@ -137,6 +140,7 @@ export async function GET(req: NextRequest) {
     timeline,
     callStats,
     adInfo,
+    adJourney,
     sources: sources ?? [],
     pipelines: pipelines ?? [],
     stages: stages.data ?? [],

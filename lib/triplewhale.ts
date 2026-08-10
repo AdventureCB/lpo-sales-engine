@@ -27,6 +27,13 @@ export const SPEND_METRICS: Record<string, string> = {
   twitter_spend: "twitter",
 };
 
+// metricId → channel for click counts (used to derive real CPC; only the
+// channels TW exposes click metrics for).
+export const CLICK_METRICS: Record<string, string> = {
+  totalGoogleAdsClicks: "google",
+  facebookClicks: "facebook",
+};
+
 function key(): string {
   const k = envOptional("TW_API_KEY");
   if (!k) throw new Error("TW_API_KEY not configured");
@@ -48,8 +55,8 @@ async function post(path: string, body: unknown): Promise<any> {
   }
 }
 
-/** Channel spend for one calendar day (shop timezone). */
-export async function twDailySpend(day: string): Promise<{ channel: string; spendCents: number }[]> {
+/** Channel spend + clicks for one calendar day (shop timezone). */
+export async function twDailySpend(day: string): Promise<{ channel: string; spendCents: number; clicks: number | null }[]> {
   const d = await post("/summary-page/get-data", {
     shopDomain: TW_SHOP,
     period: { start: day, end: day },
@@ -59,14 +66,20 @@ export async function twDailySpend(day: string): Promise<{ channel: string; spen
       new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", hour12: false }).format(new Date())
     ) % 24,
   });
-  const out: { channel: string; spendCents: number }[] = [];
+  const spend = new Map<string, number>();
+  const clicks = new Map<string, number>();
   for (const m of d?.metrics ?? []) {
-    const channel = SPEND_METRICS[m?.metricId ?? ""];
-    if (!channel) continue;
+    const mid = m?.metricId ?? "";
     const v = Number(m?.values?.current ?? 0);
-    if (Number.isFinite(v)) out.push({ channel, spendCents: Math.round(v * 100) });
+    if (!Number.isFinite(v)) continue;
+    if (SPEND_METRICS[mid]) spend.set(SPEND_METRICS[mid], Math.round(v * 100));
+    if (CLICK_METRICS[mid]) clicks.set(CLICK_METRICS[mid], Math.round(v));
   }
-  return out;
+  return [...spend.entries()].map(([channel, spendCents]) => ({
+    channel,
+    spendCents,
+    clicks: clicks.get(channel) ?? null,
+  }));
 }
 
 export interface TwOrderJourney {
