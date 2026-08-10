@@ -61,6 +61,18 @@
   if (fresh) {
     if (!attr.first) attr.first = fresh;
     attr.last = fresh; // last NON-DIRECT touch: only param-carrying visits update it
+    // Full touch history (multi-touch journeys for pre-purchase leads).
+    // Skip repeats of the same source+campaign within 30 min (reloads).
+    var touches = attr.touches || [];
+    var prev = touches[touches.length - 1];
+    var isDup = prev && prev.utm_source === fresh.utm_source && prev.utm_campaign === fresh.utm_campaign &&
+      prev.gclid === fresh.gclid && prev.fbclid === fresh.fbclid &&
+      prev.at && (Date.parse(fresh.at) - Date.parse(prev.at)) < 30 * 60 * 1000;
+    if (!isDup) {
+      touches.push(fresh);
+      while (touches.length > 20) touches.shift();
+      attr.touches = touches;
+    }
     save(attr);
   } else if (!attr.first && document.referrer && document.referrer.indexOf(location.hostname) === -1) {
     // Organic first visit: record landing/referrer so "organic" is explicit.
@@ -91,6 +103,30 @@
   }
   var props = flat();
 
+  // Compact serialized touch history, trimmed oldest-first to fit `max` chars.
+  function touchesJson(max) {
+    try {
+      var arr = (attr.touches || []).map(function (t) {
+        var o = { at: t.at };
+        if (t.utm_source) o.s = t.utm_source;
+        if (t.utm_medium) o.m = t.utm_medium;
+        if (t.utm_campaign) o.c = t.utm_campaign;
+        if (t.utm_content) o.n = t.utm_content;
+        if (t.utm_term) o.t = t.utm_term;
+        if (t.gclid) o.g = 1; else if (t.gbraid || t.wbraid) o.g = 1;
+        if (t.fbclid) o.f = 1;
+        if (t.msclkid) o.ms = 1;
+        if (t.ttclid) o.tt = 1;
+        return o;
+      });
+      var s = JSON.stringify(arr);
+      while (s.length > max && arr.length > 1) { arr.shift(); s = JSON.stringify(arr); }
+      return s.length <= max ? s : null;
+    } catch (e) { return null; }
+  }
+  var tjKlaviyo = touchesJson(4000);
+  if (tjKlaviyo) props.attr_touches = tjKlaviyo;
+
   // ── Klaviyo profile stamp (merges onto the anonymous profile; sticks when
   //    the visitor later identifies via any form/checkout) ──
   var tries = 0;
@@ -114,6 +150,9 @@
           if (localStorage.getItem(sig) === mark) return;
           var attributes = {};
           Object.keys(props).forEach(function (k) { attributes[k] = String(props[k]); });
+          // Cart attribute values are size-constrained — ship a shorter history.
+          var tjCart = touchesJson(1200);
+          if (tjCart) attributes.attr_touches = tjCart; else delete attributes.attr_touches;
           fetch("/cart/update.js", {
             method: "POST",
             credentials: "same-origin",

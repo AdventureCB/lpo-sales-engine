@@ -18,10 +18,13 @@ const CLICK_IDS = ["gclid", "gbraid", "wbraid", "fbclid", "msclkid", "ttclid"] a
 const UTM = ["source", "medium", "campaign", "content", "term"] as const;
 
 /** Parse flat attr_* keys (from cart attributes / Klaviyo props) into touches. */
-export function touchesFromFlat(flatIn: Record<string, unknown>): { first: Touch; last: Touch } | null {
+export function touchesFromFlat(
+  flatIn: Record<string, unknown>
+): { first: Touch; last: Touch; touches?: Touch[] } | null {
   const flat: Record<string, string> = {};
   for (const [k, v] of Object.entries(flatIn)) {
-    if (k.startsWith("attr_") && typeof v === "string" && v.trim()) flat[k] = v.trim().slice(0, 300);
+    if (!k.startsWith("attr_") || typeof v !== "string" || !v.trim()) continue;
+    flat[k] = v.trim().slice(0, k === "attr_touches" ? 5000 : 300);
   }
   if (Object.keys(flat).length === 0) return null;
   const first: Touch = {}, last: Touch = {};
@@ -34,15 +37,42 @@ export function touchesFromFlat(flatIn: Record<string, unknown>): { first: Touch
   if (flat.attr_referrer) first.ref = flat.attr_referrer;
   if (flat.attr_first_at) first.at = flat.attr_first_at;
   if (flat.attr_last_at) last.at = flat.attr_last_at;
-  if (Object.keys(first).length === 0 && Object.keys(last).length === 0) return null;
-  return { first, last };
+
+  // Multi-touch history: attr.js compact encoding {at,s,m,c,n,t,g,f,ms,tt}.
+  let touches: Touch[] | undefined;
+  if (flat.attr_touches) {
+    try {
+      const arr = JSON.parse(flat.attr_touches);
+      if (Array.isArray(arr)) {
+        touches = arr
+          .filter((o) => o && typeof o === "object" && o.at)
+          .slice(-40)
+          .map((o: any): Touch => ({
+            at: String(o.at).slice(0, 40),
+            ...(o.s ? { source: String(o.s).slice(0, 100) } : {}),
+            ...(o.m ? { medium: String(o.m).slice(0, 100) } : {}),
+            ...(o.c ? { campaign: String(o.c).slice(0, 150) } : {}),
+            ...(o.n ? { content: String(o.n).slice(0, 150) } : {}),
+            ...(o.t ? { term: String(o.t).slice(0, 100) } : {}),
+            ...(o.g ? { gclid: "1" } : {}),
+            ...(o.f ? { fbclid: "1" } : {}),
+            ...(o.ms ? { msclkid: "1" } : {}),
+            ...(o.tt ? { ttclid: "1" } : {}),
+          }));
+        if (touches.length === 0) touches = undefined;
+      }
+    } catch {}
+  }
+
+  if (Object.keys(first).length === 0 && Object.keys(last).length === 0 && !touches) return null;
+  return { first, last, touches };
 }
 
 /** Merge captured touches into a contact found by email. No-op when unmatched. */
 export async function mergeContactAttribution(
   db: SupabaseClient,
   email: string | null | undefined,
-  touches: { first: Touch; last: Touch } | null
+  touches: { first: Touch; last: Touch; touches?: Touch[] } | null
 ): Promise<boolean> {
   if (!email || !touches) return false;
   const norm = email.trim().toLowerCase();
@@ -56,8 +86,8 @@ export async function mergeContactAttribution(
     .maybeSingle();
   if (!contact) return false;
 
-  const cur = (contact.attribution ?? {}) as { first?: Touch; last?: Touch };
-  const next = { ...cur } as { first?: Touch; last?: Touch; updated_at?: string };
+  const cur = (contact.attribution ?? {}) as { first?: Touch; last?: Touch; touches?: Touch[] };
+  const next = { ...cur } as { first?: Touch; last?: Touch; touches?: Touch[]; updated_at?: string };
 
   // First touch: earliest wins (never clobber an older first with a newer one).
   if (Object.keys(touches.first).length > 0) {
@@ -71,7 +101,18 @@ export async function mergeContactAttribution(
       next.last = touches.last;
     }
   }
-  if (next.first === cur.first && next.last === cur.last) return false;
+  // Touch history: union by timestamp+source, chronological, capped.
+  if (touches.touches?.length) {
+    const byKey = new Map<string, Touch>();
+    for (const t of [...(cur.touches ?? []), ...touches.touches]) {
+      if (!t?.at) continue;
+      byKey.set(`${t.at}|${t.source ?? ""}`, t);
+    }
+    const merged = [...byKey.values()].sort((a, b) => (a.at ?? "").localeCompare(b.at ?? "")).slice(-40);
+    if (JSON.stringify(merged) !== JSON.stringify(cur.touches ?? [])) next.touches = merged;
+  }
+
+  if (next.first === cur.first && next.last === cur.last && next.touches === cur.touches) return false;
   next.updated_at = new Date().toISOString();
 
   await db.from("crm_contacts").update({ attribution: next }).eq("id", contact.id);

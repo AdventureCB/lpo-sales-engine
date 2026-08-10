@@ -261,10 +261,16 @@ export async function computeAdJourney(
     }
   }
 
-  // First-party captured touches (attr.js → contact.attribution first/last).
-  for (const t of [contactAttribution?.first, contactAttribution?.last]) {
-    if (!t?.source && !t?.gclid && !t?.fbclid) continue;
-    const source = t.source ?? (t.gclid || t.gbraid || t.wbraid ? "google" : t.fbclid ? "facebook" : null);
+  // First-party captured touches (attr.js): full multi-touch history when
+  // present, plus first/last as fallback for pre-multi-touch captures.
+  const siteTouches: any[] = [
+    ...((contactAttribution?.touches as any[]) ?? []),
+    contactAttribution?.first,
+    contactAttribution?.last,
+  ];
+  for (const t of siteTouches) {
+    if (!t || (!t.source && !t.gclid && !t.fbclid && !t.gbraid && !t.wbraid && !t.msclkid)) continue;
+    const source = t.source ?? (t.gclid || t.gbraid || t.wbraid ? "google" : t.fbclid ? "facebook" : t.msclkid ? "microsoft" : null);
     if (!source) continue;
     const key = `site|${source}|${t.at ?? ""}`;
     if (seen.has(key)) continue;
