@@ -69,6 +69,26 @@ export async function GET(req: Request) {
     campaignErrors.push(e instanceof Error ? e.message : "meta campaigns failed");
   }
 
+  // ── 1c. Google campaign-level daily (same table/surfaces as Meta) ──
+  try {
+    const { adsConfigured, googleCampaignDaily } = await import("@/lib/google-ads");
+    if (adsConfigured()) {
+      const days = await googleCampaignDaily(db, laDay(spendDays - 1), laDay(0));
+      for (const c of days) {
+        await db.from("ad_campaign_daily").upsert(
+          {
+            channel: "google", campaign_id: c.campaignId, day: c.day, name: c.name,
+            spend_cents: c.spendCents, clicks: c.clicks, updated_at: new Date().toISOString(),
+          },
+          { onConflict: "channel,campaign_id,day" }
+        );
+        campaignRows++;
+      }
+    }
+  } catch (e) {
+    campaignErrors.push(e instanceof Error ? e.message : "google campaigns failed");
+  }
+
   // ── 2. Journeys ──
   const endIso = new Date().toISOString();
   const startIso = new Date(Date.now() - journeyDays * 86_400_000).toISOString();
