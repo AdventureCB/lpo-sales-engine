@@ -332,7 +332,9 @@ export async function computeAdJourney(
 
   if (seen.size === 0) return null;
 
-  const [cpc, campaigns] = await Promise.all([channelCpcCents(db, 30), campaignStats(db, 90)]);
+  // Campaign lookup spans the full backfill so clicks from months ago still
+  // resolve names + price at their campaign's lifetime CPC.
+  const [cpc, campaigns] = await Promise.all([channelCpcCents(db, 30), campaignStats(db, 400)]);
   let total = 0, priced = 0, unpriced = 0;
   const interactions = [...seen.values()]
     .map((i) => {

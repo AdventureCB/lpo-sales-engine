@@ -131,7 +131,7 @@ export async function GET(req: NextRequest) {
       const cpl = info.channel ? report.channels.find((c) => c.channel === info.channel)?.cplCents ?? null : null;
       // Resolve raw campaign ids to names where the platform API knows them.
       if (info.channel && info.campaign) {
-        const camp = (await campaignStats(db, 90)).get(`${info.channel}|${info.campaign}`);
+        const camp = (await campaignStats(db, 400)).get(`${info.channel}|${info.campaign}`);
         if (camp?.name) info.campaign = camp.name;
       }
       adInfo = { ...info, leadCostCents: cpl };
