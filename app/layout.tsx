@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { PhoneDock } from "./components/PhoneDock";
+import { ActivityTracker } from "./components/ActivityTracker";
 
 export const metadata: Metadata = {
   title: "LPO Sales Engine",
@@ -23,6 +24,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             the ring modal, live call, and audio element survive any page
             change. */}
         <PhoneDock />
+        {/* Renderless engagement tracker — same root-mount rule as the
+            softphone so it survives navigation and sees every route. */}
+        <ActivityTracker />
         {children}
       </body>
     </html>

@@ -37,6 +37,7 @@ const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[]
     header: "Admin",
     items: [
       { label: "Quality", href: "/quality", adminOnly: true },
+      { label: "⏱ Engagement", href: "/engagement", adminOnly: true },
       { label: "Commissions", href: "/commissions", adminOnly: true },
     ],
   },

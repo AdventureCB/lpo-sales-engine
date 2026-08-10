@@ -17,9 +17,10 @@ interface PhoneState {
   conn: string; // off | connecting… | ready | reconnecting… | error: …
   incoming: PhoneIncoming | null;
   callerNumber: string | null;
+  callPhase: "none" | "dialing" | "talking"; // observed by the activity tracker
 }
 
-const state: PhoneState = { conn: "off", incoming: null, callerNumber: null };
+const state: PhoneState = { conn: "off", incoming: null, callerNumber: null, callPhase: "none" };
 let client: any = null;
 let readyPromise: Promise<any> | null = null;
 let outboundHandler: ((call: any, callState: string) => void) | null = null;
@@ -88,12 +89,20 @@ export async function ensurePhone(): Promise<any> {
           state.incoming = { call, from: call.options?.remoteCallerNumber ?? "unknown caller", active: false };
         } else if (s === "active") {
           if (state.incoming) state.incoming = { ...state.incoming, call, active: true };
+          state.callPhase = "talking"; // answered inbound = engaged
         } else if (s === "hangup" || s === "destroy") {
           state.incoming = null;
+          state.callPhase = "none";
         }
         emit();
         return;
       }
+      // Outbound phase for the activity tracker (a ringing inbound the rep
+      // hasn't answered is NOT engagement, so only outbound counts as dialing).
+      if (s === "active") state.callPhase = "talking";
+      else if (s === "hangup" || s === "destroy") state.callPhase = "none";
+      else state.callPhase = "dialing"; // new/requesting/trying/early/ringing
+      emit();
       outboundHandler?.(call, s);
     });
     await new Promise<void>((resolve, reject) => {
@@ -119,6 +128,8 @@ export async function ensurePhone(): Promise<any> {
 
 export async function newOutboundCall(phone: string): Promise<any> {
   const c = await ensurePhone();
+  state.callPhase = "dialing"; // count call setup from the click, not the first event
+  emit();
   return c.newCall({
     destinationNumber: phone,
     callerNumber: state.callerNumber ?? undefined,
