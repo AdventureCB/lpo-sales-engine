@@ -31,7 +31,6 @@ type ItemRow = {
   tzBucket: string | null;
   flag: string | null;
   pipelineName?: string;
-  stageName?: string;
   dealStatus?: string;
   calledAt: string | null;
   removedAt: string | null;
