@@ -275,6 +275,12 @@ function IntakeAdmin() {
                   <input className="vmsel" style={{ width: 180, display: "block", marginTop: 3 }} defaultValue={cfg.klaviyo_list_name ?? ""} onBlur={(e) => e.target.value !== (cfg.klaviyo_list_name ?? "") && setCfg("klaviyo_list_name", e.target.value.trim())} />
                 </label>
               )}
+              {s.adapter === "klaviyo_segment" && (
+                <label style={{ fontSize: 12.5, color: "var(--text-3)" }} title="Watched Klaviyo segment (id resolves automatically)">
+                  Klaviyo segment
+                  <input className="vmsel" style={{ width: 220, display: "block", marginTop: 3 }} defaultValue={cfg.klaviyo_segment_name ?? ""} onBlur={(e) => e.target.value !== (cfg.klaviyo_segment_name ?? "") && setCfg("klaviyo_segment_name", e.target.value.trim())} />
+                </label>
+              )}
               {s.adapter === "shopify_abandoned_checkout" && (
                 <>
                   <label style={{ fontSize: 12.5, color: "var(--text-3)" }}>

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isAuthorizedCron } from "@/lib/cron";
-import { getLists, getRecentListMembers, getMetrics, getEventsForMetric, getProfileByEmail } from "@/lib/klaviyo";
+import { getLists, getSegments, getRecentListMembers, getRecentSegmentMembers, getMetrics, getEventsForMetric, getProfileByEmail } from "@/lib/klaviyo";
 import { processIntake, type IntakeSource } from "@/lib/intake";
 
 export const runtime = "nodejs";
@@ -22,7 +22,7 @@ export async function GET(req: Request) {
   const { data: sources } = await db
     .from("intake_sources")
     .select("id, channel_id, label, adapter, enabled, config")
-    .in("adapter", ["klaviyo_list", "klaviyo_metric"])
+    .in("adapter", ["klaviyo_list", "klaviyo_segment", "klaviyo_metric"])
     .eq("enabled", true);
   if (!sources || sources.length === 0) return NextResponse.json({ ok: true, enabled: 0 });
 
@@ -95,29 +95,32 @@ export async function GET(req: Request) {
       summary[src.label] = `error: ${e instanceof Error ? e.message : "failed"}`;
     }
   }
-  // ── List-membership engines ──
-  for (const src of (sources as (IntakeSource & { config: { klaviyo_list_id?: string; klaviyo_list_name?: string } })[]).filter(
-    (s) => s.adapter === "klaviyo_list"
-  )) {
+  // ── Group-membership engines (lists + segments share semantics) ──
+  for (const src of (sources as (IntakeSource & {
+    config: { klaviyo_list_id?: string; klaviyo_list_name?: string; klaviyo_segment_id?: string; klaviyo_segment_name?: string };
+  })[]).filter((s) => s.adapter === "klaviyo_list" || s.adapter === "klaviyo_segment")) {
     try {
-      // Resolve the list id from its name once; cache back onto the config.
-      let listId = src.config.klaviyo_list_id;
-      if (!listId && src.config.klaviyo_list_name) {
-        const lists = await getLists();
-        listId = lists.find((l) => l.name.toLowerCase() === src.config.klaviyo_list_name!.toLowerCase())?.id;
+      const isSegment = src.adapter === "klaviyo_segment";
+      // Resolve the group id from its name once; cache back onto the config.
+      let listId = isSegment ? src.config.klaviyo_segment_id : src.config.klaviyo_list_id;
+      const wantName = isSegment ? src.config.klaviyo_segment_name : src.config.klaviyo_list_name;
+      if (!listId && wantName) {
+        const groups = isSegment ? await getSegments() : await getLists();
+        listId = groups.find((l) => l.name.toLowerCase() === wantName.toLowerCase())?.id;
         if (listId) {
+          const idKey = isSegment ? "klaviyo_segment_id" : "klaviyo_list_id";
           await db
             .from("intake_sources")
-            .update({ config: { ...src.config, klaviyo_list_id: listId }, updated_at: new Date().toISOString() })
+            .update({ config: { ...src.config, [idKey]: listId }, updated_at: new Date().toISOString() })
             .eq("id", src.id);
         }
       }
       if (!listId) {
-        summary[src.label] = "list not found";
+        summary[src.label] = isSegment ? "segment not found" : "list not found";
         continue;
       }
 
-      const cursorKey = `intake:klaviyo_list:${src.id}`;
+      const cursorKey = `intake:${src.adapter}:${src.id}`;
       const { data: cur } = await db.from("crm_sync_state").select("value").eq("key", cursorKey).maybeSingle();
       let cursor = (cur?.value as any)?.last_joined_at as string | undefined;
       if (!cursor) {
@@ -131,7 +134,7 @@ export async function GET(req: Request) {
         continue;
       }
 
-      const members = await getRecentListMembers(listId, 50);
+      const members = isSegment ? await getRecentSegmentMembers(listId, 50) : await getRecentListMembers(listId, 50);
       const fresh = members.filter((m) => m.joinedAt && m.joinedAt > cursor!);
       const counts: Record<string, number> = {};
       let maxJoined = cursor;
@@ -149,7 +152,7 @@ export async function GET(req: Request) {
           note: (noteBits[0] as string) ?? null,
           occurredAt: m.joinedAt,
           meta: {
-            klaviyo_list_id: listId,
+            klaviyo_group_id: listId,
             joined_at: m.joinedAt,
             source_channel: props.source_channel ?? props.source ?? null,
             source_id: props.source_id ?? null,

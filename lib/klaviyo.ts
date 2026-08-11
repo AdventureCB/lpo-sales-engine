@@ -70,10 +70,10 @@ export interface ListMember {
   joinedAt: string | null;
 }
 
-/** Newest list members (sorted by join time desc) — the intake-engine list watcher. */
-export async function getRecentListMembers(listId: string, pageSize = 50): Promise<ListMember[]> {
+/** Newest group members (join-time desc) — lists and segments share the shape. */
+async function recentGroupMembers(kind: "lists" | "segments", groupId: string, pageSize: number): Promise<ListMember[]> {
   const page = await kGet(
-    `${BASE}/lists/${listId}/profiles/?sort=-joined_group_at&page[size]=${pageSize}` +
+    `${BASE}/${kind}/${groupId}/profiles/?sort=-joined_group_at&page[size]=${pageSize}` +
       `&fields[profile]=email,first_name,last_name,phone_number,properties,joined_group_at`
   );
   return (page.data ?? []).map((p: any) => ({
@@ -85,6 +85,30 @@ export async function getRecentListMembers(listId: string, pageSize = 50): Promi
     properties: p.attributes?.properties ?? {},
     joinedAt: p.attributes?.joined_group_at ?? null,
   }));
+}
+
+export async function getRecentListMembers(listId: string, pageSize = 50): Promise<ListMember[]> {
+  return recentGroupMembers("lists", listId, pageSize);
+}
+
+export async function getRecentSegmentMembers(segmentId: string, pageSize = 50): Promise<ListMember[]> {
+  return recentGroupMembers("segments", segmentId, pageSize);
+}
+
+let segmentsCache: { id: string; name: string }[] | null = null;
+
+/** All Klaviyo segments (cached per instance). */
+export async function getSegments(): Promise<{ id: string; name: string }[]> {
+  if (segmentsCache) return segmentsCache;
+  const out: { id: string; name: string }[] = [];
+  let url: string | null = `${BASE}/segments/`;
+  while (url) {
+    const page = await kGet(url);
+    for (const s of page.data ?? []) out.push({ id: s.id, name: s.attributes?.name ?? s.id });
+    url = page.links?.next ?? null;
+  }
+  segmentsCache = out.sort((a, b) => a.name.localeCompare(b.name));
+  return segmentsCache;
 }
 
 export async function getMetricIds(): Promise<Map<string, string>> {
