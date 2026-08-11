@@ -28,6 +28,7 @@ const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[]
       { label: "🔥 Hot List", href: "/hot-list" },
       { label: "📇 CRM", href: "/crm" },
       { label: "📋 Sprint Lists", href: "/lists" },
+      { label: "💵 Deposits", href: "/deposits" },
       { label: "📅 Calendar", href: "/calendar" },
       { label: "Scoreboard", href: "/scoreboard" },
       { label: "Lookup", href: "/lookup" },

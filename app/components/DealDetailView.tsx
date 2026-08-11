@@ -413,15 +413,15 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
                   "deposit",
                   "💰 Deposit",
                   () => {
-                    const depositStage = orderStageId(/deposit placed/i);
-                    if (depositStage) void update({ stageId: depositStage, status: "open" });
+                    // Atomic: the deposit is only recorded WHEN the
+                    // confirmation follow-up is scheduled (required).
                     setSchedType("call");
                     setSchedSubject("Confirmation follow-up");
                     setSchedDue("");
                     setDepositFollow(true);
                     setModal("schedule");
                   },
-                  "Deposit placed — moves to the Deposit Placed stage and prompts a confirmation follow-up"
+                  "Deposit placed — requires scheduling the confirmation follow-up"
                 )}
                 {outcomeBtn(
                   "won",
@@ -494,12 +494,17 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
 
           {modal === "schedule" && (
             <ActionModal
-              title={depositFollow ? "💰 Deposit placed — schedule the confirmation follow-up" : "Schedule activity"}
+              title={depositFollow ? "💰 Deposit — confirmation follow-up required" : "Schedule activity"}
               onClose={() => {
                 setDepositFollow(false);
                 setModal(null);
               }}
             >
+              {depositFollow && (
+                <p style={{ fontSize: 13, color: "var(--text-3)", margin: "0 0 8px" }}>
+                  The deposit is recorded when you schedule the confirmation — closing this cancels the deposit action.
+                </p>
+              )}
               <div style={{ display: "grid", gap: 8 }}>
                 <select className="vmsel" value={schedType} onChange={(e) => setSchedType(e.target.value)}>
                   <option value="call">📞 Call</option>
@@ -525,16 +530,18 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
                     className="btn primary"
                     disabled={!schedSubject.trim() || saving || (depositFollow && !schedDue)}
                     onClick={async () => {
-                      const confSched = depositFollow ? orderStageId(/confirmation scheduled/i) : undefined;
+                      const confSched = depositFollow
+                        ? orderStageId(/confirmation scheduled/i) ?? orderStageId(/deposit placed/i)
+                        : undefined;
                       await update({
                         activity: {
                           type: schedType,
                           subject: schedSubject,
                           dueAt: schedDue ? new Date(schedDue).toISOString() : null,
                         },
-                        // Deposit flow: scheduling the confirmation IS the
-                        // "Confirmation Scheduled" stage.
-                        ...(confSched ? { stageId: confSched } : {}),
+                        // Deposit flow: the deposit + its confirmation follow-up
+                        // land together — stage moves only now.
+                        ...(confSched ? { stageId: confSched, status: "open" } : {}),
                       });
                       setSchedSubject("");
                       setSchedDue("");
@@ -551,7 +558,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
                       setModal(null);
                     }}
                   >
-                    {depositFollow ? "Skip for now" : "Cancel"}
+                    {depositFollow ? "Cancel deposit" : "Cancel"}
                   </button>
                 </div>
               </div>
