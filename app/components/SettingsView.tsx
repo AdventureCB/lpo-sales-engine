@@ -265,6 +265,10 @@ function IntakeAdmin() {
                 Title template
                 <input className="vmsel" style={{ width: 220, display: "block", marginTop: 3 }} defaultValue={cfg.title_template ?? ""} onBlur={(e) => e.target.value !== (cfg.title_template ?? "") && setCfg("title_template", e.target.value)} />
               </label>
+              <label style={{ fontSize: 12.5, color: "var(--text-3)" }} title="Appended to engine-created deal titles so they're distinguishable from Zapier's during parallel running. Clear to turn off.">
+                Engine marker
+                <input className="vmsel" style={{ width: 70, display: "block", marginTop: 3 }} defaultValue={cfg.title_marker ?? ""} onBlur={(e) => e.target.value !== (cfg.title_marker ?? "") && setCfg("title_marker", e.target.value.trim())} />
+              </label>
               <label style={{ fontSize: 12.5, color: "var(--text-3)" }}>
                 Existing open deal
                 <select className="vmsel" style={{ display: "block", marginTop: 3 }} value={cfg.on_existing_open ?? "note"} onChange={(e) => setCfg("on_existing_open", e.target.value)}>

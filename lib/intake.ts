@@ -33,6 +33,7 @@ export interface IntakeSource {
     on_existing_open?: "note" | "new_deal" | "skip";
     on_existing_closed?: "reopen_assign" | "new_deal" | "note" | "skip";
     source_name?: string;
+    title_marker?: string; // appended to created titles while parallel-running vs Zapier ("" = off)
     owner_pool?: { pipedrive_id: number; name?: string; enabled: boolean }[];
     fallback_owner_pipedrive_id?: number; // roster empty → this owner (Zap parity: Gabi)
     pipedrive_stage_id?: number;
@@ -230,14 +231,17 @@ export async function processIntake(
   if (!email) return log({ action: "error", detail: "creation requires an email (phone-only payload, no contact match)" });
   const owner = await nextIntakeOwner(db, source);
   const name = payload.name?.trim() || email.split("@")[0];
-  // Zap-parity template vars: {label} {external_id} {email} {name}
-  const title = (source.config.title_template ?? `${source.label} - {name}`)
+  // Template vars: {label} {name} {email} {external_id}
+  let title = (source.config.title_template ?? `${source.label} - {name}`)
     .replace("{label}", source.label)
     .replace("{external_id}", externalId ?? "")
     .replace("{email}", email)
     .replace("{name}", name)
     .replace(/\s+/g, " ")
     .trim();
+  // Parallel-run marker: makes engine-created deals visibly distinct from
+  // the Zap's while both run; clear it in Settings once the Zap retires.
+  if (source.config.title_marker) title = `${title} ${source.config.title_marker}`.trim();
   try {
     const result = await createDealFromEmail(db, {
       email,
