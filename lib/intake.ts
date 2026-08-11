@@ -34,6 +34,7 @@ export interface IntakeSource {
     on_existing_closed?: "reopen_assign" | "new_deal" | "note" | "skip";
     source_name?: string;
     owner_pool?: { pipedrive_id: number; name?: string; enabled: boolean }[];
+    fallback_owner_pipedrive_id?: number; // roster empty → this owner (Zap parity: Gabi)
     pipedrive_stage_id?: number;
   };
 }
@@ -54,10 +55,10 @@ export interface IntakeResult {
   detail?: string;
 }
 
-/** Per-engine round-robin over the enabled pool reps. */
+/** Per-engine round-robin over the enabled pool reps (fallback owner when empty). */
 export async function nextIntakeOwner(db: SupabaseClient, source: IntakeSource): Promise<number | null> {
   const pool = (source.config.owner_pool ?? []).filter((p) => p.enabled && p.pipedrive_id);
-  if (pool.length === 0) return null;
+  if (pool.length === 0) return source.config.fallback_owner_pipedrive_id ?? null;
   const key = `rr:intake:${source.id}`;
   const { data } = await db.from("crm_sync_state").select("value").eq("key", key).maybeSingle();
   const idx = Number((data?.value as any)?.idx ?? -1);
@@ -158,7 +159,7 @@ export async function processIntake(
     // Most recent deal for the contact decides the path.
     const { data: deals } = await db
       .from("crm_deals")
-      .select("id, status, title, pipedrive_deal_id")
+      .select("id, status, title, pipedrive_deal_id, owner_pipedrive_id")
       .eq("contact_id", contact.id)
       .order("updated_at", { ascending: false })
       .limit(5);
@@ -186,7 +187,12 @@ export async function processIntake(
       }
       // behavior === "new_deal" falls through to creation below.
     } else if (closed && (source.config.on_existing_closed ?? "reopen_assign") === "reopen_assign") {
-      const owner = await nextIntakeOwner(db, source);
+      // Original owner keeps the reopened deal when still eligible (enabled in
+      // this engine's pool); otherwise round-robin.
+      const eligible = (source.config.owner_pool ?? []).some(
+        (p) => p.enabled && p.pipedrive_id === closed.owner_pipedrive_id
+      );
+      const owner = eligible ? closed.owner_pipedrive_id : await nextIntakeOwner(db, source);
       await db
         .from("crm_deals")
         .update({
@@ -224,7 +230,14 @@ export async function processIntake(
   if (!email) return log({ action: "error", detail: "creation requires an email (phone-only payload, no contact match)" });
   const owner = await nextIntakeOwner(db, source);
   const name = payload.name?.trim() || email.split("@")[0];
-  const title = (source.config.title_template ?? `${source.label} - {name}`).replace("{name}", name);
+  // Zap-parity template vars: {label} {external_id} {email} {name}
+  const title = (source.config.title_template ?? `${source.label} - {name}`)
+    .replace("{label}", source.label)
+    .replace("{external_id}", externalId ?? "")
+    .replace("{email}", email)
+    .replace("{name}", name)
+    .replace(/\s+/g, " ")
+    .trim();
   try {
     const result = await createDealFromEmail(db, {
       email,
@@ -232,6 +245,7 @@ export async function processIntake(
       title,
       ownerPipedriveId: owner,
       pipedriveStageId: source.config.pipedrive_stage_id ?? null,
+      valueCents: payload.valueCents ?? null,
       enrichPhone: phone ? false : source.config.enrich_phone !== false,
       providedPhone: phone,
       skipIfOpenDeal: true, // safety vs races / parallel Zapier during migration

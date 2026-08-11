@@ -69,6 +69,7 @@ export async function createDealFromEmail(
     title?: string | null;
     ownerPipedriveId?: number | null;
     pipedriveStageId?: number | null;
+    valueCents?: number | null;
     enrichPhone?: boolean;
     providedPhone?: string | null; // trigger payload already had it — skip Klaviyo
     skipIfOpenDeal?: boolean;
@@ -125,6 +126,7 @@ export async function createDealFromEmail(
     person_id: personId,
     ...(opts.pipedriveStageId ? { stage_id: opts.pipedriveStageId } : {}),
     ...(opts.ownerPipedriveId ? { user_id: opts.ownerPipedriveId } : {}),
+    ...(opts.valueCents != null ? { value: Math.round(opts.valueCents) / 100, currency: "USD" } : {}),
   });
   await upsertDeal(db, deal);
   const { data: mirrored } = await db
