@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isAuthorizedCron } from "@/lib/cron";
-import { env, envOptional } from "@/lib/env";
+import { envOptional } from "@/lib/env";
 import { processIntake, type IntakeSource } from "@/lib/intake";
 
 export const runtime = "nodejs";
@@ -28,11 +28,15 @@ export async function GET(req: Request) {
     .eq("enabled", true);
   if (!sources || sources.length === 0) return NextResponse.json({ ok: true, enabled: 0 });
 
+  const token = envOptional("SHOPIFY_ADMIN_TOKEN");
+  if (!token) {
+    return NextResponse.json({ error: "SHOPIFY_ADMIN_TOKEN not configured — needs a custom-app token with read_checkouts" }, { status: 200 });
+  }
   const version = envOptional("SHOPIFY_API_VERSION") ?? "2026-01";
   const createdMin = new Date(Date.now() - 7 * 86_400_000).toISOString();
   const r = await fetch(
     `https://${SHOP}/admin/api/${version}/checkouts.json?limit=250&created_at_min=${encodeURIComponent(createdMin)}`,
-    { headers: { "X-Shopify-Access-Token": env("SHOPIFY_ADMIN_TOKEN") } }
+    { headers: { "X-Shopify-Access-Token": token } }
   );
   if (!r.ok) {
     const text = await r.text();
