@@ -143,17 +143,19 @@ export async function sweepInactiveDeals(
     if (!cur || at > cur) lastRep.set(dealId, at);
   };
 
+  // NOTE: created_at is deliberately NOT a signal — on mirrored rows it is
+  // the import-batch time, which marked every backfilled deal "active".
   const acts = await fetchAll((f, t) =>
     db
       .from("crm_activities")
-      .select("deal_id, contact_id, actor, type, occurred_at, created_at, done_at, direction:meta->>direction")
-      .or(`occurred_at.gte.${cutoff},created_at.gte.${cutoff},done_at.gte.${cutoff}`)
+      .select("deal_id, contact_id, actor, type, occurred_at, done_at, direction:meta->>direction")
+      .or(`occurred_at.gte.${cutoff},done_at.gte.${cutoff}`)
       .range(f, t)
   );
   for (const a of acts) {
     if (a.actor === "intake" || a.actor === "system" || a.type === "system") continue;
     if (a.direction === "inbound") continue;
-    const at = [a.occurred_at, a.created_at, a.done_at].filter((x) => x && x >= cutoff).sort().pop() ?? null;
+    const at = [a.occurred_at, a.done_at].filter((x) => x && x >= cutoff).sort().pop() ?? null;
     if (!at) continue;
     const ids = a.deal_id ? [a.deal_id] : a.contact_id ? contactToDeals.get(a.contact_id) ?? [] : [];
     for (const id of ids) bump(id, at);
