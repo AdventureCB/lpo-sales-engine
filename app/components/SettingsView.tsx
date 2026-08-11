@@ -257,6 +257,12 @@ function IntakeAdmin() {
               </button>
             </div>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10 }}>
+              {s.adapter === "klaviyo_metric" && (
+                <label style={{ fontSize: 12.5, color: "var(--text-3)" }} title="Watched Klaviyo metric (id resolves automatically)">
+                  Klaviyo metric
+                  <input className="vmsel" style={{ width: 200, display: "block", marginTop: 3 }} defaultValue={cfg.klaviyo_metric_name ?? ""} onBlur={(e) => e.target.value !== (cfg.klaviyo_metric_name ?? "") && setCfg("klaviyo_metric_name", e.target.value.trim())} />
+                </label>
+              )}
               {s.adapter === "klaviyo_list" && (
                 <label style={{ fontSize: 12.5, color: "var(--text-3)" }} title="Watched Klaviyo list (id resolves automatically)">
                   Klaviyo list
