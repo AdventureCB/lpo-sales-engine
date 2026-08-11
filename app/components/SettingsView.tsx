@@ -257,6 +257,12 @@ function IntakeAdmin() {
               </button>
             </div>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10 }}>
+              {s.adapter === "typeform" && (
+                <label style={{ fontSize: 12.5, color: "var(--text-3)" }} title="Exact Typeform title (id caches automatically on first submission)">
+                  Typeform name
+                  <input className="vmsel" style={{ width: 220, display: "block", marginTop: 3 }} defaultValue={cfg.typeform_form_name ?? ""} onBlur={(e) => e.target.value !== (cfg.typeform_form_name ?? "") && setCfg("typeform_form_name", e.target.value.trim())} />
+                </label>
+              )}
               {s.adapter === "klaviyo_metric" && (
                 <label style={{ fontSize: 12.5, color: "var(--text-3)" }} title="Watched Klaviyo metric (id resolves automatically)">
                   Klaviyo metric
