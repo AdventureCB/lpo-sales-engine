@@ -37,15 +37,20 @@ function ageColor(days: number | null): string {
 }
 
 export function DepositsView() {
-  const [rows, setRows] = useState<DepositRow[] | null>(null);
+  const [all, setAll] = useState<DepositRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [repFilter, setRepFilter] = useState<number | null>(null);
 
   useEffect(() => {
     fetch("/api/deposits")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((d) => setRows(d.deposits))
+      .then((d) => setAll(d.deposits))
       .catch((e) => setError(String(e)));
   }, []);
+
+  // Rep filter chips — owners actually present, biggest book first.
+  const owners = [...new Set((all ?? []).map((r) => r.ownerPipedriveId).filter(Boolean))] as number[];
+  const rows = all ? (repFilter != null ? all.filter((r) => r.ownerPipedriveId === repFilter) : all) : null;
 
   const missing = (rows ?? []).filter((r) => !r.nextActivity);
   const overdue = (rows ?? []).filter((r) => r.overdueActivity);
@@ -58,6 +63,17 @@ export function DepositsView() {
       <p className="viewsub">
         Deposits waiting on confirmation. Every one should have a confirmation follow-up scheduled — red rows don't.
       </p>
+
+      {all && owners.length > 0 && (
+        <div className="range-toggle" style={{ marginBottom: 14 }}>
+          <button className={repFilter == null ? "active" : ""} onClick={() => setRepFilter(null)}>All</button>
+          {owners.map((o) => (
+            <button key={o} className={repFilter === o ? "active" : ""} onClick={() => setRepFilter(o)}>
+              {OWNER_NAMES[o] ?? o}
+            </button>
+          ))}
+        </div>
+      )}
 
       {rows && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 18 }}>
