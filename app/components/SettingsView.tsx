@@ -241,6 +241,14 @@ function IntakeAdmin() {
                 7d: {["created", "noted", "reopened", "skipped", "error"].filter((k) => c[k]).map((k) => `${c[k]} ${k}`).join(" · ") || "no activity"}
               </span>
               <button
+                className="btn ghost"
+                style={{ padding: "5px 12px", fontSize: 13, color: cfg.write_pipedrive !== false ? undefined : "var(--warn)" }}
+                title="App is always written first. This controls whether the engine ALSO writes to Pipedrive — turn off at cutover."
+                onClick={() => save(s.id, { config: { ...cfg, write_pipedrive: cfg.write_pipedrive === false } })}
+              >
+                {cfg.write_pipedrive !== false ? "→ Pipedrive: on" : "→ Pipedrive: OFF"}
+              </button>
+              <button
                 className={`btn ${s.enabled ? "primary" : "ghost"}`}
                 style={{ padding: "5px 12px", fontSize: 13 }}
                 onClick={() => save(s.id, { enabled: !s.enabled })}

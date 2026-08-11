@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createDealFromEmail } from "./deal-create";
+import { createDealFromEmail, setDealSourceByName } from "./deal-create";
 import { enqueuePdSync } from "./pd-sync";
 import { updateDealStage } from "./pipedrive";
 
@@ -34,6 +34,7 @@ export interface IntakeSource {
     on_existing_closed?: "reopen_assign" | "new_deal" | "note" | "skip";
     source_name?: string;
     title_marker?: string; // appended to created titles while parallel-running vs Zapier ("" = off)
+    write_pipedrive?: boolean; // false = pure native (app only); default true until cutover
     owner_pool?: { pipedrive_id: number; name?: string; enabled: boolean }[];
     fallback_owner_pipedrive_id?: number; // roster empty → this owner (Zap parity: Gabi)
     pipedrive_stage_id?: number;
@@ -106,6 +107,74 @@ async function findContact(db: SupabaseClient, email: string | null, phone: stri
   return null;
 }
 
+/**
+ * Pure-native creation: contact + deal straight into the app, Pipedrive never
+ * touched. Used when the engine's write_pipedrive toggle is off — and as the
+ * fallback when Pipedrive is down, so lead capture never depends on PD.
+ */
+async function createDealNative(
+  db: SupabaseClient,
+  source: IntakeSource,
+  args: { email: string; phone: string | null; name: string; title: string; owner: number | null; valueCents: number | null }
+): Promise<{ crmDealId: string | null }> {
+  let contact = await findContact(db, args.email, args.phone);
+  if (!contact) {
+    const [first, ...rest] = args.name.split(/\s+/);
+    const { data: created } = await db
+      .from("crm_contacts")
+      .insert({
+        name: args.name,
+        first_name: first || null,
+        last_name: rest.join(" ") || null,
+        emails: [{ value: args.email, primary: true }],
+        phones: args.phone ? [{ value: args.phone, e164: args.phone, primary: true }] : [],
+        source: source.label,
+      })
+      .select("id, name")
+      .single();
+    contact = created;
+  } else if (args.phone) {
+    // Fill a missing phone on the existing contact.
+    const { data: full } = await db.from("crm_contacts").select("id, phones").eq("id", contact.id).maybeSingle();
+    const phones = ((full?.phones as any[]) ?? []);
+    if (!phones.some((p) => p.e164 || p.value)) {
+      await db
+        .from("crm_contacts")
+        .update({ phones: [{ value: args.phone, e164: args.phone, primary: true }], updated_at: new Date().toISOString() })
+        .eq("id", contact.id);
+    }
+  }
+  if (!contact) return { crmDealId: null };
+
+  let stageId: string | null = null;
+  if (source.config.pipedrive_stage_id) {
+    const { data: stage } = await db
+      .from("crm_stages")
+      .select("id")
+      .eq("pipedrive_stage_id", source.config.pipedrive_stage_id)
+      .maybeSingle();
+    stageId = stage?.id ?? null;
+  }
+
+  const { data: deal } = await db
+    .from("crm_deals")
+    .insert({
+      title: args.title,
+      contact_id: contact.id,
+      stage_id: stageId,
+      status: "open",
+      value_cents: args.valueCents,
+      owner_pipedrive_id: args.owner,
+      stage_changed_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+  if (deal && source.config.source_name) {
+    await setDealSourceByName(db, deal.id, source.config.source_name).catch(() => {});
+  }
+  return { crmDealId: deal?.id ?? null };
+}
+
 function touchNote(source: IntakeSource, payload: IntakePayload): { subject: string; body: string } {
   const bits: string[] = [];
   if (payload.valueCents != null) bits.push(`$${Math.round(payload.valueCents / 100).toLocaleString()}`);
@@ -141,6 +210,7 @@ export async function processIntake(
   };
 
   if (!email && !phone) return log({ action: "error", detail: "no email or phone in payload" });
+  const writePd = source.config.write_pipedrive !== false;
 
   // Idempotency: this cart/submission was already processed.
   if (externalId) {
@@ -181,7 +251,7 @@ export async function processIntake(
           actor: "intake",
           occurred_at: new Date().toISOString(), // bumps last_activity → re-heats
         });
-        if (open.pipedrive_deal_id) {
+        if (writePd && open.pipedrive_deal_id) {
           await enqueuePdSync(db, "note", { dealId: open.pipedrive_deal_id, content: `${n.subject}\n${n.body}` });
         }
         return log({ action: "noted", dealId: open.id });
@@ -214,7 +284,7 @@ export async function processIntake(
         actor: "intake",
         occurred_at: new Date().toISOString(),
       });
-      if (closed.pipedrive_deal_id) {
+      if (writePd && closed.pipedrive_deal_id) {
         const fields = { status: "open", ...(owner ? { owner_id: owner } : {}) };
         try {
           await updateDealStage(closed.pipedrive_deal_id, fields as any);
@@ -242,34 +312,48 @@ export async function processIntake(
   // Parallel-run marker: makes engine-created deals visibly distinct from
   // the Zap's while both run; clear it in Settings once the Zap retires.
   if (source.config.title_marker) title = `${title} ${source.config.title_marker}`.trim();
-  try {
-    const result = await createDealFromEmail(db, {
-      email,
-      name,
-      title,
-      ownerPipedriveId: owner,
-      pipedriveStageId: source.config.pipedrive_stage_id ?? null,
-      valueCents: payload.valueCents ?? null,
-      enrichPhone: phone ? false : source.config.enrich_phone !== false,
-      providedPhone: phone,
-      skipIfOpenDeal: true, // safety vs races / parallel Zapier during migration
-      sourceName: source.config.source_name ?? source.label,
-    });
-    if (!result.created) return log({ action: "skipped", detail: result.skippedReason });
-    // First touch note (cart link / value) so the rep has the context.
-    if ((payload.link || payload.valueCents != null) && result.crmDealId) {
-      const n = touchNote(source, payload);
-      await db.from("crm_activities").insert({
-        deal_id: result.crmDealId,
-        type: "note",
-        subject: `🛒 ${source.label}`,
-        body: n.body,
-        actor: "intake",
-        occurred_at: new Date().toISOString(),
+  let crmDealId: string | null = null;
+  let detail: string | undefined;
+  if (writePd) {
+    // Dual-write creator (PD + immediate mirror, race-free). If Pipedrive is
+    // down or rate-limited, fall back to native — the lead never depends on PD.
+    try {
+      const result = await createDealFromEmail(db, {
+        email,
+        name,
+        title,
+        ownerPipedriveId: owner,
+        pipedriveStageId: source.config.pipedrive_stage_id ?? null,
+        valueCents: payload.valueCents ?? null,
+        enrichPhone: phone ? false : source.config.enrich_phone !== false,
+        providedPhone: phone,
+        skipIfOpenDeal: true, // safety vs races / parallel Zapier during migration
+        sourceName: source.config.source_name ?? source.label,
       });
+      if (!result.created) return log({ action: "skipped", detail: result.skippedReason });
+      crmDealId = result.crmDealId ?? null;
+    } catch (e) {
+      const native = await createDealNative(db, source, { email, phone, name, title, owner, valueCents: payload.valueCents ?? null });
+      crmDealId = native.crmDealId;
+      detail = `pd unavailable, created native-only: ${e instanceof Error ? e.message : "pd error"}`;
     }
-    return log({ action: "created", dealId: result.crmDealId ?? null });
-  } catch (e) {
-    return log({ action: "error", detail: e instanceof Error ? e.message : "create failed" });
+  } else {
+    const native = await createDealNative(db, source, { email, phone, name, title, owner, valueCents: payload.valueCents ?? null });
+    crmDealId = native.crmDealId;
   }
+  if (!crmDealId) return log({ action: "error", detail: detail ?? "create failed" });
+
+  // First touch note (cart link / value) so the rep has the context.
+  if (payload.link || payload.valueCents != null) {
+    const n = touchNote(source, payload);
+    await db.from("crm_activities").insert({
+      deal_id: crmDealId,
+      type: "note",
+      subject: `🛒 ${source.label}`,
+      body: n.body,
+      actor: "intake",
+      occurred_at: new Date().toISOString(),
+    });
+  }
+  return log({ action: "created", dealId: crmDealId, detail });
 }
