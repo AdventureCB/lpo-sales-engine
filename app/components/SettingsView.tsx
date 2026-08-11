@@ -189,8 +189,124 @@ export function SettingsView() {
       <DealSourcesAdmin />
       <PipelineAdmin />
       <SprintListConfigAdmin />
+      <ReassignAdmin />
       <IntakeAdmin />
     </>
+  );
+}
+
+// ── Auto-reassignment: quiet deals flow back to the reprospecting pool ─────
+
+function ReassignAdmin() {
+  const [cfg, setCfg] = useState<any>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [preview, setPreview] = useState<{ matched: number; capped: boolean; sample: any[] } | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/crm/reassign")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d) => setCfg(d.config))
+      .catch(() => {});
+  }, []);
+
+  if (!cfg) return null;
+
+  async function save() {
+    setSaving(true);
+    setMsg(null);
+    const r = await fetch("/api/crm/reassign", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(cfg),
+    });
+    setSaving(false);
+    setMsg(r.ok ? "✓ Saved" : "⚠ Save failed");
+  }
+
+  async function runPreview() {
+    setPreviewing(true);
+    setPreview(null);
+    // Save first so the preview reflects what's on screen.
+    await fetch("/api/crm/reassign", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(cfg),
+    });
+    const r = await fetch("/api/crm/reassign?preview=1");
+    setPreviewing(false);
+    if (r.ok) {
+      const d = await r.json();
+      setPreview({ matched: d.matched, capped: d.capped, sample: d.sample ?? [] });
+    } else setMsg("⚠ Preview failed");
+  }
+
+  const numField = (label: string, key: string) => (
+    <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12.5, color: "var(--text-3)" }}>
+      {label}
+      <input
+        className="vmsel"
+        style={{ width: 110 }}
+        type="number"
+        value={cfg[key] ?? ""}
+        onChange={(e) => setCfg((c: any) => ({ ...c, [key]: e.target.value === "" ? null : Number(e.target.value) }))}
+      />
+    </label>
+  );
+
+  return (
+    <div className="card" style={{ maxWidth: 680, marginTop: 18 }}>
+      <h3 style={{ margin: "0 0 4px" }}>♻️ Auto-reassignment</h3>
+      <p className="viewsub" style={{ marginTop: 0 }}>
+        Open deals with no rep-initiated activity for the window below (and no deposit placed) move to the
+        reprospecting pool nightly. Customer engagement alone doesn&apos;t keep a deal.
+      </p>
+
+      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginBottom: 10 }}>
+        <input type="checkbox" checked={!!cfg.enabled} onChange={(e) => setCfg((c: any) => ({ ...c, enabled: e.target.checked }))} />
+        Enabled (runs nightly)
+      </label>
+
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 10 }}>
+        {numField("Inactive after (days)", "inactive_days")}
+        {numField("Max reassigned per night", "max_per_run")}
+        {numField("Pool owner (Pipedrive ID)", "target_owner_pipedrive_id")}
+      </div>
+
+      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginBottom: 12 }}>
+        <input
+          type="checkbox"
+          checked={!!cfg.exempt_future_scheduled}
+          onChange={(e) => setCfg((c: any) => ({ ...c, exempt_future_scheduled: e.target.checked }))}
+        />
+        Skip deals with a future activity scheduled
+      </label>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <button className="btn primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+        <button className="btn" onClick={runPreview} disabled={previewing}>{previewing ? "Checking…" : "Preview matches"}</button>
+        {msg && <span style={{ fontSize: 13, color: msg.startsWith("✓") ? "var(--good)" : "var(--bad)" }}>{msg}</span>}
+      </div>
+
+      {preview && (
+        <div style={{ marginTop: 12, fontSize: 13 }}>
+          <div style={{ fontWeight: 650 }}>
+            {preview.matched.toLocaleString()} deal{preview.matched === 1 ? "" : "s"} would move tonight
+            {preview.capped ? " (capped — remainder sweeps on following nights)" : ""}
+          </div>
+          {preview.sample.length > 0 && (
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18, color: "var(--text-3)" }}>
+              {preview.sample.map((s) => (
+                <li key={s.dealId}>
+                  <a href={`/crm/deal/${s.dealId}`} style={{ color: "var(--text-2)" }}>{s.title}</a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
