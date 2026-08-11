@@ -44,6 +44,28 @@ export async function getMetrics(): Promise<{ id: string; name: string; integrat
   return out;
 }
 
+/**
+ * Page through all profiles with their SMS marketing consent. Used by the
+ * consent-backfill cron: one page per call, cursor = the `next` link.
+ */
+export async function pageProfilesSmsConsent(cursorUrl: string | null): Promise<{
+  profiles: { email: string | null; smsConsent: string | null; consentAt: string | null }[];
+  next: string | null;
+}> {
+  const url =
+    cursorUrl ?? `${BASE}/profiles/?additional-fields[profile]=subscriptions&page[size]=100`;
+  const page = await kGet(url);
+  const profiles = (page.data ?? []).map((p: any) => {
+    const sms = p.attributes?.subscriptions?.sms?.marketing;
+    return {
+      email: normalizeEmail(p.attributes?.email ?? "") || null,
+      smsConsent: sms?.consent ?? null, // SUBSCRIBED | UNSUBSCRIBED | NEVER_SUBSCRIBED
+      consentAt: sms?.consent_timestamp ?? null,
+    };
+  });
+  return { profiles, next: page.links?.next ?? null };
+}
+
 let listsCache: { id: string; name: string }[] | null = null;
 
 /** All Klaviyo lists — the sub-event picker for list-membership metrics. */
