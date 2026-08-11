@@ -70,6 +70,7 @@ export async function createDealFromEmail(
     ownerPipedriveId?: number | null;
     pipedriveStageId?: number | null;
     enrichPhone?: boolean;
+    providedPhone?: string | null; // trigger payload already had it — skip Klaviyo
     skipIfOpenDeal?: boolean;
     sourceName?: string | null;
   }
@@ -90,8 +91,8 @@ export async function createDealFromEmail(
     }
   }
 
-  let phone: string | null = null;
-  if (opts.enrichPhone !== false && envOptional("KLAVIYO_PRIVATE_KEY")) {
+  let phone: string | null = normalizePhone(opts.providedPhone ?? null);
+  if (!phone && opts.enrichPhone !== false && envOptional("KLAVIYO_PRIVATE_KEY")) {
     phone = normalizePhone(await getProfilePhoneByEmail(email).catch(() => null));
   }
 

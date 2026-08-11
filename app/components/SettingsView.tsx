@@ -189,7 +189,127 @@ export function SettingsView() {
       <DealSourcesAdmin />
       <PipelineAdmin />
       <SprintListConfigAdmin />
+      <IntakeAdmin />
     </>
+  );
+}
+
+// ── Intake Engine: Zapier-replacement funnels, fully config-driven ─────────
+
+function IntakeAdmin() {
+  const [data, setData] = useState<{ sources: any[]; reps: { name: string; pipedrive_user_id: number }[]; counts: Record<string, Record<string, number>> } | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    fetch("/api/admin/intake")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then(setData)
+      .catch(() => {});
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  if (!data || data.sources.length === 0) return null;
+
+  async function save(id: string, patch: Record<string, unknown>) {
+    const r = await fetch("/api/admin/intake", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, ...patch }),
+    });
+    setMsg(r.ok ? "✓ Saved" : "⚠ Save failed");
+    load();
+  }
+
+  return (
+    <div className="card" style={{ maxWidth: 680, marginTop: 18 }}>
+      <h3 style={{ margin: "0 0 4px" }}>🔀 Intake engines</h3>
+      <p className="viewsub" style={{ marginTop: 0 }}>
+        Deal-injection funnels (Zapier replacements). Toggle an engine on once its Zap is retired; per-engine
+        round-robin pools control who receives the leads.
+      </p>
+      {data.sources.map((s) => {
+        const cfg = s.config ?? {};
+        const pool: { pipedrive_id: number; name?: string; enabled: boolean }[] = cfg.owner_pool ?? [];
+        const c = data.counts[s.id] ?? {};
+        const setCfg = (k: string, v: unknown) => save(s.id, { config: { ...cfg, [k]: v } });
+        return (
+          <div key={s.id} style={{ borderTop: "1px solid var(--border-soft)", paddingTop: 12, marginTop: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <b style={{ fontSize: 14.5 }}>{s.label}</b>
+              <span style={{ fontSize: 12, color: "var(--text-3)" }}>{s.adapter}{s.channel_id ? ` · ch ${s.channel_id}` : ""}</span>
+              <span style={{ fontSize: 12, color: "var(--text-3)", marginLeft: "auto" }}>
+                7d: {["created", "noted", "reopened", "skipped", "error"].filter((k) => c[k]).map((k) => `${c[k]} ${k}`).join(" · ") || "no activity"}
+              </span>
+              <button
+                className={`btn ${s.enabled ? "primary" : "ghost"}`}
+                style={{ padding: "5px 12px", fontSize: 13 }}
+                onClick={() => save(s.id, { enabled: !s.enabled })}
+              >
+                {s.enabled ? "Enabled" : "Disabled"}
+              </button>
+            </div>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10 }}>
+              {s.adapter === "shopify_abandoned_checkout" && (
+                <>
+                  <label style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+                    SKU filter
+                    <input className="vmsel" style={{ width: 110, display: "block", marginTop: 3 }} defaultValue={cfg.sku_contains ?? ""} onBlur={(e) => e.target.value !== (cfg.sku_contains ?? "") && setCfg("sku_contains", e.target.value.trim())} />
+                  </label>
+                  <label style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+                    Settle delay (min)
+                    <input className="vmsel" style={{ width: 90, display: "block", marginTop: 3 }} type="number" defaultValue={cfg.delay_minutes ?? 60} onBlur={(e) => setCfg("delay_minutes", Number(e.target.value) || 60)} />
+                  </label>
+                </>
+              )}
+              <label style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+                Title template
+                <input className="vmsel" style={{ width: 220, display: "block", marginTop: 3 }} defaultValue={cfg.title_template ?? ""} onBlur={(e) => e.target.value !== (cfg.title_template ?? "") && setCfg("title_template", e.target.value)} />
+              </label>
+              <label style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+                Existing open deal
+                <select className="vmsel" style={{ display: "block", marginTop: 3 }} value={cfg.on_existing_open ?? "note"} onChange={(e) => setCfg("on_existing_open", e.target.value)}>
+                  <option value="note">Add note (re-heat)</option>
+                  <option value="new_deal">Create new deal</option>
+                  <option value="skip">Skip</option>
+                </select>
+              </label>
+              <label style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+                Existing closed deal
+                <select className="vmsel" style={{ display: "block", marginTop: 3 }} value={cfg.on_existing_closed ?? "reopen_assign"} onChange={(e) => setCfg("on_existing_closed", e.target.value)}>
+                  <option value="reopen_assign">Note + reopen + assign</option>
+                  <option value="new_deal">Create new deal</option>
+                  <option value="skip">Skip</option>
+                </select>
+              </label>
+            </div>
+            <div style={{ marginTop: 8, fontSize: 12.5, color: "var(--text-3)" }}>
+              Round-robin pool:&nbsp;
+              {data.reps.map((r) => {
+                const entry = pool.find((p) => p.pipedrive_id === r.pipedrive_user_id);
+                const on = entry?.enabled ?? false;
+                return (
+                  <label key={r.pipedrive_user_id} style={{ marginRight: 14, color: on ? "var(--text-1)" : "var(--text-3)" }}>
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => {
+                        const next = pool.some((p) => p.pipedrive_id === r.pipedrive_user_id)
+                          ? pool.map((p) => (p.pipedrive_id === r.pipedrive_user_id ? { ...p, enabled: !on } : p))
+                          : [...pool, { pipedrive_id: r.pipedrive_user_id, name: r.name, enabled: true }];
+                        setCfg("owner_pool", next);
+                      }}
+                      style={{ marginRight: 4 }}
+                    />
+                    {r.name.split(" ")[0]}
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+      {msg && <div className="viewsub" style={{ marginTop: 8, color: msg.startsWith("✓") ? "var(--good)" : "var(--bad)" }}>{msg}</div>}
+    </div>
   );
 }
 
