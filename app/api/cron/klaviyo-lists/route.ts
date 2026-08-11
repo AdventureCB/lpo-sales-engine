@@ -78,6 +78,7 @@ export async function GET(req: Request) {
           phone: profile?.phoneNumber ?? evPhone,
           name: [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") || null,
           link,
+          occurredAt: ev.occurredAt,
           meta: { ...ev.meta, source_channel_id: src.channel_id },
         });
         counts[res.action] = (counts[res.action] ?? 0) + 1;
@@ -146,6 +147,7 @@ export async function GET(req: Request) {
           phone: m.phone,
           name: [m.firstName, m.lastName].filter(Boolean).join(" ") || null,
           note: (noteBits[0] as string) ?? null,
+          occurredAt: m.joinedAt,
           meta: {
             klaviyo_list_id: listId,
             joined_at: m.joinedAt,

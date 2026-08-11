@@ -74,6 +74,7 @@ export async function GET(req: Request) {
         name,
         valueCents: co.total_price != null ? Math.round(Number(co.total_price) * 100) : null,
         link: co.abandoned_checkout_url ?? null,
+        occurredAt: co.updated_at ?? co.created_at ?? null,
         meta: { checkout_token: co.token, source_channel_id: src.channel_id },
       });
       results[res.action] = (results[res.action] ?? 0) + 1;

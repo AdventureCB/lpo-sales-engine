@@ -9,7 +9,7 @@ const WINDOW_MS = 48 * 3600_000; // messages/calls look-back
 const OVERDUE_WINDOW_MS = 14 * 86_400_000; // don't resurface ancient tasks
 
 interface Notif {
-  kind: "sms" | "whatsapp" | "missed_call" | "overdue";
+  kind: "sms" | "whatsapp" | "missed_call" | "overdue" | "intake";
   title: string;
   sub: string | null;
   at: string;
@@ -56,7 +56,7 @@ export async function GET() {
     .limit(15);
   if (!isAdmin && user.repId) callQ = callQ.eq("rep_id", user.repId);
 
-  const [{ data: sms }, { data: wa }, { data: missed }, { data: due }] = await Promise.all([
+  const [{ data: sms }, { data: wa }, { data: missed }, { data: due }, { data: intake }] = await Promise.all([
     smsQ,
     db
       .from("whatsapp_messages")
@@ -75,7 +75,21 @@ export async function GET() {
       .gte("due_at", new Date(Date.now() - OVERDUE_WINDOW_MS).toISOString())
       .order("due_at")
       .limit(60),
+    // Intake-engine activity on your deals (per-engine notify_owner toggle).
+    db
+      .from("intake_events")
+      .select("id, action, created_at, intake_sources ( label, config ), crm_deals ( id, title, owner_pipedrive_id )")
+      .in("action", ["created", "noted", "reopened"])
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(30),
   ]);
+
+  const intakeItems = (intake ?? []).filter((e: any) => {
+    if ((e.intake_sources?.config as any)?.notify_owner !== true) return false;
+    if (isAdmin) return true;
+    return user.pipedriveUserId != null && e.crm_deals?.owner_pipedrive_id === user.pipedriveUserId;
+  });
 
   const overdue = (due ?? []).filter(
     (a: any) =>
@@ -128,6 +142,14 @@ export async function GET() {
         isNew: c.started_at > seenAt,
       };
     }),
+    ...intakeItems.map((e: any): Notif => ({
+      kind: "intake",
+      title: `🔀 ${e.intake_sources?.label ?? "Intake"} — ${e.action === "created" ? "new deal" : e.action === "reopened" ? "deal reopened" : "new note"}`,
+      sub: e.crm_deals?.title ?? null,
+      at: e.created_at,
+      href: e.crm_deals?.id ? `/crm/deal/${e.crm_deals.id}` : "/crm",
+      isNew: e.created_at > seenAt,
+    })),
     ...overdue.map((a: any): Notif => ({
       kind: "overdue",
       title: `⏰ ${a.subject ?? a.type}`,

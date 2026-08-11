@@ -49,7 +49,14 @@ export interface IntakePayload {
   valueCents?: number | null;
   link?: string | null;
   note?: string | null; // intake notes (e.g. Zap notes_summary) — lands on the deal timeline
+  occurredAt?: string | null; // when the EVENT happened (cart abandoned, list joined) — notes timeline-place here
   meta?: Record<string, unknown>;
+}
+
+/** Event time for timeline placement — never in the future, fallback now. */
+function eventTime(payload: IntakePayload): string {
+  const t = payload.occurredAt ? Date.parse(payload.occurredAt) : NaN;
+  return Number.isFinite(t) && t < Date.now() ? new Date(t).toISOString() : new Date().toISOString();
 }
 
 export interface IntakeResult {
@@ -251,7 +258,7 @@ export async function processIntake(
           subject: n.subject,
           body: n.body,
           actor: "intake",
-          occurred_at: new Date().toISOString(), // bumps last_activity → re-heats
+          occurred_at: eventTime(payload), // bumps last_activity → re-heats (greatest() wins)
         });
         if (writePd && open.pipedrive_deal_id) {
           await enqueuePdSync(db, "note", { dealId: open.pipedrive_deal_id, content: `${n.subject}\n${n.body}` });
@@ -284,7 +291,7 @@ export async function processIntake(
         subject: `♻️ Reopened via ${source.label}`,
         body: n.body,
         actor: "intake",
-        occurred_at: new Date().toISOString(),
+        occurred_at: eventTime(payload),
       });
       if (writePd && closed.pipedrive_deal_id) {
         const fields = { status: "open", ...(owner ? { owner_id: owner } : {}) };
@@ -354,7 +361,7 @@ export async function processIntake(
       subject: `🛒 ${source.label}`,
       body: n.body,
       actor: "intake",
-      occurred_at: new Date().toISOString(),
+      occurred_at: eventTime(payload),
     });
   }
   return log({ action: "created", dealId: crmDealId, detail });

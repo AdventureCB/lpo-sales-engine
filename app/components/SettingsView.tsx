@@ -307,6 +307,10 @@ function IntakeAdmin() {
               </label>
             </div>
             <div style={{ marginTop: 8, fontSize: 12.5, color: "var(--text-3)" }}>
+              <label style={{ marginRight: 18 }} title="Notify the deal owner (bell) on new deals, notes, and reopens from this engine">
+                <input type="checkbox" checked={cfg.notify_owner === true} onChange={() => setCfg("notify_owner", cfg.notify_owner !== true)} style={{ marginRight: 4 }} />
+                🔔 Notify owner
+              </label>
               Round-robin pool:&nbsp;
               {data.reps.map((r) => {
                 const entry = pool.find((p) => p.pipedrive_id === r.pipedrive_user_id);
