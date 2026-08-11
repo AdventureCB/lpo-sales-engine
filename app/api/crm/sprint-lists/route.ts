@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
     const { data: items } = await db
       .from("crm_sprint_items")
       .select(
-        "deal_id, position, tier, tier_label, source, tz_bucket, flag, called_at, removed_at, added_manually, disposition, crm_deals ( id, title, pipedrive_deal_id, value_cents, crm_stages ( name ), crm_contacts ( name, phones ) )"
+        "deal_id, position, tier, tier_label, source, tz_bucket, flag, called_at, removed_at, added_manually, disposition, crm_deals ( id, title, status, pipedrive_deal_id, value_cents, crm_stages ( name, crm_pipelines ( name ) ), crm_contacts ( name, phones ) )"
       )
       .eq("sprint_id", sprintId)
       .order("position");
@@ -45,6 +45,8 @@ export async function GET(req: NextRequest) {
         personName: d?.crm_contacts?.name ?? null,
         phone,
         stageName: d?.crm_stages?.name ?? "—",
+        pipelineName: d?.crm_stages?.crm_pipelines?.name ?? "—",
+        dealStatus: d?.status ?? "open",
         valueCents: d?.value_cents ?? null,
         tier: it.tier,
         tierLabel: it.tier_label,

@@ -30,6 +30,9 @@ type ItemRow = {
   source: string | null;
   tzBucket: string | null;
   flag: string | null;
+  pipelineName?: string;
+  stageName?: string;
+  dealStatus?: string;
   calledAt: string | null;
   removedAt: string | null;
   addedManually: boolean;
@@ -147,8 +150,40 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
   }, []);
 
   const openList_ = lists.find((l) => l.id === openId);
-  const dailyToday = lists.filter((l) => l.kind === "daily");
-  const otherLists = lists.filter((l) => l.kind !== "daily");
+
+  // ── Organization: today's dailies front-and-center; archives + custom
+  //    lists in folders; admins pick a rep first. ──
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const owners = [...new Set(lists.map((l) => l.owner))].sort();
+  const [repTab, setRepTab] = useState<string | null>(null);
+  const activeOwner = isAdmin ? (repTab ?? owners[0] ?? userEmail) : userEmail;
+  const mine = lists.filter((l) => l.owner === activeOwner);
+  const todayLists = mine.filter((l) => l.kind === "daily" && l.forDate === today).sort((a, b) => (a.slot ?? 9) - (b.slot ?? 9));
+  const customLists = mine.filter((l) => l.kind !== "daily");
+  const archiveLists = mine
+    .filter((l) => l.kind === "daily" && l.forDate !== null && l.forDate < today)
+    .sort((a, b) => (b.forDate ?? "").localeCompare(a.forDate ?? ""));
+  const [showArchive, setShowArchive] = useState(false);
+  const [showCustom, setShowCustom] = useState(true);
+
+  const listCard = (l: ListRow, sub?: string) => (
+    <button
+      key={l.id}
+      className="card"
+      onClick={() => openList(l.id)}
+      style={{ padding: "12px 14px", textAlign: "left", cursor: "pointer", border: openId === l.id ? "1.5px solid var(--accent)" : undefined }}
+    >
+      <div style={{ fontSize: 14.5, fontWeight: 600, marginBottom: 4 }}>
+        {l.kind === "daily" ? "📋" : l.kind === "assigned" ? "📨" : "⚡"} {l.name}
+      </div>
+      <div style={{ fontSize: 12.5, color: "var(--text-3)", display: "flex", gap: 10 }}>
+        <span><b style={{ color: "var(--text-1)" }}>{l.total - l.called}</b> to call</span>
+        <span>{l.called} done</span>
+        {l.removed > 0 && <span>{l.removed} removed</span>}
+        {sub && <span style={{ marginLeft: "auto" }}>{sub}</span>}
+      </div>
+    </button>
+  );
 
   return (
     <div>
@@ -187,30 +222,50 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
       {loading ? (
         <p className="viewsub">Loading…</p>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12, marginBottom: 20 }}>
-          {[...dailyToday, ...otherLists].map((l) => (
-            <button
-              key={l.id}
-              className="card"
-              onClick={() => openList(l.id)}
-              style={{
-                padding: "12px 14px", textAlign: "left", cursor: "pointer",
-                border: openId === l.id ? "1.5px solid var(--accent)" : undefined,
-              }}
-            >
-              <div style={{ fontSize: 14.5, fontWeight: 600, marginBottom: 4 }}>
-                {l.kind === "daily" ? "📋" : l.kind === "assigned" ? "📨" : "⚡"} {l.name}
-              </div>
-              <div style={{ fontSize: 12.5, color: "var(--text-3)", display: "flex", gap: 10 }}>
-                <span><b style={{ color: "var(--text-1)" }}>{l.total - l.called}</b> to call</span>
-                <span>{l.called} done</span>
-                {l.removed > 0 && <span>{l.removed} removed</span>}
-              </div>
-              {isAdmin && <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 3 }}>{l.owner.split("@")[0]}</div>}
-            </button>
-          ))}
-          {lists.length === 0 && <p className="viewsub">No lists yet — generate one above, or bulk-select deals in the CRM.</p>}
-        </div>
+        <>
+          {/* Admin: pick the rep first */}
+          {isAdmin && owners.length > 0 && (
+            <div className="range-toggle" style={{ marginBottom: 14 }}>
+              {owners.map((o) => (
+                <button key={o} className={activeOwner === o ? "active" : ""} onClick={() => { setRepTab(o); setOpenId(null); }}>
+                  {o.split("@")[0].replace(/^./, (c) => c.toUpperCase())}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Today's lists */}
+          <div className="panel-h" style={{ marginBottom: 8 }}>Today</div>
+          {todayLists.length === 0 ? (
+            <p className="viewsub">No lists generated today{activeOwner === userEmail ? " — hit a Generate button above" : ""}.</p>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12, marginBottom: 16 }}>
+              {todayLists.map((l) => listCard(l))}
+            </div>
+          )}
+
+          {/* Custom lists folder */}
+          <button className="btn ghost" style={{ display: "block", marginBottom: 8, padding: "6px 12px", fontSize: 13.5 }} onClick={() => setShowCustom(!showCustom)}>
+            {showCustom ? "▾" : "▸"} ⚡ Custom lists ({customLists.length})
+          </button>
+          {showCustom && customLists.length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12, marginBottom: 16 }}>
+              {customLists.map((l) => listCard(l, l.kind === "assigned" ? "assigned" : undefined))}
+            </div>
+          )}
+
+          {/* Archive folder: previous days, newest first */}
+          <button className="btn ghost" style={{ display: "block", marginBottom: 8, padding: "6px 12px", fontSize: 13.5 }} onClick={() => setShowArchive(!showArchive)}>
+            {showArchive ? "▾" : "▸"} 🗂 Archive ({archiveLists.length})
+          </button>
+          {showArchive && archiveLists.length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12, marginBottom: 16 }}>
+              {archiveLists.map((l) =>
+                listCard(l, new Date(`${l.forDate}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric" }))
+              )}
+            </div>
+          )}
+        </>
       )}
 
       {/* Preview / edit */}
@@ -258,6 +313,8 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
                     <th style={{ padding: "4px 8px", width: 28 }}>#</th>
                     <th style={{ padding: "4px 8px" }}>Deal</th>
                     <th style={{ padding: "4px 8px" }}>Reason</th>
+                    <th style={{ padding: "4px 8px" }}>Pipeline</th>
+                    <th style={{ padding: "4px 8px" }}>Stage</th>
                     <th style={{ padding: "4px 8px" }}>TZ</th>
                     <th style={{ padding: "4px 8px" }}>Phone</th>
                     <th style={{ padding: "4px 8px" }}>Status</th>
@@ -277,6 +334,15 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
                         {it.flag && <div style={{ fontSize: 11.5, color: "#e8623a", marginTop: 2 }}>{it.flag}</div>}
                       </td>
                       <td style={{ padding: "5px 8px" }}>{badge(it.tierLabel)}</td>
+                      <td style={{ padding: "5px 8px", color: "var(--text-2)", whiteSpace: "nowrap" }}>{it.pipelineName ?? "—"}</td>
+                      <td style={{ padding: "5px 8px", color: "var(--text-2)", whiteSpace: "nowrap" }}>
+                        {it.stageName ?? "—"}
+                        {it.dealStatus && it.dealStatus !== "open" && (
+                          <span style={{ marginLeft: 6, fontSize: 11, color: it.dealStatus === "lost" ? "var(--crit)" : "var(--good)" }}>
+                            ({it.dealStatus})
+                          </span>
+                        )}
+                      </td>
                       <td style={{ padding: "5px 8px", color: "var(--text-3)", textTransform: "capitalize" }}>{it.tzBucket ?? "—"}</td>
                       <td style={{ padding: "5px 8px", color: "var(--text-3)" }}>{it.phone ?? "—"}</td>
                       <td style={{ padding: "5px 8px" }}>
@@ -294,7 +360,7 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
                     </tr>
                   ))}
                   {items.length === 0 && (
-                    <tr><td colSpan={7} style={{ padding: 12, color: "var(--text-3)" }}>Empty list.</td></tr>
+                    <tr><td colSpan={9} style={{ padding: 12, color: "var(--text-3)" }}>Empty list.</td></tr>
                   )}
                 </tbody>
               </table>

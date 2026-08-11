@@ -567,10 +567,13 @@ async function loadDealsById(db: SupabaseClient, ids: string[]): Promise<Map<str
   const map = new Map<string, DealRow>();
   for (let i = 0; i < ids.length; i += 500) {
     const chunk = ids.slice(i, i + 500);
+    // Open deals only — a deal marked Lost/Confirmed since the morning list
+    // must never carry into List 3.
     const { data } = await db
       .from("crm_deals")
-      .select("id, pipedrive_deal_id, title, created_at, pd_add_time, last_activity_at, contact_id, crm_contacts ( id, name, emails, phones, tz_offset )")
-      .in("id", chunk);
+      .select("id, pipedrive_deal_id, title, created_at, pd_add_time, last_activity_at, contact_id, status, crm_contacts ( id, name, emails, phones, tz_offset )")
+      .in("id", chunk)
+      .eq("status", "open");
     for (const d of (data ?? []) as any[]) map.set(d.id, d);
   }
   return map;

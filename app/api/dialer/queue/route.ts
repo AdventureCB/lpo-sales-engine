@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
     const { data: items, error } = await db
       .from("crm_sprint_items")
       .select(
-        "position, called_at, flag, crm_deals ( id, title, pipedrive_deal_id, crm_stages ( name ), crm_contacts ( name, phones ) )"
+        "position, called_at, flag, crm_deals ( id, title, status, pipedrive_deal_id, crm_stages ( name ), crm_contacts ( name, phones ) )"
       )
       .eq("sprint_id", sprintId)
       .is("called_at", null)
@@ -50,6 +50,7 @@ export async function GET(req: NextRequest) {
     const leads = (items ?? [])
       .map((it: any) => {
         const d = it.crm_deals;
+        if (d?.status && d.status !== "open") return null; // lost/won since generation
         const phones = d?.crm_contacts?.phones ?? [];
         const phone =
           phones.find((p: any) => p.primary && p.e164)?.e164 ??
