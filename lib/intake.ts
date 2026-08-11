@@ -48,6 +48,7 @@ export interface IntakePayload {
   name?: string | null;
   valueCents?: number | null;
   link?: string | null;
+  note?: string | null; // intake notes (e.g. Zap notes_summary) — lands on the deal timeline
   meta?: Record<string, unknown>;
 }
 
@@ -179,6 +180,7 @@ function touchNote(source: IntakeSource, payload: IntakePayload): { subject: str
   const bits: string[] = [];
   if (payload.valueCents != null) bits.push(`$${Math.round(payload.valueCents / 100).toLocaleString()}`);
   if (payload.link) bits.push(payload.link);
+  if (payload.note) bits.push(payload.note);
   return {
     subject: `🔁 ${source.label} — funnel touch`,
     body: bits.join("\n") || `${source.label} signal received`,
@@ -343,8 +345,8 @@ export async function processIntake(
   }
   if (!crmDealId) return log({ action: "error", detail: detail ?? "create failed" });
 
-  // First touch note (cart link / value) so the rep has the context.
-  if (payload.link || payload.valueCents != null) {
+  // First touch note (cart link / value / intake notes) so the rep has context.
+  if (payload.link || payload.valueCents != null || payload.note) {
     const n = touchNote(source, payload);
     await db.from("crm_activities").insert({
       deal_id: crmDealId,

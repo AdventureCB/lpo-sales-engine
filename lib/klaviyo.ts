@@ -60,6 +60,33 @@ export async function getLists(): Promise<{ id: string; name: string }[]> {
   return listsCache;
 }
 
+export interface ListMember {
+  profileId: string;
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  phone: string | null;
+  properties: Record<string, unknown>;
+  joinedAt: string | null;
+}
+
+/** Newest list members (sorted by join time desc) — the intake-engine list watcher. */
+export async function getRecentListMembers(listId: string, pageSize = 50): Promise<ListMember[]> {
+  const page = await kGet(
+    `${BASE}/lists/${listId}/profiles/?sort=-joined_group_at&page[size]=${pageSize}` +
+      `&fields[profile]=email,first_name,last_name,phone_number,properties,joined_group_at`
+  );
+  return (page.data ?? []).map((p: any) => ({
+    profileId: p.id,
+    email: p.attributes?.email ?? null,
+    firstName: p.attributes?.first_name ?? null,
+    lastName: p.attributes?.last_name ?? null,
+    phone: p.attributes?.phone_number ?? null,
+    properties: p.attributes?.properties ?? {},
+    joinedAt: p.attributes?.joined_group_at ?? null,
+  }));
+}
+
 export async function getMetricIds(): Promise<Map<string, string>> {
   if (metricIdCache) return metricIdCache;
   const metrics = await getMetrics();
