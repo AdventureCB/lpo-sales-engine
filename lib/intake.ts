@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createDealFromEmail, setDealSourceByName } from "./deal-create";
+import { createDealFromEmail, createDealFromPhone, setDealSourceByName } from "./deal-create";
 import { enqueuePdSync } from "./pd-sync";
 import { updateDealStage } from "./pipedrive";
 
@@ -123,7 +123,7 @@ async function findContact(db: SupabaseClient, email: string | null, phone: stri
 async function createDealNative(
   db: SupabaseClient,
   source: IntakeSource,
-  args: { email: string; phone: string | null; name: string; title: string; owner: number | null; valueCents: number | null }
+  args: { email: string | null; phone: string | null; name: string; title: string; owner: number | null; valueCents: number | null }
 ): Promise<{ crmDealId: string | null }> {
   let contact = await findContact(db, args.email, args.phone);
   if (!contact) {
@@ -134,7 +134,7 @@ async function createDealNative(
         name: args.name,
         first_name: first || null,
         last_name: rest.join(" ") || null,
-        emails: [{ value: args.email, primary: true }],
+        emails: args.email ? [{ value: args.email, primary: true }] : [],
         phones: args.phone ? [{ value: args.phone, e164: args.phone, primary: true }] : [],
         source: source.label,
       })
@@ -307,14 +307,15 @@ export async function processIntake(
   }
 
   // No contact / no relevant deal (or explicit new_deal behavior) → create.
-  if (!email) return log({ action: "error", detail: "creation requires an email (phone-only payload, no contact match)" });
+  // Email-keyed when we have one; phone-keyed otherwise (surveys went
+  // email-optional with the 8/8 opt-in — most submissions are phone-only).
   const owner = await nextIntakeOwner(db, source);
-  const name = payload.name?.trim() || email.split("@")[0];
+  const name = payload.name?.trim() || (email ? email.split("@")[0] : phone!);
   // Template vars: {label} {name} {email} {external_id}
   let title = (source.config.title_template ?? `${source.label} - {name}`)
     .replace("{label}", source.label)
     .replace("{external_id}", externalId ?? "")
-    .replace("{email}", email)
+    .replace("{email}", email ?? "")
     .replace("{name}", name)
     .replace(/\s+/g, " ")
     .trim();
@@ -327,19 +328,28 @@ export async function processIntake(
     // Dual-write creator (PD + immediate mirror, race-free). If Pipedrive is
     // down or rate-limited, fall back to native — the lead never depends on PD.
     try {
-      const result = await createDealFromEmail(db, {
-        email,
-        name,
-        title,
-        ownerPipedriveId: owner,
-        pipedriveStageId: source.config.pipedrive_stage_id ?? null,
-        valueCents: payload.valueCents ?? null,
-        enrichPhone: phone ? false : source.config.enrich_phone !== false,
-        providedPhone: phone,
-        skipIfOpenDeal: true, // safety vs races / parallel Zapier during migration
-        sourceName: source.config.source_name ?? source.label,
-      });
-      if (!result.created) return log({ action: "skipped", detail: result.skippedReason });
+      const result = email
+        ? await createDealFromEmail(db, {
+            email,
+            name,
+            title,
+            ownerPipedriveId: owner,
+            pipedriveStageId: source.config.pipedrive_stage_id ?? null,
+            valueCents: payload.valueCents ?? null,
+            enrichPhone: phone ? false : source.config.enrich_phone !== false,
+            providedPhone: phone,
+            skipIfOpenDeal: true, // safety vs races / parallel Zapier during migration
+            sourceName: source.config.source_name ?? source.label,
+          })
+        : await createDealFromPhone(db, {
+            phone: phone!,
+            name,
+            title,
+            ownerPipedriveId: owner,
+            pipedriveStageId: source.config.pipedrive_stage_id ?? null,
+            sourceName: source.config.source_name ?? source.label,
+          });
+      if (!result.created) return log({ action: "skipped", dealId: result.crmDealId ?? null, detail: result.skippedReason });
       crmDealId = result.crmDealId ?? null;
     } catch (e) {
       const native = await createDealNative(db, source, { email, phone, name, title, owner, valueCents: payload.valueCents ?? null });
