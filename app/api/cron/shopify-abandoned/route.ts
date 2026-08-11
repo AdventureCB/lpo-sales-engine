@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isAuthorizedCron } from "@/lib/cron";
 import { envOptional } from "@/lib/env";
+import { shopifyAdminConfigured, shopifyAdminToken } from "@/lib/shopify-admin";
 import { processIntake, type IntakeSource } from "@/lib/intake";
 
 export const runtime = "nodejs";
@@ -28,10 +29,10 @@ export async function GET(req: Request) {
     .eq("enabled", true);
   if (!sources || sources.length === 0) return NextResponse.json({ ok: true, enabled: 0 });
 
-  const token = envOptional("SHOPIFY_ADMIN_TOKEN");
-  if (!token) {
-    return NextResponse.json({ error: "SHOPIFY_ADMIN_TOKEN not configured — needs a custom-app token with read_checkouts" }, { status: 200 });
+  if (!shopifyAdminConfigured()) {
+    return NextResponse.json({ error: "Shopify admin credentials not configured (SHOPIFY_CLIENT_ID/SECRET or legacy SHOPIFY_ADMIN_TOKEN)" }, { status: 200 });
   }
+  const token = await shopifyAdminToken(db);
   const version = envOptional("SHOPIFY_API_VERSION") ?? "2026-01";
   const createdMin = new Date(Date.now() - 7 * 86_400_000).toISOString();
   const r = await fetch(
