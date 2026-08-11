@@ -145,7 +145,9 @@ export async function GET(req: Request) {
           .map((k) => props[k])
           .filter((v) => typeof v === "string" && (v as string).trim());
         const res = await processIntake(db, src, {
-          externalId: m.profileId,
+          // Join-scoped: a profile RE-entering (re-engaged, re-applied) processes
+          // again as a fresh funnel touch instead of being dedupe-swallowed.
+          externalId: `${m.profileId}:${m.joinedAt ?? ""}`,
           email: m.email,
           phone: m.phone,
           name: [m.firstName, m.lastName].filter(Boolean).join(" ") || null,
