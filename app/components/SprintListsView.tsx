@@ -325,11 +325,9 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
                     <tr key={it.dealId} style={{ borderTop: "1px solid var(--border)", opacity: it.removedAt ? 0.45 : 1 }}>
                       <td style={{ padding: "5px 8px", color: "var(--text-3)" }}>{i + 1}</td>
                       <td style={{ padding: "5px 8px" }}>
-                        {it.pipedriveDealId ? (
-                          <Link href={`/crm?deal=${it.pipedriveDealId}`} style={{ color: "var(--text-1)" }}>
-                            {it.personName ?? it.title}
-                          </Link>
-                        ) : (it.personName ?? it.title)}
+                        <Link href={`/crm/deal/${it.dealId}`} style={{ color: "var(--text-1)" }}>
+                          {it.personName ?? it.title}
+                        </Link>
                         {it.flag && <div style={{ fontSize: 11.5, color: "#e8623a", marginTop: 2 }}>{it.flag}</div>}
                       </td>
                       <td style={{ padding: "5px 8px" }}>{badge(it.tierLabel)}</td>
