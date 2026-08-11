@@ -12,6 +12,7 @@ export function extractTypeformContact(fr: any): {
   phone: string | null;
   name: string | null;
   qa: string[];
+  smsConsent: boolean | null;
 } {
   const titleById = new Map<string, string>(
     ((fr?.definition?.fields ?? []) as any[]).map((f) => [f.id, f.title ?? f.ref ?? ""])
@@ -20,10 +21,19 @@ export function extractTypeformContact(fr: any): {
   let phone: string | null = null;
   let first = "";
   let last = "";
+  let smsConsent: boolean | null = null;
+  let loneBoolean: boolean | null = null;
+  let booleanCount = 0;
   const qa: string[] = [];
 
   for (const a of (fr?.answers ?? []) as any[]) {
     const title = titleById.get(a.field?.id) ?? a.field?.ref ?? "";
+    if (typeof a.boolean === "boolean") {
+      booleanCount++;
+      loneBoolean = a.boolean;
+      // The surveys' SMS opt-in yes/no ("Do you agree to receive text messages…").
+      if (/text|sms|messag/i.test(title)) smsConsent = a.boolean;
+    }
     const ci = a.contact_info ?? null;
     const em = a.email ?? ci?.email ?? null;
     const ph = a.phone_number ?? ci?.phone_number ?? null;
@@ -53,7 +63,53 @@ export function extractTypeformContact(fr: any): {
     const h = fr?.hidden?.email;
     if (typeof h === "string" && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(h.trim())) email = h.trim().toLowerCase();
   }
-  return { email, phone, name: [first, last].filter(Boolean).join(" ") || null, qa };
+  // Title lookup can miss on webhook payloads (group children) — when the
+  // form has exactly one yes/no, that IS the opt-in question.
+  if (smsConsent == null && booleanCount === 1) smsConsent = loneBoolean;
+  return { email, phone, name: [first, last].filter(Boolean).join(" ") || null, qa, smsConsent };
+}
+
+/**
+ * Record an SMS consent statement on the matching contact (latest form
+ * answer wins), with provenance for 10DLC. Never overwrites a real STOP.
+ */
+export async function recordSmsConsent(
+  db: SupabaseClient,
+  args: { email: string | null; phone: string | null; consent: boolean; at: string | null; source: string | null }
+): Promise<void> {
+  let contact: { id: string; sms_consent: string | null } | null = null;
+  if (args.email) {
+    const { data } = await db
+      .from("crm_contacts")
+      .select("id, sms_consent")
+      .filter("emails", "cs", JSON.stringify([{ value: args.email }]))
+      .limit(1)
+      .maybeSingle();
+    contact = data;
+  }
+  if (!contact && args.phone) {
+    const digits = args.phone.replace(/\D/g, "");
+    const e164 = digits.length === 10 ? `+1${digits}` : digits.length >= 8 ? `+${digits}` : null;
+    if (e164) {
+      const { data } = await db
+        .from("crm_contacts")
+        .select("id, sms_consent")
+        .filter("phones", "cs", JSON.stringify([{ e164 }]))
+        .limit(1)
+        .maybeSingle();
+      contact = data;
+    }
+  }
+  if (!contact || contact.sms_consent === "opted_out") return;
+  await db
+    .from("crm_contacts")
+    .update({
+      sms_consent: args.consent ? "opted_in" : "declined",
+      sms_consent_at: args.at ?? new Date().toISOString(),
+      sms_consent_source: args.source,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", contact.id);
 }
 
 /**
@@ -68,7 +124,7 @@ export async function ingestTypeformResponse(
   const fr = body?.form_response;
   if (!fr) return { matched: false, intakeAction: null };
   const formName = fr.definition?.title ?? null;
-  const { email, phone, name, qa } = extractTypeformContact(fr);
+  const { email, phone, name, qa, smsConsent } = extractTypeformContact(fr);
   const eventId = String(fr.token ?? body.event_id ?? crypto.randomUUID()).slice(0, 100);
 
   const { data: row, error } = await db
@@ -124,6 +180,17 @@ export async function ingestTypeformResponse(
       meta: { form_id: fr.form_id, form_name: formName, source_channel_id: (engine as any).channel_id, hidden: fr.hidden ?? {} },
     });
     intakeAction = res.action;
+  }
+
+  // Consent lands AFTER intake so a just-created contact is findable.
+  if (smsConsent != null && (email || phone)) {
+    await recordSmsConsent(db, {
+      email,
+      phone,
+      consent: smsConsent,
+      at: fr.submitted_at ?? null,
+      source: formName,
+    }).catch((e) => console.error("sms consent record failed", e));
   }
   return { matched, intakeAction };
 }

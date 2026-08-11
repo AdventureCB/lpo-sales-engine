@@ -2010,7 +2010,16 @@ function ContactCard({
   truck,
   onSaved,
 }: {
-  contact: { id: string; name: string; first_name?: string | null; last_name?: string | null; org_name?: string | null };
+  contact: {
+    id: string;
+    name: string;
+    first_name?: string | null;
+    last_name?: string | null;
+    org_name?: string | null;
+    sms_consent?: string | null;
+    sms_consent_at?: string | null;
+    sms_consent_source?: string | null;
+  };
   phones: CardPhone[];
   emails: CardEmail[];
   truck: React.ReactNode;
@@ -2158,6 +2167,31 @@ function ContactCard({
             ))}
             {phones.length === 0 && emails.length === 0 && (
               <div style={{ color: "var(--text-3)", fontSize: 14 }}>No contact details.</div>
+            )}
+            {contact.sms_consent && (
+              <div
+                style={{
+                  fontSize: 12.5,
+                  padding: "3px 0",
+                  color:
+                    contact.sms_consent === "opted_in"
+                      ? "var(--good)"
+                      : contact.sms_consent === "opted_out"
+                        ? "var(--crit)"
+                        : "var(--warn)",
+                }}
+                title={contact.sms_consent_source ? `via ${contact.sms_consent_source}` : undefined}
+              >
+                {contact.sms_consent === "opted_in" && "💬 Text opt-in ✓"}
+                {contact.sms_consent === "declined" && "💬 Declined texts"}
+                {contact.sms_consent === "opted_out" && "💬 Opted out (STOP)"}
+                {contact.sms_consent_at && (
+                  <span style={{ color: "var(--text-3)" }}>
+                    {" · "}
+                    {new Date(contact.sms_consent_at).toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric" })}
+                  </span>
+                )}
+              </div>
             )}
           </div>
           {truck}

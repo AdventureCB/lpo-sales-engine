@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
   let q = db
     .from("crm_deals")
     .select(
-      "*, crm_stages ( id, name, pipeline_id, crm_pipelines ( id, name ) ), crm_contacts ( id, name, emails, phones, org_name, attribution )"
+      "*, crm_stages ( id, name, pipeline_id, crm_pipelines ( id, name ) ), crm_contacts ( id, name, emails, phones, org_name, attribution, sms_consent, sms_consent_at, sms_consent_source )"
     );
   q = id ? q.eq("id", id) : q.eq("pipedrive_deal_id", Number(pdId));
   const { data: deal, error } = await q.maybeSingle();
