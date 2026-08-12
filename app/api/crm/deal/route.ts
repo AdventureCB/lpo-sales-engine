@@ -143,6 +143,27 @@ export async function GET(req: NextRequest) {
   // AI buyer profile (if one has been built for this deal).
   const { data: aiProfile } = await db.from("deal_profiles").select("*").eq("deal_id", deal.id).maybeSingle();
 
+  // Should the client auto-build/refresh on open? Enabled + eligible + new
+  // activity since the last run. Loose by design — the engine re-checks
+  // debounce/budget/require-transcript and no-ops (free) if nothing's due.
+  let aiProfileStale = false;
+  try {
+    const { loadAiConfig } = await import("@/lib/ai-profiler");
+    const cfg = await loadAiConfig(db);
+    if (cfg.enabled && deal.status === "open") {
+      const pipeName = (deal.crm_stages as any)?.crm_pipelines?.name ?? "";
+      const scopeOk = cfg.pipelines.length === 0 || cfg.pipelines.includes(pipeName);
+      const valueOk = cfg.min_value_cents == null || (deal.value_cents ?? 0) >= cfg.min_value_cents;
+      const activeOk =
+        cfg.active_days <= 0 ||
+        (deal.last_activity_at != null &&
+          deal.last_activity_at >= new Date(Date.now() - cfg.active_days * 86_400_000).toISOString());
+      const processedAt = (aiProfile?.watermark as any)?.processed_at ?? null;
+      const hasNew = !aiProfile || (deal.last_activity_at != null && deal.last_activity_at > processedAt);
+      aiProfileStale = scopeOk && valueOk && activeOk && hasNew;
+    }
+  } catch {}
+
   return NextResponse.json({
     deal,
     timeline,
@@ -150,6 +171,7 @@ export async function GET(req: NextRequest) {
     adInfo,
     adJourney,
     aiProfile: aiProfile ?? null,
+    aiProfileStale,
     sources: sources ?? [],
     pipelines: pipelines ?? [],
     stages: stages.data ?? [],

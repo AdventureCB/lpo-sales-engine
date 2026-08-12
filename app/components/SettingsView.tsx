@@ -194,6 +194,7 @@ export function SettingsView() {
         <span style={{ color: "var(--text-3)" }}>→</span>
       </Link>
 
+      <AIProfilerAdmin />
       <CommLibraryAdmin />
       <DealSourcesAdmin />
       <PipelineAdmin />
@@ -201,6 +202,140 @@ export function SettingsView() {
       <ReassignAdmin />
       <IntakeAdmin />
     </>
+  );
+}
+
+// ── AI deal profiler: enable, scope, model routing, budget & live spend ────
+
+const MODEL_TIERS = [
+  ["haiku", "Haiku (cheap, bulk)"],
+  ["sonnet", "Sonnet (judgment)"],
+  ["opus", "Opus (max)"],
+] as const;
+
+function AIProfilerAdmin() {
+  const [cfg, setCfg] = useState<any>(null);
+  const [pipelines, setPipelines] = useState<string[]>([]);
+  const [spend, setSpend] = useState<number>(0);
+  const [profiled, setProfiled] = useState<number | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(() => {
+    fetch("/api/admin/ai-config")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d) => {
+        setCfg(d.config);
+        setPipelines(d.pipelines ?? []);
+        setSpend(d.monthToDateSpendCents ?? 0);
+        setProfiled(d.profiledCount ?? null);
+      })
+      .catch(() => {});
+  }, []);
+  useEffect(() => load(), [load]);
+  if (!cfg) return null;
+
+  const set = (patch: any) => setCfg((c: any) => ({ ...c, ...patch }));
+  const setModel = (task: string, tier: string) => setCfg((c: any) => ({ ...c, models: { ...c.models, [task]: tier } }));
+  const togglePipeline = (name: string) => {
+    const cur: string[] = cfg.pipelines ?? [];
+    set({ pipelines: cur.includes(name) ? cur.filter((p) => p !== name) : [...cur, name] });
+  };
+
+  async function save() {
+    setSaving(true);
+    setMsg(null);
+    const r = await fetch("/api/admin/ai-config", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(cfg),
+    });
+    setSaving(false);
+    setMsg(r.ok ? "✓ Saved" : "⚠ Save failed");
+    if (r.ok) load();
+  }
+
+  const budgetPct = cfg.monthly_budget_cents ? Math.min(100, (spend / cfg.monthly_budget_cents) * 100) : 0;
+
+  return (
+    <div className="card" style={{ maxWidth: 680, marginTop: 18 }}>
+      <h3 style={{ margin: "0 0 4px" }}>🤖 AI Deal Profiler</h3>
+      <p className="viewsub" style={{ marginTop: 0 }}>
+        Builds a buyer profile per deal from transcripts, ads, and signals. Lost/won deals are never profiled.
+      </p>
+
+      {/* Spend meter */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 3 }}>
+          <span style={{ color: "var(--text-3)" }}>This month{profiled != null ? ` · ${profiled} deals profiled` : ""}</span>
+          <span style={{ fontVariantNumeric: "tabular-nums" }}>
+            ${(spend / 100).toFixed(2)} / ${((cfg.monthly_budget_cents ?? 0) / 100).toFixed(0)}
+          </span>
+        </div>
+        <div style={{ height: 6, borderRadius: 3, background: "var(--border-soft)", overflow: "hidden" }}>
+          <div style={{ width: `${budgetPct}%`, height: "100%", background: budgetPct > 85 ? "var(--crit)" : "var(--good)" }} />
+        </div>
+      </div>
+
+      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginBottom: 10 }}>
+        <input type="checkbox" checked={!!cfg.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
+        Enabled — auto-profile eligible deals when a rep opens them
+      </label>
+
+      <div style={{ fontSize: 13, fontWeight: 600, margin: "8px 0 4px" }}>Scope — which open deals</div>
+      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginBottom: 6 }}>
+        <input type="checkbox" checked={!!cfg.require_transcript} onChange={(e) => set({ require_transcript: e.target.checked })} />
+        Only deals with a call transcript
+      </label>
+      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginBottom: 6 }}>
+        <input type="checkbox" checked={!!cfg.lazy_only} onChange={(e) => set({ lazy_only: e.target.checked })} />
+        Lazy only (profile on open — no background backfill)
+      </label>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", margin: "6px 0" }}>
+        <label style={{ fontSize: 12.5, color: "var(--text-3)", display: "flex", flexDirection: "column", gap: 3 }}>
+          Active within (days)
+          <input className="vmsel" style={{ width: 90 }} type="number" value={cfg.active_days ?? 0} onChange={(e) => set({ active_days: Number(e.target.value) })} />
+        </label>
+        <label style={{ fontSize: 12.5, color: "var(--text-3)", display: "flex", flexDirection: "column", gap: 3 }}>
+          Min value ($)
+          <input className="vmsel" style={{ width: 100 }} type="number" value={cfg.min_value_cents != null ? cfg.min_value_cents / 100 : ""} onChange={(e) => set({ min_value_cents: e.target.value === "" ? null : Number(e.target.value) * 100 })} />
+        </label>
+        <label style={{ fontSize: 12.5, color: "var(--text-3)", display: "flex", flexDirection: "column", gap: 3 }}>
+          Re-run debounce (hrs)
+          <input className="vmsel" style={{ width: 90 }} type="number" value={cfg.debounce_hours ?? 24} onChange={(e) => set({ debounce_hours: Number(e.target.value) })} />
+        </label>
+        <label style={{ fontSize: 12.5, color: "var(--text-3)", display: "flex", flexDirection: "column", gap: 3 }}>
+          Monthly budget ($)
+          <input className="vmsel" style={{ width: 90 }} type="number" value={(cfg.monthly_budget_cents ?? 0) / 100} onChange={(e) => set({ monthly_budget_cents: Number(e.target.value) * 100 })} />
+        </label>
+      </div>
+      <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 4 }}>Pipelines ({cfg.pipelines?.length ? "selected only" : "all active"}):</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, margin: "4px 0 8px" }}>
+        {pipelines.map((p) => (
+          <label key={p} style={{ fontSize: 12.5, display: "flex", alignItems: "center", gap: 4 }}>
+            <input type="checkbox" checked={(cfg.pipelines ?? []).includes(p)} onChange={() => togglePipeline(p)} />
+            {p}
+          </label>
+        ))}
+      </div>
+
+      <div style={{ fontSize: 13, fontWeight: 600, margin: "8px 0 4px" }}>Model per task</div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+        {[["extract", "Extract"], ["revalidate", "Re-validate"], ["deepdive", "Deep dive"], ["critic", "Taxonomy critic"]].map(([task, label]) => (
+          <label key={task} style={{ fontSize: 12.5, color: "var(--text-3)", display: "flex", flexDirection: "column", gap: 3 }}>
+            {label}
+            <select className="vmsel" value={cfg.models?.[task] ?? "haiku"} onChange={(e) => setModel(task, e.target.value)}>
+              {MODEL_TIERS.map(([v, l]) => (
+                <option key={v} value={v}>{l}</option>
+              ))}
+            </select>
+          </label>
+        ))}
+      </div>
+
+      <button className="btn primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+      {msg && <span style={{ marginLeft: 10, fontSize: 13, color: msg.startsWith("✓") ? "var(--good)" : "var(--bad)" }}>{msg}</span>}
+    </div>
   );
 }
 

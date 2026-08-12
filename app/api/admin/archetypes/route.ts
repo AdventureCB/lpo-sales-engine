@@ -27,7 +27,7 @@ const ARCHETYPE_COLS = new Set([
   "sort_order", "enabled",
 ]);
 const ATTRIBUTE_COLS = new Set([
-  "key", "name", "description", "category", "value_type", "options", "sort_order", "enabled",
+  "key", "name", "description", "category", "value_type", "options", "importance", "sort_order", "enabled",
 ]);
 
 function slugify(s: string): string {

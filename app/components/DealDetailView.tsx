@@ -30,6 +30,7 @@ interface DealData {
     runs: number;
     last_run_at: string | null;
   } | null;
+  aiProfileStale?: boolean;
   sources: { id: string; name: string }[];
   pipelines: { id: string; name: string }[];
   stages: { id: string; name: string; pipeline_id: string; crm_pipelines: { name: string } | null }[];
@@ -325,7 +326,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
     />
   ) : null;
   const adJourneyEl = data.adJourney ? <AdJourneySection journey={data.adJourney} /> : null;
-  const profileEl = <DealProfileSection profile={data.aiProfile ?? null} dealId={d.id} onRefreshed={load} />;
+  const profileEl = <DealProfileSection profile={data.aiProfile ?? null} stale={!!data.aiProfileStale} dealId={d.id} onRefreshed={load} />;
 
   return (
     <>
@@ -1057,33 +1058,48 @@ const humanize = (k: string) => k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.t
 
 function DealProfileSection({
   profile,
+  stale,
   dealId,
   onRefreshed,
 }: {
   profile: NonNullable<DealData["aiProfile"]> | null;
+  stale: boolean;
   dealId: string;
   onRefreshed: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const autoTried = useRef(false);
 
-  const build = async () => {
-    setBusy(true);
-    setErr(null);
-    const r = await fetch("/api/ai/profile", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dealId, force: true }),
-    }).catch(() => null);
-    setBusy(false);
-    if (!r?.ok) {
-      setErr("Build failed");
-      return;
+  const build = useCallback(
+    async (opts: { force: boolean; silent?: boolean }) => {
+      if (!opts.silent) setBusy(true);
+      setErr(null);
+      const r = await fetch("/api/ai/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dealId, force: opts.force }),
+      }).catch(() => null);
+      if (!opts.silent) setBusy(false);
+      if (!r?.ok) {
+        if (!opts.silent) setErr("Build failed");
+        return;
+      }
+      const d = await r.json();
+      if (!opts.silent && !d.ran && d.reason) setErr(d.reason);
+      if (d.ran) onRefreshed();
+    },
+    [dealId, onRefreshed]
+  );
+
+  // Auto-build on open when the engine says it's due (enabled + eligible +
+  // new activity). Runs once per mount; the server no-ops if nothing's due.
+  useEffect(() => {
+    if (stale && !autoTried.current) {
+      autoTried.current = true;
+      void build({ force: false, silent: true });
     }
-    const d = await r.json();
-    if (!d.ran && d.reason) setErr(d.reason);
-    onRefreshed();
-  };
+  }, [stale, build]);
 
   const ds = profile?.next_action?.data_sufficiency;
   const conf = profile?.overall_confidence;
@@ -1098,7 +1114,7 @@ function DealProfileSection({
           </span>
         )}
         {conf != null && <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>{Math.round(conf * 100)}% confidence</span>}
-        <button className="btn ghost" style={{ marginLeft: "auto", padding: "2px 10px", fontSize: 12 }} disabled={busy} onClick={build}>
+        <button className="btn ghost" style={{ marginLeft: "auto", padding: "2px 10px", fontSize: 12 }} disabled={busy} onClick={() => build({ force: true })}>
           {busy ? "Thinking…" : profile ? "↻ Refresh" : "Build profile"}
         </button>
       </div>

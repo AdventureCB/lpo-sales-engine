@@ -35,9 +35,12 @@ interface Attribute {
   category: string;
   value_type: "single_select" | "multi_select" | "scale" | "boolean" | "text";
   options: string[];
+  importance: number;
   sort_order: number;
   enabled: boolean;
 }
+
+const IMPORTANCE_LABELS = ["Ignore (0)", "Low (1)", "Medium (2)", "High (3)"];
 
 const VALUE_TYPES: { v: Attribute["value_type"]; label: string }[] = [
   { v: "single_select", label: "Single select" },
@@ -228,6 +231,14 @@ function AttributeCard({ a, onSaved }: { a: Attribute; onSaved: () => void }) {
               ))}
             </select>
           </div>
+          <label style={{ fontSize: 12.5, color: "var(--text-3)", display: "flex", flexDirection: "column", gap: 3 }}>
+            Importance (how much this fact weights the &ldquo;enough data&rdquo; meter)
+            <select className="vmsel" value={d.importance ?? 1} onChange={(e) => set({ importance: Number(e.target.value) })}>
+              {IMPORTANCE_LABELS.map((l, i) => (
+                <option key={i} value={i}>{l}</option>
+              ))}
+            </select>
+          </label>
           {usesOptions && <ListField label="Options / values" items={d.options ?? []} onChange={(v) => set({ options: v })} />}
 
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4 }}>
@@ -263,7 +274,7 @@ const BLANK_ARCHETYPE: Archetype = {
 };
 const BLANK_ATTRIBUTE: Attribute = {
   id: "", key: "", name: "", description: "", category: "General",
-  value_type: "single_select", options: [], sort_order: 999, enabled: true,
+  value_type: "single_select", options: [], importance: 1, sort_order: 999, enabled: true,
 };
 
 export function ArchetypeMappingView() {
