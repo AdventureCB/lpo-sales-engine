@@ -20,6 +20,7 @@ interface Archetype {
   positive_traits: string[];
   negative_traits: string[];
   signals: string[];
+  ad_ids: string[];
   selling_approach: string | null;
   avoid: string | null;
   sort_order: number;
@@ -146,7 +147,8 @@ function ArchetypeCard({ a, onSaved }: { a: Archetype; onSaved: () => void }) {
 
           <ListField label="Positive traits" items={d.positive_traits ?? []} onChange={(v) => set({ positive_traits: v })} />
           <ListField label="Negative traits (anti-signals)" items={d.negative_traits ?? []} onChange={(v) => set({ negative_traits: v })} />
-          <ListField label="Observable signals (keywords / ads / behavior)" items={d.signals ?? []} onChange={(v) => set({ signals: v })} />
+          <ListField label="Observable signals (keywords / accessories / behavior)" items={d.signals ?? []} onChange={(v) => set({ signals: v })} />
+          <ListField label="Ad IDs to watch (Meta / Google) — strong signal" items={d.ad_ids ?? []} onChange={(v) => set({ ad_ids: v })} />
 
           <div>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-3)", marginBottom: 4, marginTop: 4 }}>Selling approach</div>
@@ -256,7 +258,7 @@ function AttributeCard({ a, onSaved }: { a: Attribute; onSaved: () => void }) {
 
 const BLANK_ARCHETYPE: Archetype = {
   id: "", key: "", name: "", emoji: "", tagline: "", description: "",
-  positive_traits: [], negative_traits: [], signals: [], selling_approach: "", avoid: "",
+  positive_traits: [], negative_traits: [], signals: [], ad_ids: [], selling_approach: "", avoid: "",
   sort_order: 999, enabled: true,
 };
 const BLANK_ATTRIBUTE: Attribute = {

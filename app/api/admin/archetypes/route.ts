@@ -23,7 +23,7 @@ export async function GET() {
 
 const ARCHETYPE_COLS = new Set([
   "key", "name", "emoji", "tagline", "description",
-  "positive_traits", "negative_traits", "signals", "selling_approach", "avoid",
+  "positive_traits", "negative_traits", "signals", "ad_ids", "selling_approach", "avoid",
   "sort_order", "enabled",
 ]);
 const ATTRIBUTE_COLS = new Set([
