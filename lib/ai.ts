@@ -43,7 +43,7 @@ export async function callClaudeTool(opts: {
     },
     body: JSON.stringify({
       model,
-      max_tokens: opts.maxTokens ?? 2200,
+      max_tokens: opts.maxTokens ?? 4000,
       system,
       messages: [{ role: "user", content: opts.user }],
       tools: [opts.tool],
