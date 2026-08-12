@@ -185,6 +185,15 @@ export function SettingsView() {
           ))}
       </div>
 
+      <Link href="/settings/archetypes" className="card" style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 18, textDecoration: "none", color: "inherit" }}>
+        <span style={{ fontSize: 22 }}>🧠</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700 }}>Archetype Mapping</div>
+          <div className="viewsub" style={{ margin: 0 }}>Personas + universal attributes the AI deal-profiler classifies against.</div>
+        </div>
+        <span style={{ color: "var(--text-3)" }}>→</span>
+      </Link>
+
       <CommLibraryAdmin />
       <DealSourcesAdmin />
       <PipelineAdmin />
