@@ -140,12 +140,16 @@ export async function GET(req: NextRequest) {
     adJourney = await computeAdJourney(db, contactEmails, deal.crm_contacts?.attribution);
   } catch {}
 
+  // AI buyer profile (if one has been built for this deal).
+  const { data: aiProfile } = await db.from("deal_profiles").select("*").eq("deal_id", deal.id).maybeSingle();
+
   return NextResponse.json({
     deal,
     timeline,
     callStats,
     adInfo,
     adJourney,
+    aiProfile: aiProfile ?? null,
     sources: sources ?? [],
     pipelines: pipelines ?? [],
     stages: stages.data ?? [],

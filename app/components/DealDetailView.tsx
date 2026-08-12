@@ -15,6 +15,21 @@ interface DealData {
     priced: number;
     unpriced: number;
   } | null;
+  aiProfile?: {
+    attributes: Record<string, { value: string; confidence: number; evidence?: string[] }>;
+    archetypes: { key: string; name: string; pct: number; confidence?: number; evidence?: string[] }[];
+    summary: string | null;
+    next_action: {
+      action?: string;
+      rationale?: string;
+      questions_to_ask?: string[];
+      data_sufficiency?: { band: string; coverage_note?: string; known_gaps?: { attribute: string; why?: string }[] };
+    } | null;
+    overall_confidence: number | null;
+    status: string;
+    runs: number;
+    last_run_at: string | null;
+  } | null;
   sources: { id: string; name: string }[];
   pipelines: { id: string; name: string }[];
   stages: { id: string; name: string; pipeline_id: string; crm_pipelines: { name: string } | null }[];
@@ -310,6 +325,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
     />
   ) : null;
   const adJourneyEl = data.adJourney ? <AdJourneySection journey={data.adJourney} /> : null;
+  const profileEl = <DealProfileSection profile={data.aiProfile ?? null} dealId={d.id} onRefreshed={load} />;
 
   return (
     <>
@@ -985,6 +1001,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
           )}
           {embedded && klaviyoEl}
           {embedded && adJourneyEl}
+          {embedded && profileEl}
           {!embedded && (
             <>
           {contact ? (
@@ -1017,6 +1034,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
           </div>
           {!embedded && klaviyoEl}
           {!embedded && adJourneyEl}
+          {!embedded && profileEl}
         </div>
       </div>
     </>
@@ -1033,6 +1051,144 @@ const CHANNEL_BADGE: Record<string, string> = {
   tiktok: "#d95b7a", pinterest: "#c0392b", snapchat: "#d9c53a", reddit: "#e8623a",
   linkedin: "#3a7ac0", twitter: "#5aa0d0",
 };
+
+const BAND_COLOR: Record<string, string> = { Thin: "var(--crit)", Developing: "var(--warn)", Solid: "var(--accent)", Rich: "var(--good)" };
+const humanize = (k: string) => k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+function DealProfileSection({
+  profile,
+  dealId,
+  onRefreshed,
+}: {
+  profile: NonNullable<DealData["aiProfile"]> | null;
+  dealId: string;
+  onRefreshed: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const build = async () => {
+    setBusy(true);
+    setErr(null);
+    const r = await fetch("/api/ai/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dealId, force: true }),
+    }).catch(() => null);
+    setBusy(false);
+    if (!r?.ok) {
+      setErr("Build failed");
+      return;
+    }
+    const d = await r.json();
+    if (!d.ran && d.reason) setErr(d.reason);
+    onRefreshed();
+  };
+
+  const ds = profile?.next_action?.data_sufficiency;
+  const conf = profile?.overall_confidence;
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div className="panel-h" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        🧠 AI Buyer Profile
+        {ds?.band && (
+          <span className="chip stage" style={{ background: BAND_COLOR[ds.band] ?? "var(--text-3)", color: "#fff", borderColor: "transparent" }}>
+            {ds.band}
+          </span>
+        )}
+        {conf != null && <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>{Math.round(conf * 100)}% confidence</span>}
+        <button className="btn ghost" style={{ marginLeft: "auto", padding: "2px 10px", fontSize: 12 }} disabled={busy} onClick={build}>
+          {busy ? "Thinking…" : profile ? "↻ Refresh" : "Build profile"}
+        </button>
+      </div>
+
+      {err && <div style={{ fontSize: 12.5, color: "var(--crit)", marginBottom: 6 }}>{err}</div>}
+
+      {!profile && !busy && (
+        <div style={{ fontSize: 13, color: "var(--text-3)" }}>
+          No profile yet. Build one from this deal&apos;s transcripts, ad journey, and signals.
+        </div>
+      )}
+
+      {profile && (
+        <div style={{ display: "grid", gap: 12 }}>
+          {/* Archetype fit bars */}
+          <div>
+            {(profile.archetypes ?? []).slice(0, 4).map((a) => (
+              <div key={a.key} style={{ marginBottom: 6 }} title={(a.evidence ?? []).join(" · ")}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 2 }}>
+                  <span style={{ fontWeight: 600 }}>{a.name}</span>
+                  <span style={{ color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>{Math.round(a.pct)}%</span>
+                </div>
+                <div style={{ height: 6, borderRadius: 3, background: "var(--border-soft)", overflow: "hidden" }}>
+                  <div style={{ width: `${Math.min(a.pct, 100)}%`, height: "100%", background: "var(--accent)", borderRadius: 3 }} />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {profile.summary && <div style={{ fontSize: 13, lineHeight: 1.5, color: "var(--text-1)" }}>{profile.summary}</div>}
+
+          {/* Key attributes */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {Object.entries(profile.attributes ?? {})
+              .filter(([, v]) => v?.value && !/^unknown/i.test(String(v.value)))
+              .slice(0, 16)
+              .map(([k, v]) => (
+                <span
+                  key={k}
+                  title={`${(v.confidence ?? 0) * 100 | 0}% confident${(v.evidence ?? []).length ? " · " + (v.evidence ?? []).join(" · ") : ""}`}
+                  className="chip stage"
+                  style={{ opacity: 0.5 + Math.min(v.confidence ?? 0.5, 1) * 0.5 }}
+                >
+                  {humanize(k)}: <strong style={{ marginLeft: 3 }}>{v.value}</strong>
+                </span>
+              ))}
+          </div>
+
+          {/* Next action */}
+          {profile.next_action?.action && (
+            <div style={{ background: "var(--surface-2, rgba(127,127,127,0.06))", borderRadius: 8, padding: "10px 12px" }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--accent)", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>
+                Suggested next action
+              </div>
+              <div style={{ fontSize: 13, lineHeight: 1.5, marginBottom: (profile.next_action.questions_to_ask ?? []).length ? 8 : 0 }}>
+                {profile.next_action.action}
+              </div>
+              {(profile.next_action.questions_to_ask ?? []).length > 0 && (
+                <div>
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: "var(--text-3)", marginBottom: 3 }}>Ask on the next touch:</div>
+                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: "var(--text-2)" }}>
+                    {profile.next_action.questions_to_ask!.map((q, i) => (
+                      <li key={i} style={{ marginBottom: 2 }}>&ldquo;{q}&rdquo;</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Data-sufficiency / gaps */}
+          {ds && (
+            <div style={{ fontSize: 12, color: "var(--text-3)" }}>
+              {ds.coverage_note}
+              {(ds.known_gaps ?? []).length > 0 && (
+                <span> · Missing: {ds.known_gaps!.map((g) => humanize(g.attribute)).join(", ")}</span>
+              )}
+            </div>
+          )}
+
+          {profile.last_run_at && (
+            <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+              Updated {fmtWhen(profile.last_run_at)} · run #{profile.runs} · {profile.last_run_at ? "" : ""}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function AdJourneySection({ journey }: { journey: NonNullable<DealData["adJourney"]> }) {
   const [open, setOpen] = useState(false);
