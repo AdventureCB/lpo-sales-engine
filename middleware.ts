@@ -3,7 +3,9 @@ import { createServerClient } from "@supabase/ssr";
 
 // Routes with their own auth: webhooks verify signatures, crons verify the
 // bearer secret, health is intentionally public (booleans only).
-const PUBLIC_PREFIXES = ["/login", "/api/webhooks/", "/api/cron/", "/api/health"];
+// /api/ai has its own auth inside (admin session OR cron bearer) — the same
+// pattern as crons — so it opts out of the cookie gate here.
+const PUBLIC_PREFIXES = ["/login", "/api/webhooks/", "/api/cron/", "/api/health", "/api/ai/"];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
