@@ -13,12 +13,13 @@ const REFRESH_DAYS = 7;
 
 /**
  * Klaviyo → SMS consent backfill (auto-apply, per Kyle: no approval step).
- * Pages the full profile base; a Klaviyo SMS marketing SUBSCRIBED lands as
- * opted_in on the matching contact — but ONLY where we have no consent
- * recorded yet: explicit survey answers and STOPs always outrank an
- * inferred Klaviyo subscription. Unsubscribed/never-subscribed are ignored
- * (absence of Klaviyo marketing consent says nothing about 1:1 texting).
- * Full pass ≈ 8 runs, then re-sweeps weekly for new subscriptions.
+ * Pages the full profile base and hands each run's SUBSCRIBED emails to
+ * apply_klaviyo_consent (Postgres does the indexed, case-insensitive match
+ * and update) — so the Node function does no contact scanning, only the
+ * Klaviyo I/O. A Klaviyo SMS-marketing SUBSCRIBED lands as opted_in ONLY
+ * where no consent is recorded yet: explicit survey answers and STOPs
+ * outrank. Unsubscribed/never-subscribed are ignored. Full pass ≈ 8 runs,
+ * then re-sweeps weekly for new subscriptions.
  */
 export async function GET(req: Request) {
   if (!isAuthorizedCron(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -35,53 +36,21 @@ export async function GET(req: Request) {
     return NextResponse.json({ skipped: "pass complete", nextFullAt: state.next_full_at });
   }
 
-  // Contact lookup map: every email → contact id + current consent.
-  const byEmail = new Map<string, { id: string; consent: string | null }>();
-  {
-    const PAGE = 1000;
-    for (let from = 0; ; from += PAGE) {
-      const { data, error } = await db
-        .from("crm_contacts")
-        .select("id, emails, sms_consent")
-        .range(from, from + PAGE - 1);
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-      for (const c of data ?? []) {
-        for (const e of (c.emails as any[]) ?? []) {
-          const k = (e?.value ?? "").toLowerCase().trim();
-          if (k && !byEmail.has(k)) byEmail.set(k, { id: c.id, consent: c.sms_consent });
-        }
-      }
-      if ((data ?? []).length < PAGE) break;
-    }
-  }
-
   let cursor = state.next_url ?? null;
   let scanned = 0;
-  let applied = 0;
   let pages = 0;
   let done = false;
+  const emails: string[] = [];
+  const ats: (string | null)[] = [];
 
   while (pages < PAGES_PER_RUN) {
     const page = await pageProfilesSmsConsent(cursor);
     pages++;
     for (const p of page.profiles) {
       scanned++;
-      if (p.smsConsent !== "SUBSCRIBED" || !p.email) continue;
-      const c = byEmail.get(p.email);
-      if (!c || c.consent != null) continue; // explicit statements outrank Klaviyo
-      const { error } = await db
-        .from("crm_contacts")
-        .update({
-          sms_consent: "opted_in",
-          sms_consent_at: p.consentAt ?? new Date().toISOString(),
-          sms_consent_source: "Klaviyo",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", c.id)
-        .is("sms_consent", null);
-      if (!error) {
-        applied++;
-        c.consent = "opted_in";
+      if (p.smsConsent === "SUBSCRIBED" && p.email) {
+        emails.push(p.email);
+        ats.push(p.consentAt ?? null);
       }
     }
     cursor = page.next;
@@ -89,6 +58,15 @@ export async function GET(req: Request) {
       done = true;
       break;
     }
+  }
+
+  // One indexed statement matches this run's subscribed emails to contacts
+  // and fills only the blanks. No contact scanning in Node.
+  let applied = 0;
+  if (emails.length) {
+    const { data, error } = await db.rpc("apply_klaviyo_consent", { p_emails: emails, p_ats: ats });
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    applied = (data as number) ?? 0;
   }
 
   const value = done
@@ -103,5 +81,5 @@ export async function GET(req: Request) {
     .from("crm_sync_state")
     .upsert({ key: STATE_KEY, value, updated_at: new Date().toISOString() }, { onConflict: "key" });
 
-  return NextResponse.json({ scanned, applied, passComplete: done });
+  return NextResponse.json({ scanned, subscribed: emails.length, applied, passComplete: done });
 }
