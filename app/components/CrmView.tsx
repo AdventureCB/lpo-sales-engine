@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { INTERESTS } from "./interests";
 
 const SORT_OPTIONS: { label: string; sort: string; dir: "asc" | "desc" }[] = [
@@ -101,17 +102,61 @@ interface ColDef {
   render: (d: Deal) => React.ReactNode;
 }
 
+interface QuickInfo {
+  recent: { type: string; subject: string | null; snippet: string | null; at: string | null }[];
+  next: { type: string; subject: string | null; dueAt: string } | null;
+}
+
+const ACT_ICON: Record<string, string> = { call: "📞", sms: "💬", email: "✉️", task: "📋", note: "📝", meeting: "📅", system: "⚙️" };
+const relDay = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric" }) : "—");
+const relWhen = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+/** The row drop-down: next scheduled activity + last 3 activities + a link
+ * to the full deal page (browser back returns to this list). */
+function QuickInfoPanel({ dealId, info }: { dealId: string; info: QuickInfo | "loading" | undefined }) {
+  return (
+    <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
+      <div style={{ flex: 1, minWidth: 260 }}>
+        {info === "loading" || info === undefined ? (
+          <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Loading…</div>
+        ) : (
+          <>
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.4 }}>Next scheduled</div>
+              {info.next ? (
+                <div style={{ fontSize: 13, color: "var(--accent)" }}>
+                  {ACT_ICON[info.next.type] ?? "•"} {info.next.subject ?? info.next.type} · {relWhen(info.next.dueAt)}
+                </div>
+              ) : (
+                <div style={{ fontSize: 13, color: "var(--text-3)" }}>Nothing scheduled.</div>
+              )}
+            </div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 2 }}>Recent activity</div>
+            {info.recent.length === 0 && <div style={{ fontSize: 13, color: "var(--text-3)" }}>No activity yet.</div>}
+            {info.recent.map((a, i) => (
+              <div key={i} style={{ fontSize: 13, padding: "2px 0" }}>
+                <span style={{ color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>{relDay(a.at)}</span>{" "}
+                {ACT_ICON[a.type] ?? "•"} {a.subject ?? a.type}
+                {a.snippet && <span style={{ color: "var(--text-3)" }}> — {a.snippet}</span>}
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+      <Link href={`/crm/deal/${dealId}`} className="btn primary" style={{ padding: "7px 14px", fontSize: 13, whiteSpace: "nowrap" }}>
+        Open full page →
+      </Link>
+    </div>
+  );
+}
+
 // The full column catalog. Visibility + order are user-configurable.
 const ALL_COLUMNS: ColDef[] = [
   {
     key: "title",
     label: "Deal",
     sortKey: "title",
-    render: (d) => (
-      <a href={`/crm/deal/${d.id}`} style={{ color: "var(--text-1)", textDecoration: "none" }}>
-        <b>{d.title}</b>
-      </a>
-    ),
+    render: (d) => <b style={{ color: "var(--text-1)" }}>{d.title}</b>,
   },
   { key: "tz", label: "TZ", sortKey: "timezone", nowrap: true, render: (d) => <span style={{ color: "var(--text-2)", fontWeight: 650 }}>{tzRegion(d.crm_contacts?.tz_offset) ?? "—"}</span> },
   {
@@ -233,26 +278,32 @@ function loadColConfig(): { key: string; visible: boolean }[] {
 }
 
 export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOwner: string }) {
+  // Restore the list view (filters/page/search/sort) when the rep returns from
+  // a deal page — Next remounts this on back, so we stash it in sessionStorage.
+  const saved: Record<string, any> = (() => {
+    if (typeof window === "undefined") return {};
+    try { return JSON.parse(sessionStorage.getItem("crmListState") || "{}"); } catch { return {}; }
+  })();
   const [meta, setMeta] = useState<Meta | null>(null);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(0);
+  const [page, setPage] = useState<number>(saved.page ?? 0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [pipeline, setPipeline] = useState("");
-  const [stage, setStage] = useState("");
-  const [status, setStatus] = useState("open");
-  const [owner, setOwner] = useState(defaultOwner);
-  const [srcFilter, setSrcFilter] = useState("");
-  const [tzFilter, setTzFilter] = useState("");
+  const [pipeline, setPipeline] = useState<string>(saved.pipeline ?? "");
+  const [stage, setStage] = useState<string>(saved.stage ?? "");
+  const [status, setStatus] = useState<string>(saved.status ?? "open");
+  const [owner, setOwner] = useState<string>(saved.owner ?? defaultOwner);
+  const [srcFilter, setSrcFilter] = useState<string>(saved.srcFilter ?? "");
+  const [tzFilter, setTzFilter] = useState<string>(saved.tzFilter ?? "");
   // Advanced filters (Filter popover)
-  const [hasActivity, setHasActivity] = useState(""); // "" | "yes" | "no"
-  const [actAfter, setActAfter] = useState("");
-  const [actBefore, setActBefore] = useState("");
-  const [makeFilter, setMakeFilter] = useState("");
-  const [interestFilter, setInterestFilter] = useState<string[]>([]);
-  const [valueMin, setValueMin] = useState("");
-  const [valueMax, setValueMax] = useState("");
+  const [hasActivity, setHasActivity] = useState<string>(saved.hasActivity ?? ""); // "" | "yes" | "no"
+  const [actAfter, setActAfter] = useState<string>(saved.actAfter ?? "");
+  const [actBefore, setActBefore] = useState<string>(saved.actBefore ?? "");
+  const [makeFilter, setMakeFilter] = useState<string>(saved.makeFilter ?? "");
+  const [interestFilter, setInterestFilter] = useState<string[]>(saved.interestFilter ?? []);
+  const [valueMin, setValueMin] = useState<string>(saved.valueMin ?? "");
+  const [valueMax, setValueMax] = useState<string>(saved.valueMax ?? "");
   const [filterOpen, setFilterOpen] = useState(false);
   const [sortOpen, setSortOpen] = useState(false);
   const activeAdvCount =
@@ -325,15 +376,40 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
   const colCount = visibleCols.length + (isAdmin ? 1 : 0);
   const checkW = 38; // frozen checkbox column width (title sticks after it)
   const [sources, setSources] = useState<{ id: string; name: string }[]>([]);
-  const [search, setSearch] = useState("");
-  const [sort, setSort] = useState("updated");
-  const [dir, setDir] = useState<"asc" | "desc">("desc");
+  const [search, setSearch] = useState<string>(saved.search ?? "");
+  const [sort, setSort] = useState<string>(saved.sort ?? "updated");
+  const [dir, setDir] = useState<"asc" | "desc">(saved.dir ?? "desc");
   const [importing, setImporting] = useState(false);
   const [pdSyncing, setPdSyncing] = useState(false);
   const [pdPending, setPdPending] = useState(0);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [sprintName, setSprintName] = useState("");
+  // Row peek: expanded deal + cached quick-info (last 3 activities + next).
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [quickInfo, setQuickInfo] = useState<Record<string, QuickInfo | "loading">>({});
+
+  const toggleExpand = useCallback((id: string) => {
+    setExpandedId((cur) => (cur === id ? null : id));
+    setQuickInfo((qi) => {
+      if (qi[id]) return qi;
+      fetch(`/api/crm/deal/quickinfo?dealId=${id}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => d && setQuickInfo((q) => ({ ...q, [id]: d })))
+        .catch(() => setQuickInfo((q) => ({ ...q, [id]: { recent: [], next: null } })));
+      return { ...qi, [id]: "loading" };
+    });
+  }, []);
+
+  // Persist the list view so pressing Back from a deal lands you right here.
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(
+        "crmListState",
+        JSON.stringify({ page, pipeline, stage, status, owner, srcFilter, tzFilter, hasActivity, actAfter, actBefore, makeFilter, interestFilter, valueMin, valueMax, search, sort, dir })
+      );
+    } catch {}
+  }, [page, pipeline, stage, status, owner, srcFilter, tzFilter, hasActivity, actAfter, actBefore, makeFilter, interestFilter, valueMin, valueMax, search, sort, dir]);
   const [sprintOwner, setSprintOwner] = useState("parker@lonepeakoverland.com");
   const [sprintMsg, setSprintMsg] = useState<string | null>(null);
 
@@ -829,26 +905,38 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
               </td></tr>
             )}
             {!loading && deals.map((d) => (
-              <tr key={d.id}>
-                {isAdmin && (
-                  <td className="sticky-col" style={{ left: 0 }}>
-                    <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} />
-                  </td>
-                )}
-                {visibleCols.map((col, ci) => {
-                  const sticky = ci === 0 && col.key === "title";
-                  const cls = [sticky ? "sticky-col" : "", col.key === "value" ? "money" : ""].filter(Boolean).join(" ") || undefined;
-                  return (
-                    <td
-                      key={col.key}
-                      className={cls}
-                      style={{ ...(col.nowrap ? { whiteSpace: "nowrap" } : {}), ...(sticky ? { left: isAdmin ? checkW : 0 } : {}) }}
-                    >
-                      {col.render(d)}
+              <Fragment key={d.id}>
+                <tr
+                  onClick={() => toggleExpand(d.id)}
+                  style={{ cursor: "pointer", background: expandedId === d.id ? "var(--surface-2)" : undefined }}
+                >
+                  {isAdmin && (
+                    <td className="sticky-col" style={{ left: 0 }} onClick={(e) => e.stopPropagation()}>
+                      <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} />
                     </td>
-                  );
-                })}
-              </tr>
+                  )}
+                  {visibleCols.map((col, ci) => {
+                    const sticky = ci === 0 && col.key === "title";
+                    const cls = [sticky ? "sticky-col" : "", col.key === "value" ? "money" : ""].filter(Boolean).join(" ") || undefined;
+                    return (
+                      <td
+                        key={col.key}
+                        className={cls}
+                        style={{ ...(col.nowrap ? { whiteSpace: "nowrap" } : {}), ...(sticky ? { left: isAdmin ? checkW : 0 } : {}) }}
+                      >
+                        {col.render(d)}
+                      </td>
+                    );
+                  })}
+                </tr>
+                {expandedId === d.id && (
+                  <tr>
+                    <td colSpan={colCount} style={{ background: "var(--surface-2)", padding: "10px 14px" }}>
+                      <QuickInfoPanel dealId={d.id} info={quickInfo[d.id]} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>
