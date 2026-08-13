@@ -249,30 +249,46 @@ async function isEligible(
 export async function extractProfile(
   db: SupabaseClient,
   dealId: string,
-  opts: { force?: boolean; tier?: ModelTier } = {}
+  opts: { force?: boolean; manual?: boolean; tier?: ModelTier } = {}
 ): Promise<ExtractOutcome> {
   const cfg = await loadAiConfig(db);
-  if (!cfg.enabled && !opts.force) return { ran: false, reason: "profiler disabled" };
+  // `manual` = an explicit user request (the button): runs even when auto is
+  // off, ignoring scope/debounce/require-transcript — but still respects the
+  // budget and never profiles a lost/won deal. `force` = admin/cron override.
+  const bypass = opts.force || opts.manual;
+  if (!cfg.enabled && !bypass) return { ran: false, reason: "profiler disabled" };
 
   const elig = await isEligible(db, dealId, cfg);
-  if (!elig.ok && !opts.force) return { ran: false, reason: elig.reason };
+  // Lost/won is a hard rule (only a raw force bypasses it, for testing).
+  if (!elig.ok) {
+    if (opts.force) {
+      /* testing override */
+    } else if (opts.manual && elig.reason?.startsWith("not an open deal")) {
+      return { ran: false, reason: elig.reason };
+    } else if (!opts.manual) {
+      return { ran: false, reason: elig.reason };
+    }
+  }
 
   const inputs = await gatherDealInputs(db, dealId);
   if (!inputs) return { ran: false, reason: "no deal inputs" };
-  if (cfg.require_transcript && inputs.transcriptCount === 0 && !opts.force)
+  if (cfg.require_transcript && inputs.transcriptCount === 0 && !bypass)
     return { ran: false, reason: "no transcript yet (require_transcript on)" };
 
   // Prior profile + watermark → incremental delta.
   const { data: prior } = await db.from("deal_profiles").select("*").eq("deal_id", dealId).maybeSingle();
   const inputHash = `${inputs.transcriptCount}:${inputs.latestActivityAt ?? ""}:${inputs.notes.length}`;
   const wm = (prior?.watermark ?? {}) as any;
+  // No new signals → skip (free). A manual click on an already-current profile
+  // is a genuine no-op; force re-runs anyway.
   if (prior && wm.input_hash === inputHash && !opts.force) {
+    if (opts.manual) return { ran: false, reason: "already current — no new signals to add", profile: prior };
     const debounceMs = cfg.debounce_hours * 3_600_000;
     if (prior.last_run_at && Date.now() - Date.parse(prior.last_run_at) < debounceMs)
       return { ran: false, reason: "no new signals since last run", profile: prior };
   }
 
-  // Budget guard.
+  // Budget guard (manual respects it; only a raw force bypasses).
   if (!opts.force) {
     const spent = await monthToDateSpendCents(db);
     if (spent >= cfg.monthly_budget_cents) return { ran: false, reason: `monthly budget reached ($${(spent / 100).toFixed(2)})` };

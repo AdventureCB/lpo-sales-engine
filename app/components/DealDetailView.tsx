@@ -1072,13 +1072,13 @@ function DealProfileSection({
   const autoTried = useRef(false);
 
   const build = useCallback(
-    async (opts: { force: boolean; silent?: boolean }) => {
+    async (opts: { manual?: boolean; silent?: boolean }) => {
       setBusy(true); // always show a loading state — even the silent auto-build
       setErr(null);
       const r = await fetch("/api/ai/profile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dealId, force: opts.force }),
+        body: JSON.stringify({ dealId, manual: opts.manual === true }),
       }).catch(() => null);
       setBusy(false);
       if (!r?.ok) {
@@ -1097,7 +1097,7 @@ function DealProfileSection({
   useEffect(() => {
     if (stale && !autoTried.current) {
       autoTried.current = true;
-      void build({ force: false, silent: true });
+      void build({ silent: true });
     }
   }, [stale, build]);
 
@@ -1114,7 +1114,7 @@ function DealProfileSection({
           </span>
         )}
         {conf != null && <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>{Math.round(conf * 100)}% confidence</span>}
-        <button className="btn ghost" style={{ marginLeft: "auto", padding: "2px 10px", fontSize: 12 }} disabled={busy} onClick={() => build({ force: true })}>
+        <button className="btn ghost" style={{ marginLeft: "auto", padding: "2px 10px", fontSize: 12 }} disabled={busy} onClick={() => build({ manual: true })}>
           {busy ? "Thinking…" : profile ? "↻ Refresh" : "Build profile"}
         </button>
       </div>

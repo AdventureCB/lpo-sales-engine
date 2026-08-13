@@ -27,8 +27,11 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   const user = await getSessionUser();
-  const admin = user?.role === "admin";
-  if (!admin && !isAuthorizedCron(req)) return NextResponse.json({ error: "unauthorized" }, { status: 403 });
+  const isCron = isAuthorizedCron(req);
+  // Any logged-in user (rep or admin) may profile a deal they can see; cron
+  // for batch/lazy. `force` (bypass budget+scope) is privileged-only.
+  if (!user && !isCron) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const privileged = user?.role === "admin" || isCron;
 
   let body: any = {};
   try {
@@ -38,7 +41,11 @@ export async function POST(req: NextRequest) {
   if (!dealId) return NextResponse.json({ error: "dealId required" }, { status: 400 });
 
   const db = supabaseAdmin();
-  const outcome = await extractProfile(db, dealId, { force: body.force === true, tier: body.tier });
+  const outcome = await extractProfile(db, dealId, {
+    force: privileged && body.force === true, // admin/cron hard override (bypasses budget)
+    manual: body.manual === true, // explicit button: bypass enabled+scope+debounce, keep budget
+    tier: privileged ? body.tier : undefined,
+  });
   const spentCents = await monthToDateSpendCents(db);
   return NextResponse.json({ ...outcome, monthToDateSpend: `$${(spentCents / 100).toFixed(2)}` });
 }
