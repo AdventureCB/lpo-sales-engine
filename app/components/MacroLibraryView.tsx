@@ -21,7 +21,9 @@ interface Macro {
   is_template: boolean;
   template_id: string | null;
   owner_email: string | null;
+  asset_ids?: string[];
 }
+interface AssetLite { id: string; kind: string; name: string }
 
 const CHANNELS = [
   ["sms", "💬 Text"],
@@ -91,17 +93,24 @@ function BodyField({ value, onChange, placeholder }: { value: string; onChange: 
 function MacroForm({
   init,
   folders,
+  assets,
   onSave,
   onCancel,
 }: {
   init: Partial<Macro>;
   folders: string[];
+  assets: AssetLite[];
   onSave: (m: Partial<Macro>) => Promise<void>;
   onCancel: () => void;
 }) {
-  const [m, setM] = useState<Partial<Macro>>({ channel: "email", ...init });
+  const [m, setM] = useState<Partial<Macro>>({ channel: "email", asset_ids: [], ...init });
   const [busy, setBusy] = useState(false);
   const set = (p: Partial<Macro>) => setM((c) => ({ ...c, ...p }));
+  const toggleAsset = (id: string) =>
+    setM((c) => {
+      const cur = c.asset_ids ?? [];
+      return { ...c, asset_ids: cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id] };
+    });
 
   return (
     <div className="card" style={{ marginBottom: 10, display: "grid", gap: 8 }}>
@@ -123,6 +132,21 @@ function MacroForm({
         <input className="vmsel" placeholder="Subject (email)" value={m.subject ?? ""} onChange={(e) => set({ subject: e.target.value })} />
       )}
       <BodyField value={m.body ?? ""} onChange={(v) => set({ body: v })} placeholder="Message body… use the placeholder dropdown for merge fields" />
+      {assets.length > 0 && (
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-3)", marginBottom: 4 }}>
+            Pre-assigned links &amp; attachments (applied when this macro is used)
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {assets.map((a) => (
+              <label key={a.id} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5 }}>
+                <input type="checkbox" checked={(m.asset_ids ?? []).includes(a.id)} onChange={() => toggleAsset(a.id)} />
+                {a.kind === "media" ? "📎" : "🔗"} {a.name}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8 }}>
         <button
           className="btn primary"
@@ -266,6 +290,7 @@ export function MacroLibraryView({ isAdmin }: { isAdmin: boolean }) {
             <MacroForm
               init={{}}
               folders={allFolders}
+              assets={data.assets ?? []}
               onCancel={() => setCreating(null)}
               onSave={async (m) => {
                 // Adding to the library publishes a template; auto-enable it so
@@ -292,6 +317,7 @@ export function MacroLibraryView({ isAdmin }: { isAdmin: boolean }) {
                         key={m.id}
                         init={m}
                         folders={allFolders}
+                        assets={data.assets ?? []}
                         onCancel={() => setEditId(null)}
                         onSave={async (patch) => { flash((await post({ op: "macro_upsert", macro: { ...patch, id: m.id } })).ok); setEditId(null); load(); }}
                       />
@@ -320,7 +346,7 @@ export function MacroLibraryView({ isAdmin }: { isAdmin: boolean }) {
       {tab === "templates" && (
         <>
           {creating === "template" ? (
-            <MacroForm init={{}} folders={allFolders} onCancel={() => setCreating(null)} onSave={async (m) => { const r = await post({ op: "template_upsert", macro: m }); flash(r.ok); setCreating(null); load(); }} />
+            <MacroForm init={{}} folders={allFolders} assets={data.assets ?? []} onCancel={() => setCreating(null)} onSave={async (m) => { const r = await post({ op: "template_upsert", macro: m }); flash(r.ok); setCreating(null); load(); }} />
           ) : (
             <button className="btn" onClick={() => setCreating("template")} style={{ marginBottom: 12 }}>+ Add template</button>
           )}

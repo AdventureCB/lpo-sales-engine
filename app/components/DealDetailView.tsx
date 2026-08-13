@@ -1858,6 +1858,7 @@ interface Macro {
   name: string;
   subject: string | null;
   body: string;
+  asset_ids?: string[];
 }
 interface Asset {
   id: string;
@@ -1973,8 +1974,15 @@ function CommBar({
   const applyMacro = (id: string) => {
     const m = macros.find((x) => x.id === id);
     if (!m) return;
-    setBody(renderTemplate(m.body));
+    let text = renderTemplate(m.body);
+    // Pull in the macro's pre-assigned assets: URLs as links in the body,
+    // media into the attachment tray. The rep can still add/remove their own.
+    const linked = (m.asset_ids ?? []).map((aid) => assets.find((a) => a.id === aid)).filter(Boolean) as Asset[];
+    for (const a of linked.filter((a) => a.kind === "url")) text += `\n[${a.name}](${a.url})`;
+    setBody(text);
     if (m.subject && channel === "email") setSubject(renderTemplate(m.subject));
+    const media = linked.filter((a) => a.kind === "media");
+    if (media.length && channel === "email") setAttachIds((prev) => [...new Set([...prev, ...media.map((a) => a.id)])]);
   };
 
   const appendAsset = (id: string) => {

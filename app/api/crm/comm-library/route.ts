@@ -5,7 +5,7 @@ import { getSessionUser } from "@/lib/auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MACRO_COLS = "id, channel, name, subject, body, folder, sort_order, is_template, template_id, owner_email";
+const MACRO_COLS = "id, channel, name, subject, body, folder, sort_order, is_template, template_id, owner_email, asset_ids";
 
 /**
  * Outreach library. TEMPLATES are the shared catalog anyone can add to;
@@ -73,6 +73,7 @@ export async function POST(req: NextRequest) {
       subject: m.subject?.trim() || null,
       body: m.body,
       folder: m.folder?.trim() || null,
+      asset_ids: Array.isArray(m.asset_ids) ? m.asset_ids : [],
       is_template: true,
       owner_email: m.id ? undefined : user.email, // creator (kept on update)
       updated_at: new Date().toISOString(),
@@ -106,6 +107,7 @@ export async function POST(req: NextRequest) {
       if (!dupe) {
         await db.from("comm_macros").insert({
           channel: t.channel, name: t.name, subject: t.subject, body: t.body, folder: t.folder,
+          asset_ids: t.asset_ids ?? [],
           is_template: false, owner_email: user.email, template_id: templateId,
         });
       }
@@ -128,6 +130,7 @@ export async function POST(req: NextRequest) {
     if (m.body?.trim()) patch.body = m.body;
     if (m.folder !== undefined) patch.folder = m.folder?.trim() || null;
     if (m.channel && CHANNELS.includes(m.channel)) patch.channel = m.channel;
+    if (Array.isArray(m.asset_ids)) patch.asset_ids = m.asset_ids;
     const { error } = await db.from("comm_macros").update(patch).eq("id", m.id);
     if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
     return NextResponse.json({ ok: true });
