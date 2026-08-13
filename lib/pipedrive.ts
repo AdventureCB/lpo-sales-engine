@@ -170,6 +170,15 @@ export async function addDealNote(dealId: number, content: string): Promise<void
   });
 }
 
+/** Merge `dupId` INTO `survivorId` in Pipedrive (moves activities/notes,
+ * marks the duplicate merged). The correct tool for PD-origin duplicates. */
+export async function mergeDeals(dupId: number, survivorId: number): Promise<void> {
+  await pd(V1, `/deals/${dupId}/merge`, {
+    method: "PUT",
+    body: JSON.stringify({ merge_with_id: survivorId }),
+  });
+}
+
 let hotLabelIdCache: number | null | undefined;
 
 /** The "🔥 Hot"/"Hot" option on the deal label field; null if none exists. */

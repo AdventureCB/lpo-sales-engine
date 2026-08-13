@@ -75,6 +75,7 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
   const [logWhen, setLogWhen] = useState("");
   const [depositFollow, setDepositFollow] = useState(false); // schedule modal opened by the Deposit flow
   const [lostReason, setLostReason] = useState("");
+  const [mergeOpen, setMergeOpen] = useState(false);
   const [reopenPipe, setReopenPipe] = useState("");
   const [reopenStage, setReopenStage] = useState("");
   const [tlOpen, setTlOpen] = useState<Set<number>>(new Set());
@@ -461,11 +462,31 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
                   },
                   "Requires a loss reason; deal moves to Cainen for re-prospecting"
                 )}
+                <button
+                  className="btn ghost"
+                  style={{ fontSize: 12.5 }}
+                  onClick={() => setMergeOpen(true)}
+                  title="Merge a duplicate deal into this one"
+                >
+                  ⧉ Merge
+                </button>
               </div>
             );
           })()}
         </div>
       </div>
+
+      {mergeOpen && (
+        <MergeDealModal
+          survivorId={d.id}
+          survivorTitle={d.title}
+          onClose={() => setMergeOpen(false)}
+          onMerged={() => {
+            setMergeOpen(false);
+            load();
+          }}
+        />
+      )}
 
       {embedded && <div style={{ marginBottom: 18 }}>{commBarEl}</div>}
 
@@ -1058,6 +1079,127 @@ const CHANNEL_BADGE: Record<string, string> = {
 
 const BAND_COLOR: Record<string, string> = { Thin: "var(--crit)", Developing: "var(--warn)", Solid: "var(--accent)", Rich: "var(--good)" };
 const humanize = (k: string) => k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+interface MergeCandidate {
+  id: string;
+  title: string;
+  status: string;
+  valueCents: number | null;
+  pipeline: string | null;
+  stage: string | null;
+  contactName: string | null;
+  hasPd: boolean;
+}
+
+/** Merge a duplicate deal INTO this one (this deal survives). */
+function MergeDealModal({
+  survivorId,
+  survivorTitle,
+  onClose,
+  onMerged,
+}: {
+  survivorId: string;
+  survivorTitle: string;
+  onClose: () => void;
+  onMerged: () => void;
+}) {
+  const [cands, setCands] = useState<MergeCandidate[]>([]);
+  const [q, setQ] = useState("");
+  const [pick, setPick] = useState<MergeCandidate | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const search = useCallback(
+    (term: string) => {
+      const qs = new URLSearchParams({ dealId: survivorId });
+      if (term.trim()) qs.set("q", term.trim());
+      fetch(`/api/crm/deal/duplicates?${qs}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => d && setCands(d.candidates ?? []))
+        .catch(() => {});
+    },
+    [survivorId]
+  );
+  useEffect(() => search(""), [search]);
+
+  const doMerge = async () => {
+    if (!pick) return;
+    setBusy(true);
+    setErr(null);
+    const r = await fetch("/api/crm/deal/merge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dupId: pick.id, survivorId }),
+    }).catch(() => null);
+    setBusy(false);
+    if (!r?.ok) {
+      setErr("Merge failed");
+      return;
+    }
+    onMerged();
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520, width: "92%", maxHeight: "82vh", overflowY: "auto" }}>
+        <b style={{ fontSize: 16 }}>⧉ Merge a duplicate into this deal</b>
+        <div className="viewsub" style={{ marginTop: 2 }}>
+          Keeping <strong>{survivorTitle}</strong>. The deal you pick will be closed and its activities moved here.
+        </div>
+
+        <input
+          className="vmsel"
+          style={{ margin: "12px 0 8px" }}
+          placeholder="Same-contact deals shown; type to search all titles…"
+          value={q}
+          onChange={(e) => {
+            setQ(e.target.value);
+            search(e.target.value);
+          }}
+        />
+
+        <div style={{ display: "grid", gap: 6 }}>
+          {cands.length === 0 && <div style={{ fontSize: 13, color: "var(--text-3)" }}>No candidates. Try searching a title.</div>}
+          {cands.map((c) => (
+            <label
+              key={c.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "8px 10px",
+                borderRadius: 8,
+                cursor: "pointer",
+                border: `1px solid ${pick?.id === c.id ? "var(--accent)" : "var(--border-soft)"}`,
+                background: pick?.id === c.id ? "var(--accent-2-soft)" : "transparent",
+              }}
+            >
+              <input type="radio" name="dup" checked={pick?.id === c.id} onChange={() => setPick(c)} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.title}</div>
+                <div style={{ fontSize: 12, color: "var(--text-3)" }}>
+                  {c.status !== "open" ? `${c.status} · ` : ""}{c.pipeline ? `${c.pipeline} / ${c.stage}` : "—"}
+                  {c.valueCents != null ? ` · $${Math.round(c.valueCents / 100).toLocaleString()}` : ""}
+                  {!c.hasPd ? " · native" : ""}
+                </div>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        {err && <div style={{ color: "var(--crit)", fontSize: 13, marginTop: 8 }}>{err}</div>}
+
+        <div style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center" }}>
+          <button className="btn primary" disabled={!pick || busy} onClick={doMerge}>
+            {busy ? "Merging…" : pick ? `Merge "${pick.title.slice(0, 24)}" in` : "Pick a duplicate"}
+          </button>
+          <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>Can&apos;t be undone.</span>
+          <button className="btn ghost" style={{ marginLeft: "auto" }} onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function DealProfileSection({
   profile,
