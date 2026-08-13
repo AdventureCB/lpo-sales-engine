@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  let body: { to?: string; subject?: string; body?: string; dealId?: string; contactId?: string };
+  let body: { to?: string; subject?: string; body?: string; dealId?: string; contactId?: string; attachmentAssetIds?: string[] };
   try {
     body = await req.json();
   } catch {
@@ -26,6 +26,22 @@ export async function POST(req: NextRequest) {
   }
 
   const db = supabaseAdmin();
+
+  // Pull any media assets to attach from the comm-media bucket.
+  const attachments: { filename: string; mimeType: string; dataBase64: string }[] = [];
+  if (body.attachmentAssetIds?.length) {
+    const { data: media } = await db
+      .from("comm_assets")
+      .select("name, url, mime_type")
+      .eq("kind", "media")
+      .in("id", body.attachmentAssetIds);
+    for (const a of media ?? []) {
+      const { data: file } = await db.storage.from("comm-media").download(a.url);
+      if (!file) continue;
+      const buf = Buffer.from(await file.arrayBuffer());
+      attachments.push({ filename: a.name, mimeType: a.mime_type ?? "application/octet-stream", dataBase64: buf.toString("base64") });
+    }
+  }
   const { data: account } = await db
     .from("gmail_accounts")
     .select("*")
@@ -47,7 +63,8 @@ export async function POST(req: NextRequest) {
       to,
       subject,
       body: linkifyPlain(text),
-      html: rich ? linkifyHtml(text) : undefined,
+      html: rich || attachments.length ? linkifyHtml(text) : undefined,
+      attachments: attachments.length ? attachments : undefined,
     });
   } catch (e) {
     return NextResponse.json(

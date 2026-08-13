@@ -735,6 +735,7 @@ const CHANNELS = [
 function CommLibraryAdmin() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   // Asset add form
   const [aKind, setAKind] = useState("url");
   const [aName, setAName] = useState("");
@@ -799,25 +800,58 @@ function CommLibraryAdmin() {
         <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
           <select className="vmsel" style={{ width: "auto" }} value={aKind} onChange={(e) => setAKind(e.target.value)}>
             <option value="url">🔗 URL</option>
-            <option value="media">🖼 Media</option>
+            <option value="media">🖼 Media (attachment)</option>
           </select>
-          <input className="vmsel" style={{ flex: 1, minWidth: 120 }} placeholder="Name" value={aName} onChange={(e) => setAName(e.target.value)} />
-          <input className="vmsel" style={{ flex: 2, minWidth: 180 }} placeholder="https://…" value={aUrl} onChange={(e) => setAUrl(e.target.value)} />
-          <button
-            className="btn primary"
-            style={{ padding: "8px 14px", fontSize: 13.5 }}
-            disabled={!aName.trim() || !aUrl.trim()}
-            onClick={async () => {
-              const ok = await post({ op: "asset", asset: { kind: aKind, name: aName, url: aUrl } });
-              if (ok) {
-                setAName("");
-                setAUrl("");
-              }
-            }}
-          >
-            Add
-          </button>
+          <input className="vmsel" style={{ flex: 1, minWidth: 120 }} placeholder="Name (shown as the link / file)" value={aName} onChange={(e) => setAName(e.target.value)} />
+          {aKind === "url" ? (
+            <>
+              <input className="vmsel" style={{ flex: 2, minWidth: 180 }} placeholder="https://…" value={aUrl} onChange={(e) => setAUrl(e.target.value)} />
+              <button
+                className="btn primary"
+                style={{ padding: "8px 14px", fontSize: 13.5 }}
+                disabled={!aName.trim() || !aUrl.trim()}
+                onClick={async () => {
+                  const ok = await post({ op: "asset", asset: { kind: "url", name: aName, url: aUrl } });
+                  if (ok) { setAName(""); setAUrl(""); }
+                }}
+              >
+                Add
+              </button>
+            </>
+          ) : (
+            <label className="btn primary" style={{ padding: "8px 14px", fontSize: 13.5, cursor: aName.trim() ? "pointer" : "not-allowed", opacity: aName.trim() && !uploading ? 1 : 0.5 }}>
+              {uploading ? "Uploading…" : "Upload file"}
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                style={{ display: "none" }}
+                disabled={!aName.trim() || uploading}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  setUploading(true);
+                  const dataUrl: string = await new Promise((res) => {
+                    const fr = new FileReader();
+                    fr.onload = () => res(String(fr.result));
+                    fr.readAsDataURL(file);
+                  });
+                  const dataBase64 = dataUrl.split(",")[1] ?? "";
+                  const r = await fetch("/api/crm/comm-library/upload", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name: aName.trim(), filename: file.name, mimeType: file.type || "application/octet-stream", dataBase64 }),
+                  }).catch(() => null);
+                  setUploading(false);
+                  e.target.value = "";
+                  if (r?.ok) { setAName(""); setMsg("✓ Uploaded"); await load(); }
+                  else { const d = await r?.json().catch(() => ({})); setMsg(d?.error ?? "Upload failed"); }
+                  setTimeout(() => setMsg(null), 2500);
+                }}
+              />
+            </label>
+          )}
         </div>
+        {msg && <div style={{ fontSize: 12.5, color: msg.startsWith("✓") ? "var(--good)" : "var(--bad)", marginTop: 6 }}>{msg}</div>}
       </div>
     </>
   );

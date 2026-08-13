@@ -1894,6 +1894,7 @@ function CommBar({
   const [channel, setChannel] = useState<CommChannel | null>(null);
   const [macros, setMacros] = useState<Macro[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [attachIds, setAttachIds] = useState<string[]>([]);
   const [body, setBody] = useState("");
   const [subject, setSubject] = useState("");
   const [sending, setSending] = useState(false);
@@ -2112,13 +2113,14 @@ function CommBar({
         r = await fetch("/api/gmail/send", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to: email, subject: subject.trim(), body: text, dealId, contactId: contact?.id }),
+          body: JSON.stringify({ to: email, subject: subject.trim(), body: text, dealId, contactId: contact?.id, attachmentAssetIds: attachIds }),
         });
       }
       const d = await r?.json().catch(() => ({}));
       if (!r?.ok || d?.error) throw new Error(d?.error ?? `HTTP ${r?.status}`);
       setBody("");
       setSubject("");
+      setAttachIds([]);
       setChannel(null);
       flashOk("Sent ✓");
       onLogged();
@@ -2281,13 +2283,41 @@ function CommBar({
                 <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
-            <select className="vmsel" style={{ width: "auto", flex: 1, minWidth: 140 }} value="" onChange={(e) => e.target.value && appendAsset(e.target.value)}>
-              <option value="">🖼 Media asset…</option>
+            <select
+              className="vmsel"
+              style={{ width: "auto", flex: 1, minWidth: 140 }}
+              value=""
+              onChange={(e) => {
+                const id = e.target.value;
+                if (!id) return;
+                if (channel === "email") setAttachIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+                else appendAsset(id); // non-email: fall back to inserting the name
+              }}
+            >
+              <option value="">🖼 Media {channel === "email" ? "attachment" : "asset"}…</option>
               {media.map((a) => (
                 <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
           </div>
+          {channel === "email" && attachIds.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+              {attachIds.map((id) => {
+                const a = media.find((x) => x.id === id);
+                return (
+                  <span key={id} className="chip stage" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    📎 {a?.name ?? "file"}
+                    <button
+                      onClick={() => setAttachIds((prev) => prev.filter((x) => x !== id))}
+                      style={{ border: "none", background: "none", color: "var(--text-3)", cursor: "pointer", fontSize: 13, lineHeight: 1 }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
           {channel === "email" && (
             <input
               className="vmsel"
