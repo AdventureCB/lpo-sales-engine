@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { newOutboundCall, setOutboundHandler } from "./phoneClient";
 import { INTERESTS } from "./interests";
+import { combineDue } from "@/lib/allday";
 
 interface DealData {
   deal: any;
@@ -58,7 +59,8 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
   const [warn, setWarn] = useState<string | null>(null);
   const [schedType, setSchedType] = useState("call");
   const [schedSubject, setSchedSubject] = useState("");
-  const [schedDue, setSchedDue] = useState("");
+  const [schedDate, setSchedDate] = useState("");
+  const [schedTime, setSchedTime] = useState(""); // blank = all-day (no 5pm default)
   const [sprintPick, setSprintPick] = useState("");
   const [titleEdit, setTitleEdit] = useState<string | null>(null);
   const [newSprintName, setNewSprintName] = useState("");
@@ -434,7 +436,8 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
                     // confirmation follow-up is scheduled (required).
                     setSchedType("call");
                     setSchedSubject("Confirmation follow-up");
-                    setSchedDue("");
+                    setSchedDate("");
+                    setSchedTime("");
                     setDepositFollow(true);
                     setModal("schedule");
                   },
@@ -536,16 +539,15 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
                   autoFocus
                   onChange={(e) => setSchedSubject(e.target.value)}
                 />
-                <input
-                  type="datetime-local"
-                  className="vmsel"
-                  value={schedDue}
-                  onChange={(e) => setSchedDue(e.target.value)}
-                />
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input type="date" className="vmsel" value={schedDate} onChange={(e) => setSchedDate(e.target.value)} style={{ flex: 1 }} />
+                  <input type="time" className="vmsel" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} style={{ width: 120 }} title="Leave blank for all-day" />
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: -2 }}>Leave the time blank for an all-day activity.</div>
                 <div style={{ display: "flex", gap: 8 }}>
                   <button
                     className="btn primary"
-                    disabled={!schedSubject.trim() || saving || (depositFollow && !schedDue)}
+                    disabled={!schedSubject.trim() || saving || (depositFollow && !schedDate)}
                     onClick={async () => {
                       const confSched = depositFollow
                         ? orderStageId(/confirmation scheduled/i) ?? orderStageId(/deposit placed/i)
@@ -554,14 +556,15 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
                         activity: {
                           type: schedType,
                           subject: schedSubject,
-                          dueAt: schedDue ? new Date(schedDue).toISOString() : null,
+                          dueAt: combineDue(schedDate, schedTime),
                         },
                         // Deposit flow: the deposit + its confirmation follow-up
                         // land together — stage moves only now.
                         ...(confSched ? { stageId: confSched, status: "open" } : {}),
                       });
                       setSchedSubject("");
-                      setSchedDue("");
+                      setSchedDate("");
+                      setSchedTime("");
                       setDepositFollow(false);
                       setModal(null);
                     }}
