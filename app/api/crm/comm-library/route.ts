@@ -137,18 +137,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // ── Assets (shared) — admin-managed for now ────────────────────────────────
-  if (op === "asset" || op === "asset_delete") {
-    if (!isAdmin) return NextResponse.json({ error: "admin only" }, { status: 403 });
-    if (op === "asset_delete" && body.id) {
-      await db.from("comm_assets").delete().eq("id", body.id);
-      return NextResponse.json({ ok: true });
-    }
+  // ── Assets (shared) — any user can add; delete own or (admin) any ──────────
+  if (op === "asset_delete" && body.id) {
+    const { data: a } = await db.from("comm_assets").select("owner_email").eq("id", body.id).maybeSingle();
+    if (a?.owner_email && a.owner_email !== user.email && !isAdmin)
+      return NextResponse.json({ error: "not your asset" }, { status: 403 });
+    await db.from("comm_assets").delete().eq("id", body.id);
+    return NextResponse.json({ ok: true });
+  }
+  if (op === "asset") {
     const a = body.asset ?? {};
-    if (!a.name?.trim() || !a.url?.trim() || !["url", "media"].includes(a.kind)) {
-      return NextResponse.json({ error: "kind, name, url required" }, { status: 400 });
+    if (!a.name?.trim() || !a.url?.trim() || a.kind !== "url") {
+      return NextResponse.json({ error: "name, url required (media uploads via /upload)" }, { status: 400 });
     }
-    const row = { kind: a.kind, name: a.name.trim(), url: a.url.trim() };
+    if (a.id) {
+      const { data: ex } = await db.from("comm_assets").select("owner_email").eq("id", a.id).maybeSingle();
+      if (ex?.owner_email && ex.owner_email !== user.email && !isAdmin)
+        return NextResponse.json({ error: "not your asset" }, { status: 403 });
+    }
+    const row = { kind: "url", name: a.name.trim(), url: a.url.trim(), owner_email: a.id ? undefined : user.email };
     const q = a.id ? db.from("comm_assets").update(row).eq("id", a.id) : db.from("comm_assets").insert(row);
     const { error } = await q;
     if (error) return NextResponse.json({ error: "db error" }, { status: 500 });

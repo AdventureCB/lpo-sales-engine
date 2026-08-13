@@ -10,13 +10,32 @@ import { VmPanel, type VmDrop } from "./VmPanel";
  */
 export function ProfileView({ isAdmin }: { isAdmin: boolean }) {
   const [vmDrop, setVmDrop] = useState<VmDrop | null>(null);
+  const [sig, setSig] = useState("");
+  const [sigMsg, setSigMsg] = useState<string | null>(null);
+  const [sigSaving, setSigSaving] = useState(false);
 
   useEffect(() => {
     try {
       const s = localStorage.getItem("vmDrop");
       if (s) setVmDrop(JSON.parse(s));
     } catch {}
+    fetch("/api/me/signature")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setSig(d.signature ?? ""))
+      .catch(() => {});
   }, []);
+
+  const saveSig = async () => {
+    setSigSaving(true);
+    const r = await fetch("/api/me/signature", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ signature: sig }),
+    }).catch(() => null);
+    setSigSaving(false);
+    setSigMsg(r?.ok ? "✓ Saved" : "⚠ Failed");
+    setTimeout(() => setSigMsg(null), 2000);
+  };
 
   const select = (d: VmDrop | null) => {
     setVmDrop(d);
@@ -39,6 +58,25 @@ export function ProfileView({ isAdmin }: { isAdmin: boolean }) {
       </div>
       <div style={{ maxWidth: 440 }}>
         <VmPanel selected={vmDrop} onSelect={select} />
+      </div>
+
+      <div className="card" style={{ maxWidth: 560, marginTop: 18 }}>
+        <div className="panel-h">✍️ Email signature</div>
+        <div style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 8 }}>
+          Appended to every email you send. Links written as <code>{"[label](https://…)"}</code> become clickable.
+        </div>
+        <textarea
+          className="vmsel"
+          rows={5}
+          style={{ resize: "vertical", width: "100%" }}
+          placeholder={"— \nJane Rep\nLone Peak Overland\n[Book a demo](https://…)"}
+          value={sig}
+          onChange={(e) => setSig(e.target.value)}
+        />
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+          <button className="btn primary" onClick={saveSig} disabled={sigSaving}>{sigSaving ? "Saving…" : "Save signature"}</button>
+          {sigMsg && <span style={{ fontSize: 13, color: sigMsg.startsWith("✓") ? "var(--good)" : "var(--bad)" }}>{sigMsg}</span>}
+        </div>
       </div>
     </>
   );

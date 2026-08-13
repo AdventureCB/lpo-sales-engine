@@ -154,12 +154,16 @@ function grouped(list: Macro[]): { channel: string; folders: { folder: string; i
 }
 
 export function MacroLibraryView({ isAdmin }: { isAdmin: boolean }) {
-  const [tab, setTab] = useState<"mine" | "templates" | "team">("mine");
+  const [tab, setTab] = useState<"mine" | "templates" | "assets" | "team">("mine");
   const [data, setData] = useState<any>(null);
   const [teamRep, setTeamRep] = useState<string>("");
   const [creating, setCreating] = useState<null | "template" | "mine">(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  // Asset add form
+  const [aName, setAName] = useState("");
+  const [aUrl, setAUrl] = useState("");
+  const [uploading, setUploading] = useState(false);
 
   const load = useCallback((repEmail?: string) => {
     const qs = repEmail ? `?repEmail=${encodeURIComponent(repEmail)}` : "";
@@ -198,8 +202,62 @@ export function MacroLibraryView({ isAdmin }: { isAdmin: boolean }) {
       <div className="range-toggle" style={{ marginBottom: 16 }}>
         <button className={tab === "mine" ? "active" : ""} onClick={() => setTab("mine")}>My macros ({myMacros.length})</button>
         <button className={tab === "templates" ? "active" : ""} onClick={() => setTab("templates")}>Templates ({templates.length})</button>
+        <button className={tab === "assets" ? "active" : ""} onClick={() => setTab("assets")}>Assets ({(data.assets ?? []).length})</button>
         {isAdmin && <button className={tab === "team" ? "active" : ""} onClick={() => setTab("team")}>Team</button>}
       </div>
+
+      {tab === "assets" && (
+        <>
+          <p className="viewsub" style={{ marginTop: 0 }}>
+            Links and files any rep can drop into a message. URL assets insert as clickable link text; media assets attach to emails.
+          </p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8, alignItems: "center" }}>
+            <input className="vmsel" style={{ minWidth: 140 }} placeholder="Name (e.g. 3D Builder)" value={aName} onChange={(e) => setAName(e.target.value)} />
+            <input className="vmsel" style={{ flex: 1, minWidth: 180 }} placeholder="https://… (for a URL asset)" value={aUrl} onChange={(e) => setAUrl(e.target.value)} />
+            <button
+              className="btn primary"
+              disabled={!aName.trim() || !aUrl.trim()}
+              onClick={async () => { flash((await post({ op: "asset", asset: { kind: "url", name: aName, url: aUrl } })).ok); setAName(""); setAUrl(""); load(); }}
+            >
+              Add URL
+            </button>
+            <label className="btn" style={{ cursor: aName.trim() && !uploading ? "pointer" : "not-allowed", opacity: aName.trim() && !uploading ? 1 : 0.5 }}>
+              {uploading ? "Uploading…" : "📎 Upload media"}
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                style={{ display: "none" }}
+                disabled={!aName.trim() || uploading}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  setUploading(true);
+                  const dataUrl: string = await new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.readAsDataURL(file); });
+                  const r = await fetch("/api/crm/comm-library/upload", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name: aName.trim(), filename: file.name, mimeType: file.type || "application/octet-stream", dataBase64: dataUrl.split(",")[1] ?? "" }),
+                  }).catch(() => null);
+                  setUploading(false); e.target.value = "";
+                  if (r?.ok) { setAName(""); flash(true); load(); } else flash(false);
+                }}
+              />
+            </label>
+          </div>
+          {(data.assets ?? []).map((a: any) => (
+            <div key={a.id} className="card" style={{ marginBottom: 6, display: "flex", gap: 8, alignItems: "center" }}>
+              <span style={{ fontSize: 18 }}>{a.kind === "media" ? "🖼" : "🔗"}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 13.5 }}>{a.name}</div>
+                <div style={{ fontSize: 12, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.kind === "media" ? "attachment" : a.url}</div>
+              </div>
+              {(isAdmin || a.owner_email === data.viewEmail || !a.owner_email) && (
+                <button className="btn ghost" style={{ fontSize: 12, padding: "3px 9px", color: "var(--crit)" }} onClick={async () => { await post({ op: "asset_delete", id: a.id }); load(); }}>Delete</button>
+              )}
+            </div>
+          ))}
+        </>
+      )}
 
       {/* MY MACROS */}
       {tab === "mine" && (

@@ -54,16 +54,21 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Append the sender's saved signature to every email.
+  const { data: me } = await db.from("app_users").select("email_signature").eq("id", user.authUserId).maybeSingle();
+  const sig = me?.email_signature?.trim();
+  const fullText = sig ? `${text}\n\n${sig}` : text;
+
   let messageId: string;
   try {
     // Render asset markdown links to a real HTML hyperlink; keep a plain-text
     // alternative for clients that don't render HTML.
-    const rich = hasRichLinks(text);
+    const rich = hasRichLinks(fullText);
     messageId = await sendGmail(db, account, {
       to,
       subject,
-      body: linkifyPlain(text),
-      html: rich || attachments.length ? linkifyHtml(text) : undefined,
+      body: linkifyPlain(fullText),
+      html: rich || attachments.length ? linkifyHtml(fullText) : undefined,
       attachments: attachments.length ? attachments : undefined,
     });
   } catch (e) {

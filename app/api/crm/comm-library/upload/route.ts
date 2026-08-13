@@ -9,11 +9,11 @@ export const dynamic = "force-dynamic";
 const BUCKET = "comm-media";
 const MAX_BYTES = 12 * 1024 * 1024; // 12MB — keeps the base64 email under Gmail's cap
 
-/** Upload a media asset (admin). Stores the file in the comm-media bucket and
- * records a comm_assets row whose url is the storage path. */
+/** Upload a media asset (any user). Stores the file in the comm-media bucket
+ * and records a comm_assets row whose url is the storage path. */
 export async function POST(req: NextRequest) {
   const user = await getSessionUser();
-  if (!user || user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   let body: { name?: string; filename?: string; mimeType?: string; dataBase64?: string };
   try {
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
 
   const { data: asset, error } = await db
     .from("comm_assets")
-    .insert({ kind: "media", name: name.trim(), url: path, mime_type: mimeType })
+    .insert({ kind: "media", name: name.trim(), url: path, mime_type: mimeType, owner_email: user.email })
     .select("*")
     .single();
   if (error) {
