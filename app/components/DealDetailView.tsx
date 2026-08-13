@@ -1073,14 +1073,14 @@ function DealProfileSection({
 
   const build = useCallback(
     async (opts: { force: boolean; silent?: boolean }) => {
-      if (!opts.silent) setBusy(true);
+      setBusy(true); // always show a loading state — even the silent auto-build
       setErr(null);
       const r = await fetch("/api/ai/profile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ dealId, force: opts.force }),
       }).catch(() => null);
-      if (!opts.silent) setBusy(false);
+      setBusy(false);
       if (!r?.ok) {
         if (!opts.silent) setErr("Build failed");
         return;
@@ -1121,9 +1121,22 @@ function DealProfileSection({
 
       {err && <div style={{ fontSize: 12.5, color: "var(--crit)", marginBottom: 6 }}>{err}</div>}
 
+      {busy && !profile && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-2)", padding: "6px 0" }}>
+          <span className="ai-pulse" style={{ width: 9, height: 9, borderRadius: "50%", background: "var(--accent)", display: "inline-block" }} />
+          Analyzing transcripts, ads &amp; signals… <span style={{ color: "var(--text-3)" }}>(~10s)</span>
+        </div>
+      )}
+
       {!profile && !busy && (
         <div style={{ fontSize: 13, color: "var(--text-3)" }}>
           No profile yet. Build one from this deal&apos;s transcripts, ad journey, and signals.
+        </div>
+      )}
+      {busy && profile && (
+        <div style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 6 }}>
+          <span className="ai-pulse" style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--accent)", display: "inline-block", marginRight: 6 }} />
+          Refreshing with the latest signals…
         </div>
       )}
 
