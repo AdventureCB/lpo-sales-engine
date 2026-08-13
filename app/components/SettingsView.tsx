@@ -733,11 +733,8 @@ const CHANNELS = [
 ] as const;
 
 function CommLibraryAdmin() {
-  const [macros, setMacros] = useState<Macro[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
-  // Macro editor (blank id = new)
-  const [editing, setEditing] = useState<Partial<Macro> | null>(null);
   // Asset add form
   const [aKind, setAKind] = useState("url");
   const [aName, setAName] = useState("");
@@ -749,7 +746,6 @@ function CommLibraryAdmin() {
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           if (!d) return;
-          setMacros(d.macros ?? []);
           setAssets(d.assets ?? []);
         }),
     []
@@ -771,102 +767,16 @@ function CommLibraryAdmin() {
     return Boolean(r?.ok);
   };
 
-  const saveMacro = async () => {
-    if (!editing?.name?.trim() || !editing.body?.trim()) return;
-    const ok = await post({
-      op: "macro",
-      macro: {
-        id: editing.id,
-        channel: editing.channel ?? "any",
-        name: editing.name,
-        subject: editing.subject ?? null,
-        body: editing.body,
-      },
-    });
-    if (ok) setEditing(null);
-  };
-
-  const chLabel = (c: string) => CHANNELS.find(([k]) => k === c)?.[1] ?? c;
-
   return (
     <>
-      <div className="card" style={{ maxWidth: 680, marginTop: 18 }}>
-        <div className="panel-h">Message macros</div>
-        <div style={{ fontSize: 13.5, color: "var(--text-3)", marginBottom: 10 }}>
-          Templates for the deal-page Text / WhatsApp / Email composers.
-          Placeholders: <code>{"{{first_name}}"}</code> and <code>{"{{name}}"}</code>.
-          {msg && <b style={{ marginLeft: 8, color: "var(--text-2)" }}>{msg}</b>}
+      <Link href="/settings/macros" className="card" style={{ display: "flex", alignItems: "center", gap: 12, maxWidth: 680, marginTop: 18, textDecoration: "none", color: "inherit" }}>
+        <span style={{ fontSize: 22 }}>✍️</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700 }}>Macro Library</div>
+          <div className="viewsub" style={{ margin: 0 }}>Shared templates anyone can add; toggle on to get an editable personal copy. Placeholders, folders, per-rep libraries.</div>
         </div>
-        {macros.map((m) => (
-          <div className="stmt-row" key={m.id} style={{ alignItems: "center", gap: 8 }}>
-            <div style={{ minWidth: 0 }}>
-              <b style={{ fontSize: 14 }}>{m.name}</b>
-              <span className="chip stage" style={{ marginLeft: 8 }}>{chLabel(m.channel)}</span>
-              <div style={{ fontSize: 12.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {m.body}
-              </div>
-            </div>
-            <span style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-              <button className="btn ghost" style={{ padding: "4px 10px", fontSize: 12.5 }} onClick={() => setEditing({ ...m })}>
-                ✏️
-              </button>
-              <button className="btn ghost" style={{ padding: "4px 10px", fontSize: 12.5 }} onClick={() => post({ op: "macro_delete", id: m.id })}>
-                🗑
-              </button>
-            </span>
-          </div>
-        ))}
-        {!editing && (
-          <button className="btn ghost" style={{ marginTop: 10, padding: "6px 14px", fontSize: 13.5 }} onClick={() => setEditing({ channel: "any" })}>
-            ＋ New macro
-          </button>
-        )}
-        {editing && (
-          <div style={{ marginTop: 12, display: "grid", gap: 8, background: "var(--surface-2)", borderRadius: 10, padding: 12 }}>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <select
-                className="vmsel"
-                style={{ width: "auto" }}
-                value={editing.channel ?? "any"}
-                onChange={(e) => setEditing((m) => ({ ...m, channel: e.target.value }))}
-              >
-                {CHANNELS.map(([k, label]) => (
-                  <option key={k} value={k}>{label}</option>
-                ))}
-              </select>
-              <input
-                className="vmsel"
-                style={{ flex: 1, minWidth: 160 }}
-                placeholder="Macro name (e.g. First follow-up)"
-                value={editing.name ?? ""}
-                onChange={(e) => setEditing((m) => ({ ...m, name: e.target.value }))}
-              />
-            </div>
-            {editing.channel === "email" && (
-              <input
-                className="vmsel"
-                placeholder="Email subject…"
-                value={editing.subject ?? ""}
-                onChange={(e) => setEditing((m) => ({ ...m, subject: e.target.value }))}
-              />
-            )}
-            <textarea
-              className="vmsel"
-              rows={4}
-              style={{ resize: "vertical" }}
-              placeholder="Message body… ({{first_name}} inserts the contact's first name)"
-              value={editing.body ?? ""}
-              onChange={(e) => setEditing((m) => ({ ...m, body: e.target.value }))}
-            />
-            <div style={{ display: "flex", gap: 8 }}>
-              <button className="btn primary" disabled={!editing.name?.trim() || !editing.body?.trim()} onClick={saveMacro}>
-                {editing.id ? "Save changes" : "Create macro"}
-              </button>
-              <button className="btn ghost" onClick={() => setEditing(null)}>Cancel</button>
-            </div>
-          </div>
-        )}
-      </div>
+        <span style={{ color: "var(--text-3)" }}>→</span>
+      </Link>
 
       <div className="card" style={{ maxWidth: 680, marginTop: 18 }}>
         <div className="panel-h">Asset library</div>

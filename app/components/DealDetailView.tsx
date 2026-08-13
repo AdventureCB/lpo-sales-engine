@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { newOutboundCall, setOutboundHandler } from "./phoneClient";
 import { INTERESTS } from "./interests";
 import { combineDue } from "@/lib/allday";
+import { fillPlaceholders } from "@/lib/placeholders";
 
 interface DealData {
   deal: any;
@@ -311,7 +312,9 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
       dealId={d.id}
       pdDealId={d.pipedrive_deal_id ?? null}
       hideCall={embedded}
-      contact={contact ? { id: contact.id, name: contact.name, firstName: contact.first_name } : null}
+      contact={contact ? { id: contact.id, name: contact.name, firstName: contact.first_name, lastName: contact.last_name } : null}
+      dealTitle={d.title}
+      truck={d.truck_model ?? null}
       phone={phones.find((p) => p.primary)?.e164 ?? phones[0]?.e164 ?? phones[0]?.value ?? null}
       allPhones={phones.map((p) => p.e164 ?? p.value).filter(Boolean)}
       email={emails.find((e) => e.primary)?.value ?? emails[0]?.value ?? null}
@@ -1868,6 +1871,8 @@ function CommBar({
   dealId,
   pdDealId,
   contact,
+  dealTitle,
+  truck,
   phone,
   allPhones = [],
   email,
@@ -1876,7 +1881,9 @@ function CommBar({
 }: {
   dealId: string;
   pdDealId: number | null;
-  contact: { id: string; name: string; firstName: string | null } | null;
+  contact: { id: string; name: string; firstName: string | null; lastName?: string | null } | null;
+  dealTitle?: string | null;
+  truck?: string | null;
   phone: string | null;
   allPhones?: string[];
   email: string | null;
@@ -1933,7 +1940,7 @@ function CommBar({
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (!d) return;
-        setMacros(d.macros ?? []);
+        setMacros(d.myMacros ?? []); // the rep's own toggled/edited macros
         setAssets(d.assets ?? []);
       })
       .catch(() => {});
@@ -1953,9 +1960,13 @@ function CommBar({
   }, [channel, email]);
 
   const renderTemplate = (text: string) =>
-    text
-      .replaceAll("{{name}}", contact?.name?.trim() ?? "")
-      .replaceAll("{{first_name}}", contact?.firstName ?? contact?.name?.split(" ")[0] ?? "");
+    fillPlaceholders(text, {
+      firstName: contact?.firstName,
+      lastName: contact?.lastName,
+      name: contact?.name,
+      dealTitle,
+      truck,
+    });
 
   const applyMacro = (id: string) => {
     const m = macros.find((x) => x.id === id);
