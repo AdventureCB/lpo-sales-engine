@@ -52,13 +52,15 @@ async function buildTaxonomy(db: SupabaseClient): Promise<{ text: string; attrKe
     attrLines.join("\n"),
     ``,
     `## Rules`,
-    `- Fill ALL fields of the tool: archetypes, attributes, summary, next_action, data_sufficiency, overall_confidence. Never leave attributes or next_action empty.`,
+    `- ALWAYS fill EVERY field of the tool on EVERY run — archetypes, attributes, tags, summary, next_action (with questions_to_ask), data_sufficiency (with band), and overall_confidence. This is REQUIRED even when reconciling: re-emit unchanged values, never omit a field.`,
     `- EVERY attribute value and archetype fit MUST cite evidence, but keep evidence TERSE: at most 2-3 items, each a short phrase or brief quote (under ~12 words). No paragraphs. No evidence → don't assert it.`,
+    `- tags: specific, concrete details the person mentioned that don't fit the fixed attributes — e.g. "surfing", "has two dogs", "just retired", "wife named Sara", "tows a boat", "lives in Bend". Short noun-phrases, lowercase, deduplicated. These are the memorable specifics a rep would want at a glance.`,
     `- confidence is 0.0-1.0. Be honest — thin or conflicting input means LOW confidence, not a confident guess.`,
-    `- data_sufficiency.band reflects how much MEANINGFUL input exists (weight high-importance attributes and real transcripts most): "Thin" (barely anything), "Developing", "Solid", "Rich".`,
+    `- overall_confidence (0.0-1.0) is REQUIRED every run — your overall certainty in this profile given the evidence.`,
+    `- data_sufficiency.band reflects how much MEANINGFUL input exists (weight high-importance attributes and real transcripts most): "Thin" (barely anything), "Developing", "Solid", "Rich". Always set it.`,
     `- known_gaps: list the high-importance attributes still unknown or low-confidence that would most improve the read.`,
-    `- next_action is GAP-DRIVEN when the profile is thin: say exactly what to find out and HOW to ask it (natural discovery questions tuned to the deal's likely archetype/tone). When the profile is rich, shift to the closing approach that fits them. Always concrete and rep-ready.`,
-    `- When a PRIOR profile is supplied, RECONCILE: keep stable high-confidence reads, revise only where new evidence warrants, and raise confidence where new evidence corroborates. Note any change in your reasoning.`,
+    `- next_action is GAP-DRIVEN when the profile is thin: say exactly what to find out and HOW to ask it (natural discovery questions in questions_to_ask, tuned to the deal's likely archetype/tone). When the profile is rich, shift to the closing approach that fits them. Always concrete and rep-ready, and always include questions_to_ask that would raise confidence.`,
+    `- When a PRIOR profile is supplied, RECONCILE: keep stable high-confidence reads, fold in the new evidence, raise confidence where it corroborates, and MERGE tags (keep prior tags, add new ones). Still output the COMPLETE profile with all fields populated.`,
   ].join("\n");
 
   return {
@@ -178,6 +180,11 @@ const PROFILE_TOOL = {
           required: ["key", "value", "confidence"],
         },
       },
+      tags: {
+        type: "array",
+        description: "Specific concrete details the person mentioned that don't fit the fixed attributes (e.g. 'surfing', 'has two dogs', 'tows a boat', 'lives in Bend'). Short lowercase noun-phrases, deduplicated. Merge with prior tags on reconcile.",
+        items: { type: "string" },
+      },
       summary: { type: "string", description: "2-4 sentence rep-facing read of who this buyer is." },
       next_action: {
         type: "object",
@@ -186,12 +193,12 @@ const PROFILE_TOOL = {
           rationale: { type: "string" },
           questions_to_ask: {
             type: "array",
-            description: "Natural discovery questions to fill the biggest gaps, phrased for this buyer's tone.",
+            description: "REQUIRED: natural discovery questions that would raise confidence / fill the biggest gaps, phrased for this buyer's tone. Always include at least one.",
             items: { type: "string" },
           },
           confidence: { type: "number" },
         },
-        required: ["action", "rationale"],
+        required: ["action", "rationale", "questions_to_ask"],
       },
       data_sufficiency: {
         type: "object",
@@ -209,9 +216,9 @@ const PROFILE_TOOL = {
         },
         required: ["band", "coverage_note"],
       },
-      overall_confidence: { type: "number", description: "0-1 overall confidence in this profile." },
+      overall_confidence: { type: "number", description: "REQUIRED 0-1 overall confidence in this profile (never omit)." },
     },
-    required: ["archetypes", "attributes", "summary", "next_action", "data_sufficiency", "overall_confidence"],
+    required: ["archetypes", "attributes", "tags", "summary", "next_action", "data_sufficiency", "overall_confidence"],
   },
 };
 
@@ -314,8 +321,15 @@ export async function extractProfile(
   ];
   if (prior) {
     userParts.unshift(
-      `# PRIOR PROFILE (reconcile against new evidence; keep stable high-confidence reads)\n` +
-        JSON.stringify({ archetypes: prior.archetypes, attributes: prior.attributes, summary: prior.summary }).slice(0, 3000)
+      `# PRIOR PROFILE (reconcile against new evidence; keep stable high-confidence reads; MERGE tags; re-emit ALL fields)\n` +
+        JSON.stringify({
+          archetypes: prior.archetypes,
+          attributes: prior.attributes,
+          tags: prior.tags,
+          summary: prior.summary,
+          next_action: prior.next_action,
+          overall_confidence: prior.overall_confidence,
+        }).slice(0, 4000)
     );
   }
 
@@ -332,13 +346,24 @@ export async function extractProfile(
   const attrMap: Record<string, any> = {};
   for (const a of out.attributes ?? []) if (a.key) attrMap[a.key] = { value: a.value, confidence: a.confidence, evidence: a.evidence ?? [] };
 
+  // Merge tags with the prior set (belt-and-suspenders — the model is also
+  // told to merge). Dedup, lowercase, cap.
+  const priorTags: string[] = Array.isArray(prior?.tags) ? prior!.tags : [];
+  const tags = [...new Set([...priorTags, ...((out.tags ?? []) as string[])].map((t) => String(t).trim().toLowerCase()).filter(Boolean))].slice(0, 40);
+
+  // Carry forward confidence / data_sufficiency if a reconcile omitted them,
+  // so an incremental run never blanks out fields the deal already had.
+  const nextAction = { ...(out.next_action ?? prior?.next_action ?? {}), data_sufficiency: out.data_sufficiency ?? prior?.next_action?.data_sufficiency };
+  const overallConfidence = out.overall_confidence ?? prior?.overall_confidence ?? null;
+
   const row = {
     deal_id: dealId,
-    attributes: attrMap,
-    archetypes: (out.archetypes ?? []).sort((a: any, b: any) => (b.pct ?? 0) - (a.pct ?? 0)),
-    summary: out.summary ?? null,
-    next_action: out.next_action ?? null,
-    overall_confidence: out.overall_confidence ?? null,
+    attributes: Object.keys(attrMap).length ? attrMap : (prior?.attributes ?? {}),
+    archetypes: (out.archetypes?.length ? out.archetypes : prior?.archetypes ?? []).sort((a: any, b: any) => (b.pct ?? 0) - (a.pct ?? 0)),
+    tags,
+    summary: out.summary ?? prior?.summary ?? null,
+    next_action: nextAction,
+    overall_confidence: overallConfidence,
     watermark: { input_hash: inputHash, processed_at: inputs.latestActivityAt, transcript_ct: inputs.transcriptCount },
     status: "fresh",
     last_model: call.model,
@@ -346,15 +371,9 @@ export async function extractProfile(
     version: (prior?.version ?? 0) + 1,
     last_run_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-    // data_sufficiency lives inside the returned JSON; store on the row too.
-    ...(out.data_sufficiency ? { } : {}),
   };
-  // Fold data_sufficiency into next_action-adjacent storage via attributes meta.
-  const { error } = await db.from("deal_profiles").upsert(
-    { ...row, next_action: { ...(out.next_action ?? {}), data_sufficiency: out.data_sufficiency } },
-    { onConflict: "deal_id" }
-  );
+  const { error } = await db.from("deal_profiles").upsert(row, { onConflict: "deal_id" });
   if (error) return { ran: false, reason: `save failed: ${error.message}` };
 
-  return { ran: true, profile: { ...row, next_action: { ...(out.next_action ?? {}), data_sufficiency: out.data_sufficiency } }, costCents: call.costCents };
+  return { ran: true, profile: row, costCents: call.costCents };
 }

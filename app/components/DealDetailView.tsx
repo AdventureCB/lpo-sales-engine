@@ -21,6 +21,7 @@ interface DealData {
   aiProfile?: {
     attributes: Record<string, { value: string; confidence: number; evidence?: string[] }>;
     archetypes: { key: string; name: string; pct: number; confidence?: number; evidence?: string[] }[];
+    tags?: string[];
     summary: string | null;
     next_action: {
       action?: string;
@@ -1307,6 +1308,17 @@ function DealProfileSection({
           </div>
 
           {profile.summary && <div style={{ fontSize: 13, lineHeight: 1.5, color: "var(--text-1)" }}>{profile.summary}</div>}
+
+          {/* Specific tags (surfing, dogs, boat…) */}
+          {(profile.tags ?? []).length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+              {profile.tags!.map((t) => (
+                <span key={t} className="chip stage" style={{ background: "var(--accent-2-soft)", color: "var(--text-1)", fontSize: 12 }}>
+                  #{t}
+                </span>
+              ))}
+            </div>
+          )}
 
           {/* Key attributes */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
