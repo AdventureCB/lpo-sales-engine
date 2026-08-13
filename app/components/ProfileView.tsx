@@ -56,6 +56,15 @@ export function ProfileView({ isAdmin }: { isAdmin: boolean }) {
           </Link>
         )}
       </div>
+      <Link href="/settings/macros" className="card" style={{ display: "flex", alignItems: "center", gap: 12, maxWidth: 560, marginBottom: 18, textDecoration: "none", color: "inherit" }}>
+        <span style={{ fontSize: 22 }}>✍️</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700 }}>Macro Library</div>
+          <div className="viewsub" style={{ margin: 0 }}>Your message macros + shared templates and assets to add.</div>
+        </div>
+        <span style={{ color: "var(--text-3)" }}>→</span>
+      </Link>
+
       <div style={{ maxWidth: 440 }}>
         <VmPanel selected={vmDrop} onSelect={select} />
       </div>
