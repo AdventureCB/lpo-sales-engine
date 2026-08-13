@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { newOutboundCall, setOutboundHandler } from "./phoneClient";
 import { INTERESTS } from "./interests";
 import { combineDue } from "@/lib/allday";
@@ -55,6 +56,7 @@ function fmtWhen(iso: string | null) {
 }
 
 export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string; pdDealId?: number; embedded?: boolean }) {
+  const router = useRouter();
   const [data, setData] = useState<DealData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState("");
@@ -341,7 +343,14 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
       {!embedded && (
         <>
           <div className="viewsub" style={{ marginBottom: 6 }}>
-            <a href="/crm" style={{ color: "var(--text-3)", textDecoration: "none" }}>← All deals</a>
+            {/* Return to whichever list you came from (CRM or a Sprint list),
+                restored to where you left it; fall back to the CRM list. */}
+            <span
+              onClick={() => (typeof window !== "undefined" && window.history.length > 1 ? router.back() : router.push("/crm"))}
+              style={{ color: "var(--text-3)", textDecoration: "none", cursor: "pointer" }}
+            >
+              ← Back
+            </span>
           </div>
           {titleEdit === null ? (
             <h2 className="viewtitle" style={{ display: "flex", alignItems: "center", gap: 10 }}>
