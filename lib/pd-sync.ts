@@ -45,6 +45,7 @@ export async function enqueuePdSync(
 const DISPO_LABELS: Record<string, string> = {
   connected: "✅ Connected",
   vm_dropped: "🎙 Voicemail left",
+  no_answer: "📵 No answer",
   bad_number: "🚫 Bad number",
   callback: "📅 Callback scheduled",
 };

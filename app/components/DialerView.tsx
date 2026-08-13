@@ -85,6 +85,7 @@ const DISPOSITIONS: [string, string, string][] = [
   ["bad_number", "3", "🚫 Bad number"],
   ["callback", "4", "📅 Callback set"],
   ["confirmation", "5", "📋 Confirmation call"],
+  ["no_answer", "6", "📵 No answer"],
 ];
 
 function fmtClock(sec: number) {
@@ -600,6 +601,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     const FOLLOW_UP_SUBJECT: Record<string, string> = {
       connected: "Continue conversation",
       vm_dropped: "Follow up — voicemail left",
+      no_answer: "Follow up — no answer",
       callback: "Callback requested",
       bad_number: "Follow up — fix number first",
       confirmation: "Confirmation follow-up",
@@ -720,7 +722,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       if ((e.key === "v" || e.key === "V") && inCall) dropVm();
       if ((e.key === "e" || e.key === "E") && inCall) void endCall();
       if ((e.key === "s" || e.key === "S") && !inCall && !awaitingDispo) skip();
-      if ((inCall || awaitingDispo) && ["1", "2", "3", "4", "5"].includes(e.key)) {
+      if ((inCall || awaitingDispo) && ["1", "2", "3", "4", "5", "6"].includes(e.key)) {
         if (inCall) hangUp();
         finalize(DISPOSITIONS[Number(e.key) - 1][0]);
       }
@@ -1320,7 +1322,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       <div className="viewsub" style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <span>
           Keyboard: <kbd>⏎</kbd> dial · <kbd>E</kbd> call ended · <kbd>V</kbd> VM left ·{" "}
-          <kbd>1–4</kbd> disposition · <kbd>S</kbd> skip ·{" "}
+          <kbd>1–6</kbd> disposition · <kbd>S</kbd> skip ·{" "}
           {typeof window !== "undefined" && window.__TAURI__
             ? "🖥 companion mode — VM drops play into the call"
             : "🌐 browser mode — VM drops log only (use the desktop app for audio)"}

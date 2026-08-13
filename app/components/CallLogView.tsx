@@ -40,6 +40,7 @@ function fmtDur(s: number | null) {
 const DISPO_LABEL: Record<string, string> = {
   connected: "✅ Connected",
   vm_dropped: "🎙 VM left",
+  no_answer: "📵 No answer",
   bad_number: "🚫 Bad number",
   callback: "📅 Callback",
   confirmation: "📋 Confirmation call",

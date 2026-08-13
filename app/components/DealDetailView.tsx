@@ -1766,10 +1766,12 @@ function CommBar({
     ["bad_number", "🚫 Bad number"],
     ["callback", "📅 Callback set"],
     ["confirmation", "📋 Confirmation call"],
+    ["no_answer", "📵 No answer"],
   ];
   const FOLLOW_UP_SUBJECT: Record<string, string> = {
     connected: "Continue conversation",
     vm_dropped: "Follow up — voicemail left",
+    no_answer: "Follow up — no answer",
     callback: "Callback requested",
     bad_number: "Follow up — fix number first",
     confirmation: "Confirmation follow-up",

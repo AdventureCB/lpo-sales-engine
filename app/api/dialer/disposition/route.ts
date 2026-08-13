@@ -6,7 +6,7 @@ import { resolveReprospect } from "@/lib/reprospect";
 
 export const runtime = "nodejs";
 
-const DISPOSITIONS = ["connected", "vm_dropped", "bad_number", "callback", "confirmation"] as const;
+const DISPOSITIONS = ["connected", "vm_dropped", "no_answer", "bad_number", "callback", "confirmation"] as const;
 
 /**
  * Attach the rep's disposition (and deal id) to the call row the webhook
