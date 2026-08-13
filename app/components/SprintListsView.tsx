@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 
 type ListRow = {
@@ -66,6 +66,44 @@ function badge(label: string | null) {
   );
 }
 
+interface QuickInfo {
+  recent: { type: string; subject: string | null; snippet: string | null; at: string | null }[];
+  next: { type: string; subject: string | null; dueAt: string } | null;
+}
+const ACT_ICON: Record<string, string> = { call: "📞", sms: "💬", email: "✉️", task: "📋", note: "📝", meeting: "📅", system: "⚙️" };
+const qDay = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric" }) : "—");
+const qWhen = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+function QuickInfoPanel({ dealId, info }: { dealId: string; info: QuickInfo | "loading" | undefined }) {
+  return (
+    <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "flex-start", padding: "6px 2px" }}>
+      <div style={{ flex: 1, minWidth: 240 }}>
+        {info === "loading" || info === undefined ? (
+          <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Loading…</div>
+        ) : (
+          <>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.4 }}>Next scheduled</div>
+            {info.next ? (
+              <div style={{ fontSize: 13, color: "var(--accent)", marginBottom: 6 }}>{ACT_ICON[info.next.type] ?? "•"} {info.next.subject ?? info.next.type} · {qWhen(info.next.dueAt)}</div>
+            ) : (
+              <div style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 6 }}>Nothing scheduled.</div>
+            )}
+            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.4 }}>Recent activity</div>
+            {info.recent.length === 0 && <div style={{ fontSize: 13, color: "var(--text-3)" }}>No activity yet.</div>}
+            {info.recent.map((a, i) => (
+              <div key={i} style={{ fontSize: 13, padding: "1px 0" }}>
+                <span style={{ color: "var(--text-3)" }}>{qDay(a.at)}</span> {ACT_ICON[a.type] ?? "•"} {a.subject ?? a.type}
+                {a.snippet && <span style={{ color: "var(--text-3)" }}> — {a.snippet}</span>}
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+      <Link href={`/crm/deal/${dealId}`} className="btn primary" style={{ padding: "6px 12px", fontSize: 12.5, whiteSpace: "nowrap" }}>Open full page →</Link>
+    </div>
+  );
+}
+
 export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; userEmail: string }) {
   const [lists, setLists] = useState<ListRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -94,14 +132,39 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
 
   const openList = useCallback(async (id: string) => {
     setOpenId(id);
+    setExpandedDeal(null);
     setItemsLoading(true);
     setAddQ("");
     setAddResults([]);
+    try { sessionStorage.setItem("sprintOpenList", id); } catch {}
     const r = await fetch(`/api/crm/sprint-lists?sprintId=${id}`);
     const j = await r.json();
     setItems(j.items ?? []);
     setItemsLoading(false);
   }, []);
+
+  // Row peek: expanded deal + cached quick-info (next scheduled + last 3).
+  const [expandedDeal, setExpandedDeal] = useState<string | null>(null);
+  const [quickInfo, setQuickInfo] = useState<Record<string, QuickInfo | "loading">>({});
+  const toggleExpand = useCallback((id: string) => {
+    setExpandedDeal((cur) => (cur === id ? null : id));
+    setQuickInfo((qi) => {
+      if (qi[id]) return qi;
+      fetch(`/api/crm/deal/quickinfo?dealId=${id}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => d && setQuickInfo((q) => ({ ...q, [id]: d })))
+        .catch(() => setQuickInfo((q) => ({ ...q, [id]: { recent: [], next: null } })));
+      return { ...qi, [id]: "loading" };
+    });
+  }, []);
+
+  // Reopen the list the rep was in when they return from a deal page.
+  useEffect(() => {
+    try {
+      const id = sessionStorage.getItem("sprintOpenList");
+      if (id) void openList(id);
+    } catch {}
+  }, [openList]);
 
   async function generate(slot: number) {
     setBusy(`gen${slot}`);
@@ -322,12 +385,17 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
                 </thead>
                 <tbody>
                   {items.map((it, i) => (
-                    <tr key={it.dealId} style={{ borderTop: "1px solid var(--border)", opacity: it.removedAt ? 0.45 : 1 }}>
+                    <Fragment key={it.dealId}>
+                    <tr style={{ borderTop: "1px solid var(--border)", opacity: it.removedAt ? 0.45 : 1, background: expandedDeal === it.dealId ? "var(--surface-2)" : undefined }}>
                       <td style={{ padding: "5px 8px", color: "var(--text-3)" }}>{i + 1}</td>
                       <td style={{ padding: "5px 8px" }}>
-                        <Link href={`/crm/deal/${it.dealId}`} style={{ color: "var(--text-1)" }}>
+                        <span
+                          onClick={() => toggleExpand(it.dealId)}
+                          style={{ color: "var(--text-1)", cursor: "pointer", fontWeight: 600 }}
+                          title="Quick look"
+                        >
                           {it.personName ?? it.title}
-                        </Link>
+                        </span>
                         {it.flag && <div style={{ fontSize: 11.5, color: "#e8623a", marginTop: 2 }}>{it.flag}</div>}
                       </td>
                       <td style={{ padding: "5px 8px" }}>{badge(it.tierLabel)}</td>
@@ -355,6 +423,14 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
                         )}
                       </td>
                     </tr>
+                    {expandedDeal === it.dealId && (
+                      <tr>
+                        <td colSpan={9} style={{ background: "var(--surface-2)", padding: "8px 14px" }}>
+                          <QuickInfoPanel dealId={it.dealId} info={quickInfo[it.dealId]} />
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   ))}
                   {items.length === 0 && (
                     <tr><td colSpan={9} style={{ padding: 12, color: "var(--text-3)" }}>Empty list.</td></tr>

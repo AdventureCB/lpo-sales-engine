@@ -1,7 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { INTERESTS } from "./interests";
 
 const SORT_OPTIONS: { label: string; sort: string; dir: "asc" | "desc" }[] = [
@@ -102,61 +101,17 @@ interface ColDef {
   render: (d: Deal) => React.ReactNode;
 }
 
-interface QuickInfo {
-  recent: { type: string; subject: string | null; snippet: string | null; at: string | null }[];
-  next: { type: string; subject: string | null; dueAt: string } | null;
-}
-
-const ACT_ICON: Record<string, string> = { call: "📞", sms: "💬", email: "✉️", task: "📋", note: "📝", meeting: "📅", system: "⚙️" };
-const relDay = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric" }) : "—");
-const relWhen = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-
-/** The row drop-down: next scheduled activity + last 3 activities + a link
- * to the full deal page (browser back returns to this list). */
-function QuickInfoPanel({ dealId, info }: { dealId: string; info: QuickInfo | "loading" | undefined }) {
-  return (
-    <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
-      <div style={{ flex: 1, minWidth: 260 }}>
-        {info === "loading" || info === undefined ? (
-          <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Loading…</div>
-        ) : (
-          <>
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.4 }}>Next scheduled</div>
-              {info.next ? (
-                <div style={{ fontSize: 13, color: "var(--accent)" }}>
-                  {ACT_ICON[info.next.type] ?? "•"} {info.next.subject ?? info.next.type} · {relWhen(info.next.dueAt)}
-                </div>
-              ) : (
-                <div style={{ fontSize: 13, color: "var(--text-3)" }}>Nothing scheduled.</div>
-              )}
-            </div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 2 }}>Recent activity</div>
-            {info.recent.length === 0 && <div style={{ fontSize: 13, color: "var(--text-3)" }}>No activity yet.</div>}
-            {info.recent.map((a, i) => (
-              <div key={i} style={{ fontSize: 13, padding: "2px 0" }}>
-                <span style={{ color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>{relDay(a.at)}</span>{" "}
-                {ACT_ICON[a.type] ?? "•"} {a.subject ?? a.type}
-                {a.snippet && <span style={{ color: "var(--text-3)" }}> — {a.snippet}</span>}
-              </div>
-            ))}
-          </>
-        )}
-      </div>
-      <Link href={`/crm/deal/${dealId}`} className="btn primary" style={{ padding: "7px 14px", fontSize: 13, whiteSpace: "nowrap" }}>
-        Open full page →
-      </Link>
-    </div>
-  );
-}
-
 // The full column catalog. Visibility + order are user-configurable.
 const ALL_COLUMNS: ColDef[] = [
   {
     key: "title",
     label: "Deal",
     sortKey: "title",
-    render: (d) => <b style={{ color: "var(--text-1)" }}>{d.title}</b>,
+    render: (d) => (
+      <a href={`/crm/deal/${d.id}`} style={{ color: "var(--text-1)", textDecoration: "none" }}>
+        <b>{d.title}</b>
+      </a>
+    ),
   },
   { key: "tz", label: "TZ", sortKey: "timezone", nowrap: true, render: (d) => <span style={{ color: "var(--text-2)", fontWeight: 650 }}>{tzRegion(d.crm_contacts?.tz_offset) ?? "—"}</span> },
   {
@@ -385,21 +340,6 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [sprintName, setSprintName] = useState("");
-  // Row peek: expanded deal + cached quick-info (last 3 activities + next).
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [quickInfo, setQuickInfo] = useState<Record<string, QuickInfo | "loading">>({});
-
-  const toggleExpand = useCallback((id: string) => {
-    setExpandedId((cur) => (cur === id ? null : id));
-    setQuickInfo((qi) => {
-      if (qi[id]) return qi;
-      fetch(`/api/crm/deal/quickinfo?dealId=${id}`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => d && setQuickInfo((q) => ({ ...q, [id]: d })))
-        .catch(() => setQuickInfo((q) => ({ ...q, [id]: { recent: [], next: null } })));
-      return { ...qi, [id]: "loading" };
-    });
-  }, []);
 
   // Persist the list view so pressing Back from a deal lands you right here.
   useEffect(() => {
@@ -905,38 +845,26 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
               </td></tr>
             )}
             {!loading && deals.map((d) => (
-              <Fragment key={d.id}>
-                <tr
-                  onClick={() => toggleExpand(d.id)}
-                  style={{ cursor: "pointer", background: expandedId === d.id ? "var(--surface-2)" : undefined }}
-                >
-                  {isAdmin && (
-                    <td className="sticky-col" style={{ left: 0 }} onClick={(e) => e.stopPropagation()}>
-                      <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} />
-                    </td>
-                  )}
-                  {visibleCols.map((col, ci) => {
-                    const sticky = ci === 0 && col.key === "title";
-                    const cls = [sticky ? "sticky-col" : "", col.key === "value" ? "money" : ""].filter(Boolean).join(" ") || undefined;
-                    return (
-                      <td
-                        key={col.key}
-                        className={cls}
-                        style={{ ...(col.nowrap ? { whiteSpace: "nowrap" } : {}), ...(sticky ? { left: isAdmin ? checkW : 0 } : {}) }}
-                      >
-                        {col.render(d)}
-                      </td>
-                    );
-                  })}
-                </tr>
-                {expandedId === d.id && (
-                  <tr>
-                    <td colSpan={colCount} style={{ background: "var(--surface-2)", padding: "10px 14px" }}>
-                      <QuickInfoPanel dealId={d.id} info={quickInfo[d.id]} />
-                    </td>
-                  </tr>
+              <tr key={d.id}>
+                {isAdmin && (
+                  <td className="sticky-col" style={{ left: 0 }}>
+                    <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} />
+                  </td>
                 )}
-              </Fragment>
+                {visibleCols.map((col, ci) => {
+                  const sticky = ci === 0 && col.key === "title";
+                  const cls = [sticky ? "sticky-col" : "", col.key === "value" ? "money" : ""].filter(Boolean).join(" ") || undefined;
+                  return (
+                    <td
+                      key={col.key}
+                      className={cls}
+                      style={{ ...(col.nowrap ? { whiteSpace: "nowrap" } : {}), ...(sticky ? { left: isAdmin ? checkW : 0 } : {}) }}
+                    >
+                      {col.render(d)}
+                    </td>
+                  );
+                })}
+              </tr>
             ))}
           </tbody>
         </table>
