@@ -4,14 +4,25 @@ import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 
+type NotifGroup = "deals" | "notes" | "comms" | "tasks";
 interface Notif {
+  key: string;
   kind: string;
+  group: NotifGroup;
   title: string;
   sub: string | null;
   at: string;
   href: string;
   isNew: boolean;
 }
+
+const FILTERS: { g: NotifGroup | "all"; label: string }[] = [
+  { g: "all", label: "All" },
+  { g: "deals", label: "New deals" },
+  { g: "notes", label: "Notes" },
+  { g: "comms", label: "Calls & texts" },
+  { g: "tasks", label: "Tasks" },
+];
 
 function relTime(iso: string): string {
   const ms = Date.now() - Date.parse(iso);
@@ -28,7 +39,9 @@ export function NotificationBell() {
   const [badge, setBadge] = useState(0);
   const [overdueCount, setOverdueCount] = useState(0);
   const [items, setItems] = useState<Notif[]>([]);
+  const [counts, setCounts] = useState<Record<string, number>>({});
   const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState<NotifGroup | "all">("all");
 
   const load = useCallback(() => {
     fetch("/api/notifications")
@@ -38,8 +51,29 @@ export function NotificationBell() {
         setBadge(d.badge ?? 0);
         setOverdueCount(d.overdueCount ?? 0);
         setItems(d.items ?? []);
+        setCounts(d.counts ?? {});
       })
       .catch(() => {});
+  }, []);
+
+  const dismiss = useCallback((key: string) => {
+    setItems((prev) => prev.filter((n) => n.key !== key)); // optimistic
+    setBadge((b) => Math.max(0, b - 1));
+    void fetch("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dismiss: key }),
+    }).catch(() => {});
+  }, []);
+
+  const dismissAll = useCallback((visible: Notif[]) => {
+    const keys = visible.map((n) => n.key);
+    setItems((prev) => prev.filter((n) => !keys.includes(n.key)));
+    void fetch("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dismissKeys: keys }),
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -116,49 +150,84 @@ export function NotificationBell() {
                 last 48h{overdueCount > 0 ? ` · ${overdueCount} overdue` : ""}
               </span>
             </div>
-            {items.length === 0 && (
-              <div style={{ fontSize: 13.5, color: "var(--text-3)", padding: "6px 6px 10px" }}>
-                All clear. 🎉
-              </div>
-            )}
-            {items.map((n, i) => (
-              <div
-                key={i}
-                onClick={() => {
-                  setOpen(false);
-                  router.push(n.href);
-                }}
-                style={{
-                  padding: "8px 9px",
-                  borderRadius: 9,
-                  cursor: "pointer",
-                  marginBottom: 2,
-                  background: n.kind === "overdue" ? "rgba(224,72,72,0.10)" : n.isNew ? "var(--surface-3)" : "transparent",
-                }}
-              >
-                <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
-                  <span
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, padding: "0 4px 8px" }}>
+              {FILTERS.map((f) => {
+                const n = f.g === "all" ? items.length : counts[f.g] ?? 0;
+                return (
+                  <button
+                    key={f.g}
+                    onClick={() => setFilter(f.g)}
+                    className="btn ghost"
                     style={{
-                      fontSize: 13.5,
-                      fontWeight: n.isNew ? 750 : 600,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      minWidth: 0,
-                      flex: 1,
+                      padding: "3px 9px",
+                      fontSize: 12,
+                      borderRadius: 999,
+                      background: filter === f.g ? "var(--accent)" : "transparent",
+                      color: filter === f.g ? "#fff" : "var(--text-2)",
                     }}
                   >
-                    {n.title}
-                  </span>
-                  <span style={{ fontSize: 11.5, color: "var(--text-3)", flexShrink: 0 }}>{relTime(n.at)}</span>
-                </div>
-                {n.sub && (
-                  <div style={{ fontSize: 12.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {n.sub}
+                    {f.label}{n > 0 ? ` ${n}` : ""}
+                  </button>
+                );
+              })}
+            </div>
+
+            {(() => {
+              const visible = filter === "all" ? items : items.filter((n) => n.group === filter);
+              if (visible.length === 0)
+                return <div style={{ fontSize: 13.5, color: "var(--text-3)", padding: "6px 6px 10px" }}>All clear. 🎉</div>;
+              return (
+                <>
+                  <div style={{ display: "flex", justifyContent: "flex-end", padding: "0 4px 4px" }}>
+                    <button className="btn ghost" style={{ fontSize: 11.5, padding: "2px 8px", color: "var(--text-3)" }} onClick={() => dismissAll(visible)}>
+                      Dismiss {filter === "all" ? "all" : "these"}
+                    </button>
                   </div>
-                )}
-              </div>
-            ))}
+                  {visible.map((n) => (
+                    <div
+                      key={n.key}
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 6,
+                        padding: "8px 9px",
+                        borderRadius: 9,
+                        marginBottom: 2,
+                        background: n.kind === "overdue" ? "rgba(224,72,72,0.10)" : n.isNew ? "var(--surface-3)" : "transparent",
+                      }}
+                    >
+                      <div
+                        onClick={() => {
+                          setOpen(false);
+                          router.push(n.href);
+                        }}
+                        style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
+                      >
+                        <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+                          <span style={{ fontSize: 13.5, fontWeight: n.isNew ? 750 : 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: 1 }}>
+                            {n.title}
+                          </span>
+                          <span style={{ fontSize: 11.5, color: "var(--text-3)", flexShrink: 0 }}>{relTime(n.at)}</span>
+                        </div>
+                        {n.sub && (
+                          <div style={{ fontSize: 12.5, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {n.sub}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        title="Dismiss"
+                        onClick={(e) => { e.stopPropagation(); dismiss(n.key); }}
+                        style={{ border: "none", background: "none", color: "var(--text-3)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "0 2px", flexShrink: 0 }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </>
+              );
+            })()}
           </div>
         </>,
         document.body

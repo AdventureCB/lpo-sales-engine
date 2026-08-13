@@ -8,8 +8,11 @@ export const dynamic = "force-dynamic";
 const WINDOW_MS = 48 * 3600_000; // messages/calls look-back
 const OVERDUE_WINDOW_MS = 14 * 86_400_000; // don't resurface ancient tasks
 
+type NotifGroup = "deals" | "notes" | "comms" | "tasks";
 interface Notif {
+  key: string; // stable id for dismissal
   kind: "sms" | "whatsapp" | "missed_call" | "overdue" | "intake";
+  group: NotifGroup;
   title: string;
   sub: string | null;
   at: string;
@@ -114,9 +117,11 @@ export async function GET() {
     for (const r of resolved ?? []) if (r.contact_name) nameByPhone.set(r.phone, r.contact_name);
   }
 
-  const items: Notif[] = [
+  const allItems: Notif[] = [
     ...(sms ?? []).map((m): Notif => ({
+      key: `sms:${m.id}`,
       kind: "sms",
+      group: "comms",
       title: `💬 ${nameByPhone.get(m.peer_phone) ?? m.peer_phone}`,
       sub: m.body?.slice(0, 90) ?? null,
       at: m.sent_at,
@@ -124,7 +129,9 @@ export async function GET() {
       isNew: m.sent_at > seenAt,
     })),
     ...(wa ?? []).map((m: any): Notif => ({
+      key: `wa:${m.klaviyo_message_id}`,
       kind: "whatsapp",
+      group: "comms",
       title: `🟢 ${m.crm_contacts?.name ?? "WhatsApp"}`,
       sub: m.body?.slice(0, 90) ?? null,
       at: m.sent_at,
@@ -134,7 +141,9 @@ export async function GET() {
     ...(missed ?? []).map((c): Notif => {
       const peer = missedPeer(c.raw);
       return {
+        key: `missed:${c.id}`,
         kind: "missed_call",
+        group: "comms",
         title: `📵 Missed call — ${peer ? nameByPhone.get(peer) ?? peer : "unknown"}`,
         sub: null,
         at: c.started_at,
@@ -143,7 +152,9 @@ export async function GET() {
       };
     }),
     ...intakeItems.map((e: any): Notif => ({
+      key: `intake:${e.id}`,
       kind: "intake",
+      group: e.action === "noted" ? "notes" : "deals",
       title: `🔀 ${e.intake_sources?.label ?? "Intake"} — ${e.action === "created" ? "new deal" : e.action === "reopened" ? "deal reopened" : "new note"}`,
       sub: e.crm_deals?.title ?? null,
       at: e.created_at,
@@ -151,7 +162,9 @@ export async function GET() {
       isNew: e.created_at > seenAt,
     })),
     ...overdue.map((a: any): Notif => ({
+      key: `overdue:${a.id}`,
       kind: "overdue",
+      group: "tasks",
       title: `⏰ ${a.subject ?? a.type}`,
       sub: a.crm_deals?.title ?? null,
       at: a.due_at,
@@ -160,32 +173,46 @@ export async function GET() {
     })),
   ];
 
-  const badge =
-    items.filter((i) => i.kind !== "overdue" && i.isNew).length + overdue.length;
+  // Drop items this user has dismissed.
+  const { data: dis } = await db.from("notif_dismissals").select("notif_key").eq("user_email", user.email);
+  const dismissed = new Set((dis ?? []).map((d) => d.notif_key));
+  const items = allItems.filter((i) => !dismissed.has(i.key));
+
+  const badge = items.filter((i) => (i.kind !== "overdue" && i.isNew) || i.kind === "overdue").length;
+  const counts: Record<NotifGroup, number> = { deals: 0, notes: 0, comms: 0, tasks: 0 };
+  for (const i of items) counts[i.group]++;
 
   return NextResponse.json({
     badge,
-    overdueCount: overdue.length,
-    items: items.sort((a, b) => (b.at ?? "").localeCompare(a.at ?? "")).slice(0, 40),
+    overdueCount: items.filter((i) => i.kind === "overdue").length,
+    counts,
+    items: items.sort((a, b) => (b.at ?? "").localeCompare(a.at ?? "")).slice(0, 60),
   });
 }
 
 export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  let body: { markSeen?: boolean };
+  let body: { markSeen?: boolean; dismiss?: string; dismissKeys?: string[] };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
+  const db = supabaseAdmin();
   if (body.markSeen) {
-    await supabaseAdmin()
+    await db
       .from("user_notif_state")
       .upsert(
         { user_email: user.email, seen_at: new Date().toISOString(), updated_at: new Date().toISOString() },
         { onConflict: "user_email" }
       );
+  }
+  const keys = [body.dismiss, ...(body.dismissKeys ?? [])].filter(Boolean) as string[];
+  if (keys.length) {
+    await db
+      .from("notif_dismissals")
+      .upsert(keys.map((k) => ({ user_email: user.email, notif_key: k })), { onConflict: "user_email,notif_key" });
   }
   return NextResponse.json({ ok: true });
 }
