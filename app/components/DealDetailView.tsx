@@ -5,6 +5,7 @@ import { newOutboundCall, setOutboundHandler } from "./phoneClient";
 import { INTERESTS } from "./interests";
 import { combineDue } from "@/lib/allday";
 import { fillPlaceholders } from "@/lib/placeholders";
+import { linkifyPlain } from "@/lib/richtext";
 
 interface DealData {
   deal: any;
@@ -1978,7 +1979,10 @@ function CommBar({
   const appendAsset = (id: string) => {
     const a = assets.find((x) => x.id === id);
     if (!a) return;
-    setBody((b) => (b ? `${b.trimEnd()} ${a.url}` : a.url));
+    // URL assets insert as a labeled link: recipients see the name, click →
+    // the URL. Email renders a real hyperlink; SMS/WA flatten to "name: url".
+    const token = a.kind === "url" ? `[${a.name}](${a.url})` : a.url;
+    setBody((b) => (b ? `${b.trimEnd()} ${token}` : token));
   };
 
   const [showNumPicker, setShowNumPicker] = useState(false);
@@ -2087,18 +2091,21 @@ function CommBar({
     setErr(null);
     try {
       let r: Response | null = null;
+      // Plain-text channels can't render hyperlinks — flatten [label](url) to
+      // "label: url". Email keeps the markdown; the server renders HTML.
+      const plain = linkifyPlain(text);
       if (channel === "sms") {
         r = await fetch("/api/texts/send", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to: phone, body: text, crmDealId: dealId, contactId: contact?.id }),
+          body: JSON.stringify({ to: phone, body: plain, crmDealId: dealId, contactId: contact?.id }),
         });
       } else if (channel === "whatsapp") {
         if (!waProfileId || waProfileId === "missing") throw new Error("No Klaviyo profile for this contact");
         r = await fetch("/api/crm/whatsapp", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ profileId: waProfileId, message: text, dealId, contactId: contact?.id }),
+          body: JSON.stringify({ profileId: waProfileId, message: plain, dealId, contactId: contact?.id }),
         });
       } else if (channel === "email") {
         if (!subject.trim()) throw new Error("Subject required");

@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
 import { sendGmail } from "@/lib/gmail";
 import { normalizeEmail } from "@/lib/identity";
+import { linkifyHtml, linkifyPlain, hasRichLinks } from "@/lib/richtext";
 
 export const runtime = "nodejs";
 
@@ -39,7 +40,15 @@ export async function POST(req: NextRequest) {
 
   let messageId: string;
   try {
-    messageId = await sendGmail(db, account, { to, subject, body: text });
+    // Render asset markdown links to a real HTML hyperlink; keep a plain-text
+    // alternative for clients that don't render HTML.
+    const rich = hasRichLinks(text);
+    messageId = await sendGmail(db, account, {
+      to,
+      subject,
+      body: linkifyPlain(text),
+      html: rich ? linkifyHtml(text) : undefined,
+    });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "send failed" },

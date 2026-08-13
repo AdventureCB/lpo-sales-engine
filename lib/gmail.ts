@@ -1,4 +1,5 @@
 import "server-only";
+import crypto from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { env, envOptional } from "./env";
 import { normalizeEmail } from "./identity";
@@ -98,21 +99,68 @@ async function freshAccessToken(db: SupabaseClient, account: any): Promise<strin
 
 /** Send a plain-text email from the rep's connected Gmail. Returns the
  * Gmail message id (used to pre-dedupe against the timeline sweep). */
-export async function sendGmail(
-  db: SupabaseClient,
-  account: any,
-  opts: { to: string; subject: string; body: string }
-): Promise<string> {
-  const token = await freshAccessToken(db, account);
-  const mime = [
-    `From: ${account.google_email}`,
-    `To: ${opts.to}`,
-    `Subject: ${opts.subject}`,
-    `MIME-Version: 1.0`,
+export interface MailAttachment {
+  filename: string;
+  mimeType: string;
+  dataBase64: string; // standard base64 (not url-safe)
+}
+
+/** Build a raw RFC-2822 message: text/plain, +HTML alternative, +attachments. */
+function buildMime(
+  from: string,
+  opts: { to: string; subject: string; body: string; html?: string; attachments?: MailAttachment[] }
+): string {
+  const headers = [`From: ${from}`, `To: ${opts.to}`, `Subject: ${opts.subject}`, `MIME-Version: 1.0`];
+  const alt = `alt_${crypto.randomUUID()}`;
+  const mixed = `mix_${crypto.randomUUID()}`;
+
+  const altBlock = [
+    `Content-Type: multipart/alternative; boundary="${alt}"`,
+    ``,
+    `--${alt}`,
     `Content-Type: text/plain; charset="UTF-8"`,
     ``,
     opts.body,
-  ].join("\r\n");
+    ``,
+    ...(opts.html ? [`--${alt}`, `Content-Type: text/html; charset="UTF-8"`, ``, opts.html, ``] : []),
+    `--${alt}--`,
+  ];
+
+  if (opts.attachments?.length) {
+    const parts: string[] = [
+      ...headers,
+      `Content-Type: multipart/mixed; boundary="${mixed}"`,
+      ``,
+      `--${mixed}`,
+      ...altBlock,
+      ``,
+    ];
+    for (const a of opts.attachments) {
+      parts.push(
+        `--${mixed}`,
+        `Content-Type: ${a.mimeType}; name="${a.filename}"`,
+        `Content-Transfer-Encoding: base64`,
+        `Content-Disposition: attachment; filename="${a.filename}"`,
+        ``,
+        a.dataBase64.replace(/(.{76})/g, "$1\r\n"),
+        ``
+      );
+    }
+    parts.push(`--${mixed}--`);
+    return parts.join("\r\n");
+  }
+
+  if (opts.html) return [...headers, ...altBlock].join("\r\n");
+  return [...headers, `Content-Type: text/plain; charset="UTF-8"`, ``, opts.body].join("\r\n");
+}
+
+export async function sendGmail(
+  db: SupabaseClient,
+  account: any,
+  opts: { to: string; subject: string; body: string; html?: string; attachments?: MailAttachment[] }
+): Promise<string> {
+  const token = await freshAccessToken(db, account);
+  const mime = buildMime(account.google_email, opts);
   const raw = Buffer.from(mime).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const res = await fetch(`${API}/messages/send`, {
     method: "POST",
