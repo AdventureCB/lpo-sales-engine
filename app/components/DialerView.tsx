@@ -722,11 +722,13 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setSkipPrompt(false);
   };
 
+  // Stable per-lead key: native deals share dealId 0, so prefer the CRM uuid.
+  const leadKey = (l: Lead) => l.crmDealId ?? (l.dealId ? String(l.dealId) : l.phone ?? "?");
+
   /** ✕ on an up-next row: drop it from this session's queue, recorded. */
-  const skipUpcoming = (dealId: number) => {
-    const target = leads.find((l) => l.dealId === dealId);
-    if (target) logSkip(target);
-    setLeads((prev) => prev.filter((l) => l.dealId !== dealId));
+  const skipUpcoming = (target: Lead) => {
+    logSkip(target);
+    setLeads((prev) => prev.filter((l) => l !== target));
   };
 
   // Keypad popup owns the keyboard while open (digits type into the number).
@@ -853,7 +855,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
           </span>
         )}
         {queueMeta?.truncated && (
-          <span style={{ color: "var(--warn)" }}> · ⚠ list capped at 3000 deals</span>
+          <span style={{ color: "var(--warn)" }}> · ⚠ list capped at 5000 deals</span>
         )}
         {queueMeta?.pool && (
           <span style={{ color: "var(--text-3)" }}>
@@ -1259,8 +1261,13 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
 
         {/* Everything the CRM knows, without leaving the dialer. Improvements
             to the deal page land here automatically (same component). */}
-        {!loading && lead && lead.dealId > 0 && (
-          <DealDetailView key={`${lead.dealId}:${dealRefresh}`} pdDealId={lead.dealId} embedded />
+        {!loading && lead && (lead.dealId > 0 || lead.crmDealId) && (
+          <DealDetailView
+            key={`${lead.crmDealId ?? lead.dealId}:${dealRefresh}`}
+            pdDealId={lead.dealId > 0 ? lead.dealId : undefined}
+            dealId={lead.dealId > 0 ? undefined : lead.crmDealId}
+            embedded
+          />
         )}
         </div>
 
@@ -1344,7 +1351,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
             <div className="panel-h">Up next</div>
             <div className="upnext">
               {leads.slice(leadIdx + 1, leadIdx + 6).map((l) => (
-                <div className="row" key={l.dealId} style={{ alignItems: "center", gap: 8 }}>
+                <div className="row" key={leadKey(l)} style={{ alignItems: "center", gap: 8 }}>
                   <span className="who">{l.personName ?? l.title}</span>
                   <span className="why" style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     {l.hot ? "🔥 hot" : l.stageName}
@@ -1352,7 +1359,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                       className="btn ghost"
                       style={{ padding: "1px 7px", fontSize: 12, lineHeight: 1.4 }}
                       title="Skip — remove from this session (recorded)"
-                      onClick={() => skipUpcoming(l.dealId)}
+                      onClick={() => skipUpcoming(l)}
                     >
                       ✕
                     </button>

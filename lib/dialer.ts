@@ -1,26 +1,12 @@
 import "server-only";
 import { supabaseAdmin } from "./supabase";
-import { listDealsFiltered, getPersonsByIds, type DealListItem } from "./pipedrive";
 import { normalizePhone } from "./identity";
 import type { SessionUser } from "./auth";
 
-/** Stage id → display name (from the live Pipedrive stage list). */
-export const STAGE_NAMES: Record<number, string> = {
-  44: "Intake- Needs Qualification",
-  45: "Recovery",
-  46: "Qualified",
-  47: "Waiting on Timing",
-  48: "Qualified",
-  50: "Deposit Placed",
-  51: "Deposit Placed",
-  52: "Confirmation Scheduled",
-  53: "Confirmed (Won)",
-  54: "Cold",
-  55: "Warm",
-  56: "Hot",
-};
-
 export type OwnerScope = "mine" | "unassigned" | "both" | "anyone";
+
+/** Minimal shape the ownership rule needs (owner's Pipedrive user id). */
+type OwnedDeal = { owner_id: number | null };
 
 /**
  * Ownership rule: sales reps may work deals they own or deals not assigned
@@ -30,9 +16,9 @@ export function buildOwnerCheck(
   user: SessionUser,
   scope: OwnerScope,
   repPipedriveIds: Set<number>
-): (deal: DealListItem) => boolean {
-  const mine = (d: DealListItem) => d.owner_id === user.pipedriveUserId;
-  const unassigned = (d: DealListItem) => !repPipedriveIds.has(d.owner_id);
+): (deal: OwnedDeal) => boolean {
+  const mine = (d: OwnedDeal) => d.owner_id === user.pipedriveUserId;
+  const unassigned = (d: OwnedDeal) => d.owner_id == null || !repPipedriveIds.has(d.owner_id);
   if (user.role === "admin") {
     if (scope === "mine") return mine;
     if (scope === "unassigned") return unassigned;
@@ -45,16 +31,34 @@ export function buildOwnerCheck(
 }
 
 export interface QueueLead {
-  dealId: number;
+  dealId: number; // Pipedrive deal id (0 for native, PD-less deals)
+  crmDealId: string; // CRM mirror uuid — the primary key now
   title: string;
   personName: string | null;
   phone: string | null;
-  stageId: number;
+  stageId: number | null;
   stageName: string;
-  ownerId: number;
+  ownerId: number | null;
   updateTime: string | null;
   hot: boolean;
   hotReason: string | null;
+}
+
+/** Paginated crm_deals fetch respecting the 1000-row PostgREST cap. */
+async function fetchAllDeals(
+  build: (from: number, to: number) => any,
+  cap: number
+): Promise<any[]> {
+  const out: any[] = [];
+  const PAGE = 1000;
+  for (let from = 0; from < cap; from += PAGE) {
+    const { data, error } = await build(from, Math.min(from + PAGE, cap) - 1);
+    if (error) throw error;
+    const rows = data ?? [];
+    out.push(...rows);
+    if (rows.length < PAGE) break;
+  }
+  return out;
 }
 
 const POOL_COOLDOWN_DAYS = 2;
@@ -87,29 +91,39 @@ export async function buildQueueLeads(opts: {
   const allowed = buildOwnerCheck(opts.user, opts.ownerScope, repIds);
 
   const status = opts.status ?? "open";
-  const DEAL_CAP = 3000; // per stage/pipeline — well above current volumes
-  const deals: DealListItem[] = [];
-  let truncated = false;
+  const DEAL_CAP = 5000; // safety bound — well above current volumes
+
+  // The dialer speaks Pipedrive numeric stage/pipeline ids; the mirror keys on
+  // uuids. Resolve numeric → uuid up front so we can filter crm_deals.stage_id
+  // directly (avoids fragile nested-embed filtering).
+  let stageUuids: string[] | null = null;
   if (opts.stageIds.length > 0) {
-    for (const stageId of opts.stageIds) {
-      const batch = await listDealsFiltered({ stageId, status }, DEAL_CAP);
-      if (batch.length >= DEAL_CAP) truncated = true;
-      deals.push(...batch);
-    }
-  } else {
-    const batch = await listDealsFiltered({ pipelineId: opts.pipelineId, status }, DEAL_CAP);
-    if (batch.length >= DEAL_CAP) truncated = true;
-    deals.push(...batch);
-  }
-  let filtered = deals.filter(allowed);
-  const skippedOwnership = deals.length - filtered.length;
-  if (opts.nameContains) {
-    const needle = opts.nameContains.toLowerCase();
-    filtered = filtered.filter((d) => d.title.toLowerCase().includes(needle));
+    const { data } = await db.from("crm_stages").select("id").in("pipedrive_stage_id", opts.stageIds);
+    stageUuids = (data ?? []).map((s: any) => s.id);
+    if (stageUuids.length === 0) return { leads: [], skippedNoPhone: 0, skippedOwnership: 0, truncated: false };
+  } else if (opts.pipelineId != null) {
+    const { data: pipe } = await db.from("crm_pipelines").select("id").eq("pipedrive_pipeline_id", opts.pipelineId).maybeSingle();
+    if (!pipe) return { leads: [], skippedNoPhone: 0, skippedOwnership: 0, truncated: false };
+    const { data } = await db.from("crm_stages").select("id").eq("pipeline_id", pipe.id);
+    stageUuids = (data ?? []).map((s: any) => s.id);
+    if (stageUuids.length === 0) return { leads: [], skippedNoPhone: 0, skippedOwnership: 0, truncated: false };
   }
 
-  const personIds = [...new Set(filtered.map((d) => d.person_id).filter((x): x is number => !!x))];
-  const persons = await getPersonsByIds(personIds);
+  // Read the CRM mirror (Pipedrive is a backup now).
+  const cols =
+    "id, pipedrive_deal_id, title, status, owner_pipedrive_id, stage_id, last_activity_at, updated_at, contact_id, crm_stages ( id, name ), crm_contacts ( name, phones )";
+  const rows = await fetchAllDeals((from, to) => {
+    let q = db.from("crm_deals").select(cols).eq("status", status);
+    if (stageUuids) q = q.in("stage_id", stageUuids);
+    if (opts.nameContains?.trim()) q = q.ilike("title", `%${opts.nameContains.trim().replace(/[%_]/g, "")}%`);
+    return q.range(from, to);
+  }, DEAL_CAP);
+  const truncated = rows.length >= DEAL_CAP;
+
+  const owned = rows
+    .map((d: any) => ({ ...d, owner_id: d.owner_pipedrive_id }))
+    .filter((d: any) => allowed(d));
+  const skippedOwnership = rows.length - owned.length;
 
   const { data: hotFlags } = await db
     .from("hot_flags")
@@ -117,26 +131,35 @@ export async function buildQueueLeads(opts: {
     .is("cleared_at", null);
   const hotByDeal = new Map((hotFlags ?? []).map((f) => [f.deal_id, f.reason]));
 
+  // One dialable phone per deal — bad numbers (bad_number disposition) are
+  // excluded so a struck deal falls off unless it has a good secondary.
+  const pickPhone = (phones: any[]): { e164: string | null; name: string | null } => {
+    const ok = (phones ?? []).filter((p) => !p.bad);
+    const raw = ok.find((p) => p.primary && p.e164)?.e164 ?? ok.find((p) => p.e164)?.e164 ?? ok.find((p) => p.value)?.value ?? null;
+    return { e164: normalizePhone(raw), name: null };
+  };
+
   let skippedNoPhone = 0;
   const leads: QueueLead[] = [];
-  for (const d of filtered) {
-    const person = d.person_id ? persons.get(d.person_id) : undefined;
-    const phone = normalizePhone(person?.phone);
+  for (const d of owned) {
+    const phone = pickPhone(d.crm_contacts?.phones ?? []).e164;
     if (!phone) {
       skippedNoPhone++;
       continue; // hygiene guard: no dialable phone → not in queue
     }
+    const pdId = d.pipedrive_deal_id ?? 0;
     leads.push({
-      dealId: d.id,
+      dealId: pdId,
+      crmDealId: d.id,
       title: d.title,
-      personName: person?.name ?? null,
+      personName: d.crm_contacts?.name ?? null,
       phone,
-      stageId: d.stage_id,
-      stageName: STAGE_NAMES[d.stage_id] ?? `Stage ${d.stage_id}`,
-      ownerId: d.owner_id,
-      updateTime: d.update_time,
-      hot: hotByDeal.has(d.id),
-      hotReason: hotByDeal.get(d.id) ?? null,
+      stageId: d.stage_id ?? null,
+      stageName: d.crm_stages?.name ?? "—",
+      ownerId: d.owner_pipedrive_id ?? null,
+      updateTime: d.last_activity_at ?? d.updated_at ?? null,
+      hot: pdId ? hotByDeal.has(pdId) : false,
+      hotReason: pdId ? hotByDeal.get(pdId) ?? null : null,
     });
   }
 
@@ -227,8 +250,8 @@ async function applyPoolRules(
   };
 }
 
-// Warm-lambda cache: queue builds hit several Pipedrive pages, and the
-// queue list + detail + counts all reuse the same result.
+// Warm-lambda cache: the queue list + detail + counts all reuse the same
+// mirror read within a short window.
 const queueCache = new Map<string, { at: number; data: Awaited<ReturnType<typeof buildQueueLeads>> }>();
 const CACHE_TTL_MS = 120_000;
 
