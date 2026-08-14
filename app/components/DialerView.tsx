@@ -248,7 +248,12 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   };
   const [awaitingDispo, setAwaitingDispo] = useState(false);
   const [callSec, setCallSec] = useState(0);
-  const [autoAdv, setAutoAdv] = useState(true);
+  // After a disposition is logged, pause on a review step (send an email, add
+  // another activity, tidy the deal) before advancing — unless the rep opts
+  // into fast auto-advance.
+  const [awaitingNext, setAwaitingNext] = useState(false);
+  const [nextScheduled, setNextScheduled] = useState(false);
+  const [autoAdv, setAutoAdv] = useState(false);
   const [sess, setSess] = useState({ dials: 0, conn: 0, vm: 0, talkS: 0 });
   const [dealRefresh, setDealRefresh] = useState(0); // remounts the embedded deal view
 
@@ -466,6 +471,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     const l = opts?.leadOverride ?? lead;
     if (!l?.phone || inCall || (awaitingDispo && !opts?.redial) || l.callable === false) return;
     setSkipPrompt(false);
+    setAwaitingNext(false);
     if (opts?.redial) {
       setAwaitingDispo(false);
       setPendingDispo(null);
@@ -641,7 +647,18 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     callSecRef.current = 0;
     resetMdForm();
     setTimeout(() => setDealRefresh((k) => k + 1), 1500); // let the webhook land
+    // Fast mode jumps straight to the next dial; otherwise pause on the review
+    // step so the rep can email / schedule more / edit before continuing.
     if (autoAdv) setLeadIdx((i) => i + 1);
+    else {
+      setNextScheduled(!!dueAt);
+      setAwaitingNext(true);
+    }
+  };
+
+  const advanceNext = () => {
+    setAwaitingNext(false);
+    setLeadIdx((i) => i + 1);
   };
 
   // VM drop selection lives in Settings → My profile (persisted per machine);
@@ -693,6 +710,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [skipPrompt, setSkipPrompt] = useState(false);
   const skip = () => {
     if (inCall || awaitingDispo || !lead) return;
+    setAwaitingNext(false);
     setSkipPrompt(true);
   };
 
@@ -751,7 +769,8 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       if (keypadOpen) return; // keypad effect handles its own keys
       const tag = (document.activeElement as HTMLElement)?.tagName;
       if (["INPUT", "SELECT", "TEXTAREA"].includes(tag)) return;
-      if (e.key === "Enter" && !inCall && !awaitingDispo) dial();
+      if (awaitingNext && (e.key === "Enter" || e.key === "n" || e.key === "N")) { advanceNext(); return; }
+      if (e.key === "Enter" && !inCall && !awaitingDispo && !awaitingNext) dial();
       if (e.key === "Enter" && pendingDispo) completeDispo(null);
       if ((e.key === "r" || e.key === "R") && awaitingDispo && !pendingDispo) dial({ redial: true });
       if ((e.key === "v" || e.key === "V") && inCall) dropVm();
@@ -766,7 +785,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inCall, awaitingDispo, pendingDispo, nextType, dispoNote, lead?.dealId, autoAdv, keypadOpen, skipPrompt]);
+  }, [inCall, awaitingDispo, pendingDispo, nextType, dispoNote, lead?.dealId, autoAdv, keypadOpen, skipPrompt, awaitingNext]);
 
   useEffect(() => () => stopTimers(), []);
 
@@ -1255,6 +1274,16 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                   )}
                 </div>
               )}
+              {awaitingNext && (
+                <div className="dispo-row attn" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+                  <span style={{ fontSize: 13.5, color: "var(--text-2)" }}>
+                    ✓ Logged{nextScheduled ? " · follow-up scheduled" : ""} — send an email, add another activity, or update the deal, then continue.
+                  </span>
+                  <button className="btn primary" style={{ marginLeft: "auto" }} onClick={advanceNext}>
+                    Next → <kbd>⏎</kbd>
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -1334,7 +1363,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
               style={{ marginTop: 14 }}
               onClick={() => setAutoAdv((v) => !v)}
             >
-              <span className="tk" /> Auto-advance after call
+              <span className="tk" /> Auto-advance (skip review step)
             </div>
           </div>
           <div className="card" style={{ padding: "12px 16px" }}>
@@ -1377,7 +1406,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       <div className="viewsub" style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <span>
           Keyboard: <kbd>⏎</kbd> dial · <kbd>E</kbd> call ended · <kbd>V</kbd> VM left ·{" "}
-          <kbd>1–6</kbd> disposition · <kbd>S</kbd> skip ·{" "}
+          <kbd>1–6</kbd> disposition · <kbd>⏎</kbd>/<kbd>N</kbd> next · <kbd>S</kbd> skip ·{" "}
           {typeof window !== "undefined" && window.__TAURI__
             ? "🖥 companion mode — VM drops play into the call"
             : "🌐 browser mode — VM drops log only (use the desktop app for audio)"}
