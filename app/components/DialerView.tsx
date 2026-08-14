@@ -624,7 +624,14 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [dispoNote, setDispoNote] = useState("");
   const [customDue, setCustomDue] = useState("");
   const [showCustomDue, setShowCustomDue] = useState(false);
-  const finalize = (dispo: string) => setPendingDispo(dispo);
+  // No-answer sub-reason (ignored vs VM full/not set).
+  const [noAnswerReason, setNoAnswerReason] = useState<string | null>(null);
+  // Default the next-step type to a call each time, not whatever was last used.
+  const finalize = (dispo: string) => {
+    setPendingDispo(dispo);
+    setNextType("call");
+    setNoAnswerReason(null);
+  };
 
   const followUpAt = (days: number): string => {
     const d = new Date();
@@ -653,10 +660,16 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       bad_number: "Follow up — fix number first",
       confirmation: "Confirmation follow-up",
     };
+    const reasonLabel = dispo === "no_answer" && noAnswerReason
+      ? (noAnswerReason === "ignored" ? "ignored" : "VM full / not set")
+      : null;
+    const subject = reasonLabel ? `Follow up — no answer (${reasonLabel})` : FOLLOW_UP_SUBJECT[dispo] ?? "Follow up";
+    const noteBase = dispoNote.trim();
+    const note = reasonLabel ? `No answer — ${reasonLabel}${noteBase ? " · " + noteBase : ""}` : noteBase || null;
     void sendDisposition(
       dispo,
-      dueAt ? { type: nextType, subject: FOLLOW_UP_SUBJECT[dispo] ?? "Follow up", dueAt } : null,
-      dispoNote.trim() || null
+      dueAt ? { type: nextType, subject, dueAt } : null,
+      note
     );
     // Instant feedback beats accurate feedback — predict locally, let the
     // 60s server refresh true it up.
@@ -1389,6 +1402,17 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
               )}
               {awaitingDispo && pendingDispo && (
                 <div style={{ marginTop: 10 }}>
+                  {pendingDispo === "no_answer" && (
+                    <div className="dispo-row" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+                      <span style={{ fontSize: 13.5, color: "var(--text-2)" }}>No answer —</span>
+                      <button className={`btn ${noAnswerReason === "ignored" ? "primary" : ""}`} onClick={() => setNoAnswerReason((r) => (r === "ignored" ? null : "ignored"))}>
+                        Ignored
+                      </button>
+                      <button className={`btn ${noAnswerReason === "vm_unavailable" ? "primary" : ""}`} onClick={() => setNoAnswerReason((r) => (r === "vm_unavailable" ? null : "vm_unavailable"))}>
+                        VM full / not set
+                      </button>
+                    </div>
+                  )}
                   <input
                     className="vmsel"
                     style={{ width: "100%", marginBottom: 8 }}
@@ -1400,6 +1424,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                     <span style={{ fontSize: 13.5, color: "var(--text-2)" }}>Next step?</span>
                     <select className="vmsel" style={{ width: "auto", padding: "6px 8px", fontSize: 13.5 }} value={nextType} onChange={(e) => setNextType(e.target.value)}>
                       <option value="call">📞 Call</option>
+                      <option value="sms">💬 Text</option>
                       <option value="task">📋 Task</option>
                       <option value="email">✉️ Email</option>
                       <option value="meeting">📅 Meeting</option>

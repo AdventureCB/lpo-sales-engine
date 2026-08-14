@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
   // Returns true when an activity was actually scheduled.
   const scheduleNext = async (): Promise<boolean> => {
     const n = body.next;
-    if (!n?.dueAt || !["call", "task", "meeting", "email"].includes(n.type ?? "")) return false;
+    if (!n?.dueAt || !["call", "sms", "task", "meeting", "email"].includes(n.type ?? "")) return false;
     const deal = await resolveCrmDeal();
     if (!deal) return false;
     const subject = n.subject?.trim() || `Follow up (${disposition})`;
