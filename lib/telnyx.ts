@@ -15,6 +15,31 @@ export function telnyxConfigured(): boolean {
   return Boolean(envOptional("TELNYX_API_KEY"));
 }
 
+/**
+ * Send an SMS/MMS via Telnyx. The `from` number's messaging profile handles
+ * routing; TELNYX_MESSAGING_PROFILE_ID is passed when set (belt + suspenders).
+ * Returns the Telnyx message id + the recipient's initial status.
+ */
+export async function sendSms(opts: {
+  from: string;
+  to: string;
+  text: string;
+  mediaUrls?: string[];
+}): Promise<{ id: string; status: string; from: string; sentAt: string }> {
+  const payload: Record<string, unknown> = { from: opts.from, to: opts.to, text: opts.text };
+  if (opts.mediaUrls?.length) payload.media_urls = opts.mediaUrls;
+  const profile = envOptional("TELNYX_MESSAGING_PROFILE_ID");
+  if (profile) payload.messaging_profile_id = profile;
+  const json = await tx("/messages", { method: "POST", body: JSON.stringify(payload) });
+  const d = json.data ?? {};
+  return {
+    id: d.id,
+    status: d.to?.[0]?.status ?? "queued",
+    from: d.from?.phone_number ?? opts.from,
+    sentAt: d.sent_at ?? d.received_at ?? new Date().toISOString(),
+  };
+}
+
 async function tx(path: string, init?: RequestInit): Promise<any> {
   const res = await fetch(`${API}${path}`, {
     ...init,

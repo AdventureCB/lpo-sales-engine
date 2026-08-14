@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
 import { normalizePhone } from "@/lib/identity";
 import { env } from "@/lib/env";
+import { telnyxConfigured, sendSms } from "@/lib/telnyx";
 
 export const runtime = "nodejs";
 
@@ -32,46 +33,73 @@ export async function POST(req: NextRequest) {
   }
 
   const db = supabaseAdmin();
-  let from = body.from ?? null;
-  if (!from && user.repId) {
+
+  // Provider follows the rep's assigned number: a rep with a telnyx_number
+  // texts via Telnyx (10DLC), otherwise Quo. Reps get Telnyx numbers as their
+  // Quo numbers port over, so this flips per-rep automatically.
+  let telnyxNumber: string | null = null;
+  let quoLine: string | null = body.from ?? null;
+  if (user.repId) {
     const { data: rep } = await db
       .from("reps")
-      .select("quo_phone_number_id")
+      .select("telnyx_number, quo_phone_number_id")
       .eq("id", user.repId)
       .maybeSingle();
-    from = rep?.quo_phone_number_id ?? null;
+    telnyxNumber = rep?.telnyx_number ?? null;
+    if (!quoLine) quoLine = rep?.quo_phone_number_id ?? null;
   }
-  from = from ?? FALLBACK_LINE;
 
-  const res = await fetch("https://api.quo.com/v1/messages", {
-    method: "POST",
-    headers: {
-      Authorization: env("QUO_API_KEY"),
-      "Content-Type": "application/json",
-      "User-Agent": "lpo-sales-engine/0.1",
-    },
-    body: JSON.stringify({ content, from, to: [to] }),
-  });
-  if (!res.ok) {
-    const detail = (await res.text()).slice(0, 200);
-    return NextResponse.json({ error: `Quo send failed (${res.status}): ${detail}` }, { status: 502 });
+  let row: Record<string, unknown>;
+  if (telnyxNumber && telnyxConfigured()) {
+    try {
+      const sent = await sendSms({ from: telnyxNumber, to, text: content });
+      row = {
+        provider: "telnyx",
+        provider_message_id: sent.id ?? `local-${to}-${Date.now()}`,
+        rep_id: user.repId ?? null,
+        direction: "outgoing",
+        status: sent.status ?? "queued",
+        phone_number_id: null,
+        our_number: sent.from,
+        peer_phone: to,
+        body: content,
+        sent_at: sent.sentAt,
+      };
+    } catch (e) {
+      return NextResponse.json({ error: `Telnyx send failed: ${e instanceof Error ? e.message : String(e)}` }, { status: 502 });
+    }
+  } else {
+    const from = quoLine ?? FALLBACK_LINE;
+    const res = await fetch("https://api.quo.com/v1/messages", {
+      method: "POST",
+      headers: {
+        Authorization: env("QUO_API_KEY"),
+        "Content-Type": "application/json",
+        "User-Agent": "lpo-sales-engine/0.1",
+      },
+      body: JSON.stringify({ content, from, to: [to] }),
+    });
+    if (!res.ok) {
+      const detail = (await res.text()).slice(0, 200);
+      return NextResponse.json({ error: `Quo send failed (${res.status}): ${detail}` }, { status: 502 });
+    }
+    const sent = (await res.json().catch(() => ({})))?.data ?? {};
+    row = {
+      provider: "quo",
+      provider_message_id: sent.id ?? `local-${to}-${Date.now()}`,
+      rep_id: user.repId ?? null,
+      direction: "outgoing",
+      status: sent.status ?? "sent",
+      phone_number_id: sent.phoneNumberId ?? (from.startsWith("PN") ? from : null),
+      our_number: typeof sent.from === "string" ? sent.from : null,
+      peer_phone: to,
+      body: content,
+      sent_at: sent.createdAt ?? new Date().toISOString(),
+    };
   }
-  const sent = (await res.json().catch(() => ({})))?.data ?? {};
 
   // Store immediately so the UI reflects it without waiting on the webhook
   // (which dedupes on the same provider message id).
-  const row = {
-    provider: "quo",
-    provider_message_id: sent.id ?? `local-${to}-${Date.now()}`,
-    rep_id: user.repId ?? null,
-    direction: "outgoing",
-    status: sent.status ?? "sent",
-    phone_number_id: sent.phoneNumberId ?? (from.startsWith("PN") ? from : null),
-    our_number: typeof sent.from === "string" ? sent.from : null,
-    peer_phone: to,
-    body: content,
-    sent_at: sent.createdAt ?? new Date().toISOString(),
-  };
   await db
     .from("sms_messages")
     .upsert(row, { onConflict: "provider,provider_message_id", ignoreDuplicates: false });

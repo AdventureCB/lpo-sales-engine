@@ -50,6 +50,57 @@ export async function POST(req: NextRequest) {
   }
   const type = event?.data?.event_type ?? "";
   const p = event?.data?.payload ?? {};
+
+  // ── Messaging events (SMS/MMS) ──────────────────────────────────────────
+  // message.received = inbound; message.sent/finalized = delivery status.
+  if (type.startsWith("message.")) {
+    const mdb = supabaseAdmin();
+    const from = p.from?.phone_number ?? null;
+    const to0 = Array.isArray(p.to) ? p.to[0]?.phone_number ?? null : null;
+    const status = Array.isArray(p.to) ? p.to[0]?.status ?? null : null;
+    const inbound = p.direction === "inbound";
+    const peerPhone = inbound ? from : to0;
+    const ourNumber = inbound ? to0 : from;
+    if (!p.id || !peerPhone) return NextResponse.json({ ok: true, ignored: "message: no id/peer" });
+
+    // Attribute to the rep who owns the receiving/sending Telnyx number.
+    let repId: string | null = null;
+    if (ourNumber) {
+      const { data: rep } = await mdb.from("reps").select("id").eq("telnyx_number", ourNumber).maybeSingle();
+      repId = rep?.id ?? null;
+    }
+
+    await mdb.from("sms_messages").upsert(
+      {
+        provider: "telnyx",
+        provider_message_id: p.id,
+        rep_id: repId,
+        direction: inbound ? "incoming" : "outgoing",
+        status,
+        phone_number_id: null,
+        our_number: ourNumber,
+        peer_phone: peerPhone,
+        body: p.text ?? null,
+        sent_at: p.received_at ?? p.sent_at ?? p.completed_at ?? new Date().toISOString(),
+      },
+      { onConflict: "provider,provider_message_id", ignoreDuplicates: false }
+    );
+
+    if (inbound && type === "message.received") {
+      // Mirror carrier-level STOP/START into CRM consent (Telnyx auto-responds
+      // + blocks at the network; we keep our record in sync).
+      const kw = (p.text ?? "").trim().toUpperCase().replace(/[^A-Z]/g, "");
+      if (["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"].includes(kw)) {
+        await mdb.rpc("set_sms_consent_by_phone", { p_phone: from, p_consent: "opted_out" });
+      } else if (["START", "UNSTOP", "YES"].includes(kw)) {
+        await mdb.rpc("set_sms_consent_by_phone", { p_phone: from, p_consent: "opted_in" });
+      }
+      const { enqueueEvent } = await import("@/lib/automations");
+      await enqueueEvent(mdb, "inbound_sms", { phone: from, provider: "telnyx", telnyx_message_id: p.id });
+    }
+    return NextResponse.json({ ok: true });
+  }
+
   if (!type.startsWith("call.") || !p.call_session_id) {
     return NextResponse.json({ ok: true, ignored: type });
   }
