@@ -48,6 +48,49 @@ const KIND_ICON: Record<string, string> = {
   call: "📞", sms: "💬", email: "✉️", task: "📋", note: "📝", meeting: "📅", system: "⚙️",
 };
 
+// ── Prefetch cache ─────────────────────────────────────────────────────────
+// Lets the dialer warm the NEXT lead's deal (and its AI profile) during the
+// post-call review pause, so advancing paints instantly instead of showing a
+// loading spinner + a 10s "Analyzing…" profile build.
+const dealCache = new Map<string, { at: number; data: DealData }>();
+const DEAL_CACHE_TTL = 90_000;
+const dealUrl = (dealId?: string, pdDealId?: number | null) =>
+  dealId ? `/api/crm/deal?id=${dealId}` : `/api/crm/deal?pdId=${pdDealId}`;
+function getCachedDeal(dealId?: string, pdDealId?: number | null): DealData | null {
+  const hit = dealCache.get(dealUrl(dealId, pdDealId));
+  return hit && Date.now() - hit.at < DEAL_CACHE_TTL ? hit.data : null;
+}
+
+/**
+ * Warm a deal for a snappy open: fetch it into the cache and — mirroring the
+ * deal page's silent auto-build — build the AI profile if the server says it's
+ * due, then re-cache so the profile is present on open. Cheap + idempotent:
+ * skips if a fresh copy is already cached; the profile POST no-ops server-side
+ * when nothing changed.
+ */
+export async function prefetchDeal(opts: { dealId?: string; pdDealId?: number | null }): Promise<void> {
+  const url = dealUrl(opts.dealId, opts.pdDealId);
+  if (getCachedDeal(opts.dealId, opts.pdDealId)) return; // already warm
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return;
+    const data: DealData = await r.json();
+    dealCache.set(url, { at: Date.now(), data });
+    if (data?.aiProfileStale && data?.deal?.id) {
+      const pr = await fetch("/api/ai/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dealId: data.deal.id, manual: false }),
+      }).catch(() => null);
+      const pd = pr?.ok ? await pr.json().catch(() => null) : null;
+      if (pd?.ran) {
+        const r2 = await fetch(url).catch(() => null);
+        if (r2?.ok) dealCache.set(url, { at: Date.now(), data: await r2.json() });
+      }
+    }
+  } catch {}
+}
+
 function fmtWhen(iso: string | null) {
   if (!iso) return "—";
   return new Date(iso).toLocaleString("en-US", {
@@ -57,7 +100,9 @@ function fmtWhen(iso: string | null) {
 
 export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string; pdDealId?: number; embedded?: boolean }) {
   const router = useRouter();
-  const [data, setData] = useState<DealData | null>(null);
+  // Seed from the prefetch cache (warmed during the dialer's review step) so an
+  // advanced-to deal paints instantly; load() still revalidates in background.
+  const [data, setData] = useState<DealData | null>(() => getCachedDeal(dealId, pdDealId));
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
@@ -91,9 +136,12 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
 
   const load = useCallback(
     () =>
-      fetch(dealId ? `/api/crm/deal?id=${dealId}` : `/api/crm/deal?pdId=${pdDealId}`)
+      fetch(dealUrl(dealId, pdDealId))
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-        .then(setData)
+        .then((d: DealData) => {
+          setData(d);
+          dealCache.set(dealUrl(dealId, pdDealId), { at: Date.now(), data: d });
+        })
         .catch((e) => setError(String(e))),
     [dealId, pdDealId]
   );

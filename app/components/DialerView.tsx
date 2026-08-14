@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ensurePhone, getPhoneState, newOutboundCall, setOutboundHandler, subscribePhone } from "./phoneClient";
 import type { VmDrop } from "./VmPanel";
-import { DealDetailView } from "./DealDetailView";
+import { DealDetailView, prefetchDeal } from "./DealDetailView";
 
 declare global {
   interface Window {
@@ -788,6 +788,16 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   }, [inCall, awaitingDispo, pendingDispo, nextType, dispoNote, lead?.dealId, autoAdv, keypadOpen, skipPrompt, awaitingNext]);
 
   useEffect(() => () => stopTimers(), []);
+
+  // Warm the NEXT lead's deal + AI profile during the review pause so advancing
+  // paints instantly. Match the embed's id/pd choice so the cache key lines up.
+  useEffect(() => {
+    if (!awaitingNext) return;
+    const next = leads[leadIdx + 1];
+    if (!next || (!next.crmDealId && !(next.dealId > 0))) return;
+    const usePd = next.dealId > 0;
+    void prefetchDeal({ dealId: usePd ? undefined : next.crmDealId, pdDealId: usePd ? next.dealId : undefined });
+  }, [awaitingNext, leadIdx, leads]);
 
   const applyFilter = async () => {
     setLoading(true);
