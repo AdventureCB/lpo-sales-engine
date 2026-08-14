@@ -118,6 +118,16 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
   const [addQ, setAddQ] = useState("");
   const [addResults, setAddResults] = useState<{ id: string; title: string }[]>([]);
 
+  // Bulk select: checked deal ids in the open list.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toggleSel = (dealId: string) =>
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(dealId)) n.delete(dealId);
+      else n.add(dealId);
+      return n;
+    });
+
   const loadLists = useCallback(async () => {
     setLoading(true);
     const r = await fetch("/api/crm/sprint-lists");
@@ -136,6 +146,7 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
     setItemsLoading(true);
     setAddQ("");
     setAddResults([]);
+    setSelected(new Set());
     try { sessionStorage.setItem("sprintOpenList", id); } catch {}
     const r = await fetch(`/api/crm/sprint-lists?sprintId=${id}`);
     const j = await r.json();
@@ -197,6 +208,18 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
       await loadLists();
       return;
     }
+    await openList(openId);
+    await loadLists();
+  }
+
+  async function bulkOp(op: "remove" | "restore") {
+    if (!openId || selected.size === 0) return;
+    await fetch("/api/crm/sprint-lists", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ op, sprintId: openId, dealIds: [...selected] }),
+    });
+    setSelected(new Set());
     await openList(openId);
     await loadLists();
   }
@@ -335,9 +358,17 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
         <div className="card" style={{ padding: "14px 16px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
             <b style={{ fontSize: 15 }}>{openList_.name}</b>
-            <Link href="/dialer" className="btn ghost" style={{ padding: "5px 10px", fontSize: 13 }}>▶ Open in Dialer</Link>
+            <Link href={`/dialer?sprint=${openId}`} className="btn ghost" style={{ padding: "5px 10px", fontSize: 13 }}>▶ Open in Dialer</Link>
             <button className="btn ghost" style={{ padding: "5px 10px", fontSize: 13 }} onClick={() => itemOp("archive")}>Archive</button>
             <button className="btn ghost" style={{ padding: "5px 10px", fontSize: 13 }} onClick={() => setOpenId(null)}>Close</button>
+            {selected.size > 0 && (
+              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 13, color: "var(--text-2)" }}>{selected.size} selected</span>
+                <button className="btn" style={{ padding: "5px 10px", fontSize: 13 }} onClick={() => bulkOp("remove")}>✕ Remove selected</button>
+                <button className="btn ghost" style={{ padding: "5px 10px", fontSize: 13 }} onClick={() => bulkOp("restore")}>Restore</button>
+                <button className="btn ghost" style={{ padding: "5px 8px", fontSize: 13 }} onClick={() => setSelected(new Set())}>Clear</button>
+              </div>
+            )}
           </div>
 
           {/* Manual add */}
@@ -372,6 +403,20 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
                 <thead>
                   <tr style={{ textAlign: "left", color: "var(--text-3)", fontSize: 12 }}>
+                    <th style={{ padding: "4px 8px", width: 26 }}>
+                      {(() => {
+                        const selectable = items.filter((it) => !it.removedAt).map((it) => it.dealId);
+                        const allChecked = selectable.length > 0 && selectable.every((id) => selected.has(id));
+                        return (
+                          <input
+                            type="checkbox"
+                            checked={allChecked}
+                            title="Select all"
+                            onChange={(e) => setSelected(e.target.checked ? new Set(selectable) : new Set())}
+                          />
+                        );
+                      })()}
+                    </th>
                     <th style={{ padding: "4px 8px", width: 28 }}>#</th>
                     <th style={{ padding: "4px 8px" }}>Deal</th>
                     <th style={{ padding: "4px 8px" }}>Reason</th>
@@ -386,7 +431,15 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
                 <tbody>
                   {items.map((it, i) => (
                     <Fragment key={it.dealId}>
-                    <tr style={{ borderTop: "1px solid var(--border)", opacity: it.removedAt ? 0.45 : 1, background: expandedDeal === it.dealId ? "var(--surface-2)" : undefined }}>
+                    <tr style={{ borderTop: "1px solid var(--border)", opacity: it.removedAt ? 0.45 : 1, background: selected.has(it.dealId) ? "var(--surface-3, var(--surface-2))" : expandedDeal === it.dealId ? "var(--surface-2)" : undefined }}>
+                      <td style={{ padding: "5px 8px" }}>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(it.dealId)}
+                          disabled={!!it.removedAt}
+                          onChange={() => toggleSel(it.dealId)}
+                        />
+                      </td>
                       <td style={{ padding: "5px 8px", color: "var(--text-3)" }}>{i + 1}</td>
                       <td style={{ padding: "5px 8px" }}>
                         <span
@@ -425,7 +478,7 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
                     </tr>
                     {expandedDeal === it.dealId && (
                       <tr>
-                        <td colSpan={9} style={{ background: "var(--surface-2)", padding: "8px 14px" }}>
+                        <td colSpan={10} style={{ background: "var(--surface-2)", padding: "8px 14px" }}>
                           <QuickInfoPanel dealId={it.dealId} info={quickInfo[it.dealId]} />
                         </td>
                       </tr>
@@ -433,7 +486,7 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
                     </Fragment>
                   ))}
                   {items.length === 0 && (
-                    <tr><td colSpan={9} style={{ padding: 12, color: "var(--text-3)" }}>Empty list.</td></tr>
+                    <tr><td colSpan={10} style={{ padding: 12, color: "var(--text-3)" }}>Empty list.</td></tr>
                   )}
                 </tbody>
               </table>

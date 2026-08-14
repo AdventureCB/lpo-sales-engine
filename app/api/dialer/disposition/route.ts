@@ -129,6 +129,32 @@ export async function POST(req: NextRequest) {
     return !!inserted;
   };
 
+  // Bad number: strike the dialed number on the contact so it's skipped by
+  // future list generation + the dialer (a deal with only bad numbers drops
+  // off lists; a secondary good number keeps it on). Idempotent.
+  const markBadNumber = async () => {
+    if (disposition !== "bad_number") return;
+    const deal = await resolveCrmDeal();
+    if (!deal?.contact_id) return;
+    const { data: c } = await db
+      .from("crm_contacts")
+      .select("id, phones")
+      .eq("id", deal.contact_id)
+      .maybeSingle();
+    if (!c) return;
+    const last10 = (s: string | null | undefined) => (s ?? "").replace(/\D/g, "").slice(-10);
+    const target = last10(phone);
+    let changed = false;
+    const phones = ((c.phones as any[]) ?? []).map((p) => {
+      if (!p.bad && (last10(p.e164) === target || last10(p.value) === target)) {
+        changed = true;
+        return { ...p, bad: true, bad_at: new Date().toISOString() };
+      }
+      return p;
+    });
+    if (changed) await db.from("crm_contacts").update({ phones, updated_at: new Date().toISOString() }).eq("id", c.id);
+  };
+
   // Reprospecting pool lifecycle: a scheduled follow-up reclaims the deal;
   // a plain conversation just ends the 3-day hold. No-op for normal deals.
   const resolveReprospectAfterCall = async (scheduled: boolean) => {
@@ -161,6 +187,7 @@ export async function POST(req: NextRequest) {
     // CRM row is saved — Pipedrive catches up via the outbox as budget allows.
     if (dealId) await enqueuePdSync(db, "disposition", { dealId, disposition, dialStartedAt });
     await saveNote();
+    await markBadNumber();
     const scheduled = await scheduleNext();
     await resolveReprospectAfterCall(scheduled);
     return NextResponse.json({ ok: true, attached: true });
@@ -184,6 +211,7 @@ export async function POST(req: NextRequest) {
     }
     if (dealId) await enqueuePdSync(db, "disposition", { dealId, disposition, dialStartedAt });
     await saveNote();
+    await markBadNumber();
     const scheduled = await scheduleNext();
     await resolveReprospectAfterCall(scheduled);
     return NextResponse.json({ ok: true, attached: false, synthesized: true });

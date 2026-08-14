@@ -123,9 +123,12 @@ function laDate(d: Date): string {
 }
 
 function primaryPhone(phones: any[]): string | null {
+  // A number struck as `bad` (bad_number disposition) is never dialable — a
+  // deal with only bad numbers falls off lists; a good secondary keeps it on.
+  const ok = (phones ?? []).filter((p) => !p.bad);
   return (
-    phones?.find((p) => p.primary && p.e164)?.e164 ??
-    phones?.find((p) => p.e164)?.e164 ??
+    ok.find((p) => p.primary && p.e164)?.e164 ??
+    ok.find((p) => p.e164)?.e164 ??
     null
   );
 }

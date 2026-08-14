@@ -439,8 +439,12 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     (async () => {
       try {
         const qs = await loadQueues(ownerScope);
-        const primary = qs.find((q) => q.is_primary) ?? qs[0];
-        if (primary) await loadQueue(primary, ownerScope, "");
+        // Deep-link from a Sprint List: ?sprint=<id> opens that list directly.
+        const sprintParam =
+          typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("sprint") : null;
+        const sprintQueue = sprintParam ? qs.find((q) => q.id === `sprint:${sprintParam}`) : null;
+        const target = sprintQueue ?? qs.find((q) => q.is_primary) ?? qs[0];
+        if (target) await loadQueue(target, ownerScope, "");
       } catch (e) {
         setError(String(e));
       } finally {
@@ -461,6 +465,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const dial = (opts?: { redial?: boolean; leadOverride?: Lead }) => {
     const l = opts?.leadOverride ?? lead;
     if (!l?.phone || inCall || (awaitingDispo && !opts?.redial) || l.callable === false) return;
+    setSkipPrompt(false);
     if (opts?.redial) {
       setAwaitingDispo(false);
       setPendingDispo(null);
@@ -683,10 +688,38 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     }).catch(() => {});
   };
 
+  // Skip is a two-step choice: send them to the end of this session's queue
+  // (you'll circle back), or drop them from the sprint list for the day.
+  const [skipPrompt, setSkipPrompt] = useState(false);
   const skip = () => {
     if (inCall || awaitingDispo || !lead) return;
+    setSkipPrompt(true);
+  };
+
+  const skipToEnd = () => {
+    if (!lead) return;
     logSkip(lead);
-    setLeadIdx((i) => i + 1);
+    setLeads((prev) => {
+      const arr = [...prev];
+      const [cur] = arr.splice(leadIdx, 1);
+      if (cur) arr.push(cur);
+      return arr;
+    });
+    setSkipPrompt(false);
+  };
+
+  const removeForDay = () => {
+    if (!lead) return;
+    logSkip(lead);
+    if (lead.sprintId && lead.crmDealId) {
+      void fetch("/api/crm/sprint-lists", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ op: "remove", sprintId: lead.sprintId, dealId: lead.crmDealId }),
+      }).catch(() => {});
+    }
+    setLeads((prev) => prev.filter((_, i) => i !== leadIdx)); // next lead slides into this index
+    setSkipPrompt(false);
   };
 
   /** ✕ on an up-next row: drop it from this session's queue, recorded. */
@@ -722,6 +755,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       if ((e.key === "v" || e.key === "V") && inCall) dropVm();
       if ((e.key === "e" || e.key === "E") && inCall) void endCall();
       if ((e.key === "s" || e.key === "S") && !inCall && !awaitingDispo) skip();
+      if (e.key === "Escape" && skipPrompt) setSkipPrompt(false);
       if ((inCall || awaitingDispo) && ["1", "2", "3", "4", "5", "6"].includes(e.key)) {
         if (inCall) hangUp();
         finalize(DISPOSITIONS[Number(e.key) - 1][0]);
@@ -730,7 +764,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inCall, awaitingDispo, pendingDispo, nextType, dispoNote, lead?.dealId, autoAdv, keypadOpen]);
+  }, [inCall, awaitingDispo, pendingDispo, nextType, dispoNote, lead?.dealId, autoAdv, keypadOpen, skipPrompt]);
 
   useEffect(() => () => stopTimers(), []);
 
@@ -1034,9 +1068,23 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                     ⏹ End call <kbd>E</kbd>
                   </button>
                 )}
-                <button className="btn ghost" onClick={skip} disabled={inCall || awaitingDispo}>
-                  Skip <kbd>S</kbd>
-                </button>
+                {!skipPrompt && (
+                  <button className="btn ghost" onClick={skip} disabled={inCall || awaitingDispo}>
+                    Skip <kbd>S</kbd>
+                  </button>
+                )}
+                {skipPrompt && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 13.5, color: "var(--text-2)" }}>Skip —</span>
+                    <button className="btn" onClick={skipToEnd} title="Move to the end of this session; you'll circle back">
+                      ↓ End of list
+                    </button>
+                    <button className="btn" onClick={removeForDay} title="Drop from today's sprint list">
+                      ✕ Remove today
+                    </button>
+                    <button className="btn ghost" onClick={() => setSkipPrompt(false)}>Cancel</button>
+                  </div>
+                )}
                 {inCall && (
                   <div className="callstate" style={{ display: "flex" }}>
                     <span className="dot" /> {fmtClock(callSec)} — in call via Quo

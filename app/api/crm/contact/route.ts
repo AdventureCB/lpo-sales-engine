@@ -6,7 +6,7 @@ import { enqueuePdSync } from "@/lib/pd-sync";
 
 export const runtime = "nodejs";
 
-interface Phone { value: string; e164?: string; primary?: boolean; label?: string }
+interface Phone { value: string; e164?: string; primary?: boolean; label?: string; bad?: boolean; bad_at?: string }
 interface Email { value: string; primary?: boolean }
 
 /**
@@ -90,7 +90,18 @@ export async function POST(req: NextRequest) {
       const target = normalizePhone(body.value ?? "");
       const next = normalizePhone(body.newValue ?? "");
       if (!next) return NextResponse.json({ error: "invalid phone" }, { status: 400 });
-      phones = phones.map((p) => (phoneKey(p) === target ? { ...p, value: next, e164: next } : p));
+      // A corrected number is presumed good again — clear the bad strike.
+      phones = phones.map((p) => (phoneKey(p) === target ? { ...p, value: next, e164: next, bad: false, bad_at: undefined } : p));
+      upd.phones = phones;
+      break;
+    }
+    case "toggle_bad_phone": {
+      const target = normalizePhone(body.value ?? "");
+      phones = phones.map((p) =>
+        phoneKey(p) === target
+          ? { ...p, bad: !p.bad, bad_at: !p.bad ? new Date().toISOString() : undefined }
+          : p
+      );
       upd.phones = phones;
       break;
     }

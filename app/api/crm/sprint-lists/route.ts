@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const db = supabaseAdmin();
 
-  let body: { op?: string; sprintId?: string; dealId?: string };
+  let body: { op?: string; sprintId?: string; dealId?: string; dealIds?: string[] };
   try {
     body = await req.json();
   } catch {
@@ -121,16 +121,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  if (!dealId) return NextResponse.json({ error: "dealId required" }, { status: 400 });
+  // remove / restore accept either a single dealId or a dealIds[] (bulk select).
+  const targets = body.dealIds?.length ? body.dealIds : dealId ? [dealId] : [];
+  if ((op === "remove" || op === "restore") && !targets.length)
+    return NextResponse.json({ error: "dealId or dealIds required" }, { status: 400 });
 
   if (op === "remove") {
-    await db.from("crm_sprint_items").update({ removed_at: new Date().toISOString() }).eq("sprint_id", sprintId).eq("deal_id", dealId);
-    return NextResponse.json({ ok: true });
+    await db.from("crm_sprint_items").update({ removed_at: new Date().toISOString() }).eq("sprint_id", sprintId).in("deal_id", targets);
+    return NextResponse.json({ ok: true, count: targets.length });
   }
   if (op === "restore") {
-    await db.from("crm_sprint_items").update({ removed_at: null }).eq("sprint_id", sprintId).eq("deal_id", dealId);
-    return NextResponse.json({ ok: true });
+    await db.from("crm_sprint_items").update({ removed_at: null }).eq("sprint_id", sprintId).in("deal_id", targets);
+    return NextResponse.json({ ok: true, count: targets.length });
   }
+
+  if (!dealId) return NextResponse.json({ error: "dealId required" }, { status: 400 });
   if (op === "add") {
     const { data: deal } = await db.from("crm_deals").select("id").eq("id", dealId).maybeSingle();
     if (!deal) return NextResponse.json({ error: "deal not found" }, { status: 404 });

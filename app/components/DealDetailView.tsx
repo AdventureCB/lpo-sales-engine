@@ -126,7 +126,9 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
 
   const d = data.deal;
   const contact = d.crm_contacts;
-  const phones = (contact?.phones ?? []) as { value: string; e164?: string; primary?: boolean }[];
+  const phones = (contact?.phones ?? []) as { value: string; e164?: string; primary?: boolean; bad?: boolean }[];
+  // Numbers struck bad (bad_number disposition) are never the call default.
+  const goodPhones = phones.filter((p) => !p.bad);
   const emails = (contact?.emails ?? []) as { value: string; primary?: boolean }[];
 
   // The confirmation flow lives in whichever pipeline holds "Confirmed (Won)";
@@ -319,8 +321,8 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
       contact={contact ? { id: contact.id, name: contact.name, firstName: contact.first_name, lastName: contact.last_name } : null}
       dealTitle={d.title}
       truck={d.truck_model ?? null}
-      phone={phones.find((p) => p.primary)?.e164 ?? phones[0]?.e164 ?? phones[0]?.value ?? null}
-      allPhones={phones.map((p) => p.e164 ?? p.value).filter(Boolean)}
+      phone={goodPhones.find((p) => p.primary)?.e164 ?? goodPhones[0]?.e164 ?? goodPhones[0]?.value ?? null}
+      allPhones={goodPhones.map((p) => p.e164 ?? p.value).filter(Boolean)}
       email={emails.find((e) => e.primary)?.value ?? emails[0]?.value ?? null}
       onLogged={load}
     />
@@ -2409,7 +2411,7 @@ function ActionModal({ title, onClose, children }: { title: string; onClose: () 
 
 // ── Editable contact card (name / phones / emails, click-to-call) ──────────
 
-interface CardPhone { value: string; e164?: string; primary?: boolean }
+interface CardPhone { value: string; e164?: string; primary?: boolean; bad?: boolean }
 interface CardEmail { value: string; primary?: boolean }
 
 function ContactCard({
@@ -2510,10 +2512,12 @@ function ContactCard({
               icon="📞"
               value={p.e164 ?? p.value}
               primary={!!p.primary}
+              bad={!!p.bad}
               busy={busy}
               onPrimary={() => post({ op: "set_primary_phone", value: phoneKey(p) })}
               onSave={(v) => post({ op: "edit_phone", value: phoneKey(p), newValue: v })}
               onRemove={() => post({ op: "remove_phone", value: phoneKey(p) })}
+              onToggleBad={() => post({ op: "toggle_bad_phone", value: phoneKey(p) })}
             />
           ))}
           {emails.map((e) => (
@@ -2541,20 +2545,27 @@ function ContactCard({
               return (
                 <div key={i} style={{ fontSize: 14, fontVariantNumeric: "tabular-nums", padding: "3px 0" }}>
                   📞{" "}
-                  <a
-                    href={`tel:${num}`}
-                    style={{ color: "var(--text-1)", textDecorationColor: "var(--text-3)" }}
-                    title="Call"
-                    onClick={(e) => {
-                      if (localStorage.getItem("dialMethod") === "web" || (typeof window !== "undefined" && window.__TAURI__)) {
-                        e.preventDefault();
-                        callNumber(num);
-                      }
-                    }}
-                  >
-                    {num}
-                  </a>
-                  {p.primary && <span style={{ fontSize: 11, color: "var(--text-3)" }}> · primary</span>}
+                  {p.bad ? (
+                    <span style={{ color: "var(--text-3)", textDecoration: "line-through" }} title="Marked bad number — excluded from call lists">
+                      {num}
+                    </span>
+                  ) : (
+                    <a
+                      href={`tel:${num}`}
+                      style={{ color: "var(--text-1)", textDecorationColor: "var(--text-3)" }}
+                      title="Call"
+                      onClick={(e) => {
+                        if (localStorage.getItem("dialMethod") === "web" || (typeof window !== "undefined" && window.__TAURI__)) {
+                          e.preventDefault();
+                          callNumber(num);
+                        }
+                      }}
+                    >
+                      {num}
+                    </a>
+                  )}
+                  {p.bad && <span style={{ fontSize: 11, color: "var(--crit)" }}> · bad number</span>}
+                  {p.primary && !p.bad && <span style={{ fontSize: 11, color: "var(--text-3)" }}> · primary</span>}
                 </div>
               );
             })}
@@ -2616,23 +2627,32 @@ function EditableValue({
   value,
   primary,
   busy,
+  bad,
   onPrimary,
   onSave,
   onRemove,
+  onToggleBad,
 }: {
   icon: string;
   value: string;
   primary: boolean;
   busy: boolean;
+  bad?: boolean;
   onPrimary: () => void;
   onSave: (v: string) => void;
   onRemove: () => void;
+  onToggleBad?: () => void;
 }) {
   const [v, setV] = useState(value);
   return (
     <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
       <span style={{ flexShrink: 0 }}>{icon}</span>
-      <input className="vmsel" style={{ flex: 1 }} value={v} onChange={(e) => setV(e.target.value)} />
+      <input
+        className="vmsel"
+        style={{ flex: 1, textDecoration: bad ? "line-through" : undefined, color: bad ? "var(--text-3)" : undefined }}
+        value={v}
+        onChange={(e) => setV(e.target.value)}
+      />
       <button
         className="btn ghost"
         style={{ padding: "4px 9px", fontSize: 12, color: primary ? "var(--accent)" : undefined }}
@@ -2642,6 +2662,17 @@ function EditableValue({
       >
         {primary ? "★" : "☆"}
       </button>
+      {onToggleBad && (
+        <button
+          className="btn ghost"
+          style={{ padding: "4px 9px", fontSize: 12, color: bad ? "var(--crit)" : undefined }}
+          title={bad ? "Bad number — click to restore" : "Mark as bad number (excludes from lists)"}
+          disabled={busy}
+          onClick={onToggleBad}
+        >
+          🚫
+        </button>
+      )}
       {v.trim() !== value && (
         <button className="btn primary" style={{ padding: "4px 10px", fontSize: 12 }} disabled={busy} onClick={() => onSave(v.trim())}>
           Save

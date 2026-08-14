@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
       .map((it: any) => {
         const d = it.crm_deals;
         if (d?.status && d.status !== "open") return null; // lost/won since generation
-        const phones = d?.crm_contacts?.phones ?? [];
+        const phones = (d?.crm_contacts?.phones ?? []).filter((p: any) => !p.bad);
         const phone =
           phones.find((p: any) => p.primary && p.e164)?.e164 ??
           phones.find((p: any) => p.e164)?.e164 ??
