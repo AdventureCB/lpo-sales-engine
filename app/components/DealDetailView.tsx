@@ -1338,35 +1338,42 @@ function NextActionCard({ profile, building }: { profile: AiProfile | null; buil
     );
   }
 
+  const hasQuestions = (na.questions_to_ask ?? []).length > 0;
   return (
     <div style={{ background: "var(--surface-2, rgba(127,127,127,0.06))", borderRadius: 8, padding: "10px 12px", marginBottom: 14 }}>
-      <div
-        style={{ display: "flex", alignItems: "center", gap: 8, cursor: hasDetail ? "pointer" : "default" }}
-        onClick={() => hasDetail && setOpen((v) => !v)}
-      >
-        <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--accent)", textTransform: "uppercase", letterSpacing: 0.4 }}>
-          🧠 Suggested next action
-        </span>
-        {hasDetail && <span style={{ marginLeft: "auto", color: "var(--text-3)", fontSize: 12 }}>{open ? "▾" : "▸"}</span>}
+      <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--accent)", textTransform: "uppercase", letterSpacing: 0.4 }}>
+        🧠 Suggested next action
       </div>
       <div style={{ fontSize: 13, lineHeight: 1.5, marginTop: 4 }}>{na.action}</div>
-      {open && (
+      {hasDetail && (
         <>
-          {(na.questions_to_ask ?? []).length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <div style={{ fontSize: 11.5, fontWeight: 600, color: "var(--text-3)", marginBottom: 3 }}>Ask on the next touch:</div>
-              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: "var(--text-2)" }}>
-                {na.questions_to_ask!.map((q, i) => (
-                  <li key={i} style={{ marginBottom: 2 }}>&ldquo;{q}&rdquo;</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {ds && (
-            <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 8 }}>
-              {ds.coverage_note}
-              {(ds.known_gaps ?? []).length > 0 && <span> · Missing: {ds.known_gaps!.map((g) => humanize(g.attribute)).join(", ")}</span>}
-            </div>
+          {/* "Ask on the next touch" is always visible; the bigger arrow beside
+              it expands the actual questions + gaps. */}
+          <div
+            style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, cursor: "pointer" }}
+            onClick={() => setOpen((v) => !v)}
+          >
+            <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--text-2)", textTransform: "uppercase", letterSpacing: 0.4 }}>
+              Ask on the next touch
+            </span>
+            <span style={{ color: "var(--accent)", fontSize: 17, lineHeight: 1 }}>{open ? "▾" : "▸"}</span>
+          </div>
+          {open && (
+            <>
+              {hasQuestions && (
+                <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 12.5, color: "var(--text-2)" }}>
+                  {na.questions_to_ask!.map((q, i) => (
+                    <li key={i} style={{ marginBottom: 2 }}>&ldquo;{q}&rdquo;</li>
+                  ))}
+                </ul>
+              )}
+              {ds && (
+                <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 8 }}>
+                  {ds.coverage_note}
+                  {(ds.known_gaps ?? []).length > 0 && <span> · Missing: {ds.known_gaps!.map((g) => humanize(g.attribute)).join(", ")}</span>}
+                </div>
+              )}
+            </>
           )}
         </>
       )}

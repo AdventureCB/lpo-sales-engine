@@ -1126,7 +1126,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
               </div>
               {/* AI buyer-profile summary — the quick read on who you're calling. */}
               {(leadProfile.profile?.summary || leadProfile.building) && (
-                <div style={{ display: "flex", gap: 7, alignItems: "flex-start", margin: "10px 0 2px", fontSize: 13, lineHeight: 1.5, color: "var(--text-2)" }}>
+                <div style={{ display: "flex", gap: 7, alignItems: "flex-start", margin: "10px 0 16px", fontSize: 13, lineHeight: 1.5, color: "var(--text-2)" }}>
                   <span style={{ flexShrink: 0 }}>🧠</span>
                   {leadProfile.profile?.summary ? (
                     <span>{leadProfile.profile.summary}</span>
