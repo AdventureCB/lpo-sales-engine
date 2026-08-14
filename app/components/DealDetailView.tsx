@@ -2109,7 +2109,7 @@ interface Asset {
   url: string;
 }
 
-type CommChannel = "sms" | "whatsapp" | "email";
+type CommChannel = "sms" | "whatsapp" | "email" | "note";
 
 function CommBar({
   dealId,
@@ -2365,6 +2365,12 @@ function CommBar({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ to: email, subject: subject.trim(), body: text, dealId, contactId: contact?.id, attachmentAssetIds: attachIds }),
         });
+      } else if (channel === "note") {
+        r = await fetch("/api/crm/deal", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: dealId, logActivity: { type: "note", subject: "📝 Note", body: text } }),
+        });
       }
       const d = await r?.json().catch(() => ({}));
       if (!r?.ok || d?.error) throw new Error(d?.error ?? `HTTP ${r?.status}`);
@@ -2372,7 +2378,7 @@ function CommBar({
       setSubject("");
       setAttachIds([]);
       setChannel(null);
-      flashOk("Sent ✓");
+      flashOk(channel === "note" ? "Note saved ✓" : "Sent ✓");
       onLogged();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -2385,12 +2391,13 @@ function CommBar({
   const urls = assets.filter((a) => a.kind === "url");
   const media = assets.filter((a) => a.kind === "media");
 
-  const btnStyle: React.CSSProperties = { justifyContent: "center", width: "100%" };
+  // Tighter padding so all buttons (incl. Note) fit one row.
+  const btnStyle: React.CSSProperties = { justifyContent: "center", width: "100%", padding: "8px 6px", fontSize: 13.5, whiteSpace: "nowrap" };
 
   return (
     <div style={{ marginBottom: 18 }}>
       {/* Floating buttons — no card, low visual weight. */}
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(${hideCall ? 3 : 4}, 1fr)`, gap: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${hideCall ? 4 : 5}, 1fr)`, gap: 6 }}>
         {!hideCall && (callState === null ? (
           <button className="btn" style={btnStyle} disabled={!phone || awaitingDispo} title={allPhones.length > 1 ? "Pick which number to try" : phone ?? "No phone on contact"} onClick={onCallClick}>
             📞 Call{allPhones.length > 1 ? ` (${allPhones.length})` : ""}
@@ -2439,6 +2446,17 @@ function CommBar({
           }}
         >
           ✉️ Email
+        </button>
+        <button
+          className={`btn ${channel === "note" ? "primary" : ""}`}
+          style={btnStyle}
+          title="Add a note to the deal"
+          onClick={() => {
+            setErr(null);
+            setChannel((c) => (c === "note" ? null : "note"));
+          }}
+        >
+          📝 Note
         </button>
       </div>
       {ok && <div style={{ color: "var(--good)", fontSize: 13.5, fontWeight: 700, marginTop: 8 }}>{ok}</div>}
@@ -2520,6 +2538,7 @@ function CommBar({
 
       {channel && (
         <div className="card" style={{ marginTop: 12, display: "grid", gap: 8 }}>
+          {channel !== "note" && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <select className="vmsel" style={{ width: "auto", flex: 1, minWidth: 140 }} value="" onChange={(e) => e.target.value && applyMacro(e.target.value)}>
               <option value="">📋 Macro…</option>
@@ -2550,6 +2569,7 @@ function CommBar({
               ))}
             </select>
           </div>
+          )}
           {channel === "email" && attachIds.length > 0 && (
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
               {attachIds.map((id) => {
@@ -2585,7 +2605,9 @@ function CommBar({
                 ? `Text ${phone}…`
                 : channel === "whatsapp"
                   ? "WhatsApp message…"
-                  : `Email ${email}…`
+                  : channel === "note"
+                    ? "Note… (saves to the deal timeline)"
+                    : `Email ${email}…`
             }
             value={body}
             onChange={(e) => setBody(e.target.value)}
@@ -2598,7 +2620,9 @@ function CommBar({
           {err && <div style={{ color: "var(--crit)", fontSize: 13 }}>{err}</div>}
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn primary" disabled={!body.trim() || sending} onClick={send}>
-              {sending ? "Sending…" : `Send ${channel === "sms" ? "text" : channel === "whatsapp" ? "WhatsApp" : "email"}`}
+              {channel === "note"
+                ? sending ? "Saving…" : "Save note"
+                : sending ? "Sending…" : `Send ${channel === "sms" ? "text" : channel === "whatsapp" ? "WhatsApp" : "email"}`}
             </button>
             <button className="btn ghost" onClick={() => setChannel(null)}>Cancel</button>
           </div>
