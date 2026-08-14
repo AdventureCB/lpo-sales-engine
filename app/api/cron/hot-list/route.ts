@@ -25,6 +25,12 @@ const KLAVIYO_METRICS: Array<[string, string, string]> = [
   ["Clicked Email", "klaviyo", "email_click"],
   ["3D Builder - Save Build", "shopify", "builder_save"],
   ["Checkout Started", "shopify", "checkout_started"],
+  // Purchase signals — used to EXCLUDE already-bought contacts from Hot List
+  // Import recovery (see hotlist_recovery_candidates). Harmless if a metric
+  // isn't present in this Klaviyo account (id lookup just skips it).
+  ["Placed Order", "shopify", "placed_order"],
+  ["Ordered Product", "shopify", "ordered_product"],
+  ["Fulfilled Order", "shopify", "fulfilled_order"],
 ];
 
 const BUDGET_MS = 50_000; // hard stop before Vercel's 60s kill
