@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ensurePhone, getPhoneState, newOutboundCall, setOutboundHandler, subscribePhone } from "./phoneClient";
 import type { VmDrop } from "./VmPanel";
-import { DealDetailView, prefetchDeal } from "./DealDetailView";
+import { DealDetailView, prefetchDeal, BAND_COLOR, humanize, type AiProfile } from "./DealDetailView";
 
 declare global {
   interface Window {
@@ -257,6 +257,13 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [sess, setSess] = useState({ dials: 0, conn: 0, vm: 0, talkS: 0 });
   const [dealRefresh, setDealRefresh] = useState(0); // remounts the embedded deal view
 
+  // AI profile for the current lead — surfaced up from the embedded deal view.
+  // Summary shows in the lead card; confidence/archetypes in the right panel.
+  const [leadProfile, setLeadProfile] = useState<{ profile: AiProfile | null; stale: boolean; building: boolean }>({ profile: null, stale: false, building: false });
+  const handleProfile = useCallback((p: { profile: AiProfile | null; stale: boolean; building: boolean }) => setLeadProfile(p), []);
+  const [aiExpanded, setAiExpanded] = useState(false);
+  const [aiRefreshing, setAiRefreshing] = useState(false);
+
   // ── Momentum: today's totals, personal best, streak (goal-gradient) ──
   const [today, setToday] = useState<{
     goal: number;
@@ -307,6 +314,25 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const callSecRef = useRef(0);
 
   const lead = leads[leadIdx] ?? null;
+
+  // Clear the previous lead's profile when the lead changes (the embedded view
+  // re-emits onProfile once the new deal loads) + collapse the AI card.
+  useEffect(() => {
+    setLeadProfile({ profile: null, stale: false, building: false });
+    setAiExpanded(false);
+  }, [lead?.crmDealId, lead?.dealId]);
+
+  const refreshProfile = async () => {
+    if (!lead?.crmDealId || aiRefreshing) return;
+    setAiRefreshing(true);
+    await fetch("/api/ai/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dealId: lead.crmDealId, manual: true }),
+    }).catch(() => {});
+    setAiRefreshing(false);
+    setDealRefresh((k) => k + 1); // remount embedded → refetch → onProfile updates
+  };
 
   // Manual dial: keypad popup → call. Before dialing we match the number
   // against the CRM — a found deal rides the normal disposition/logging flow;
@@ -1039,6 +1065,30 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
           <button className="btn primary" style={{ width: "100%", justifyContent: "center" }} onClick={applyFilter}>
             Apply filter
           </button>
+
+          {/* Up next — moved here from the right rail. */}
+          <div className="panel-h" style={{ marginTop: 20 }}>Up next</div>
+          <div className="upnext">
+            {leads.slice(leadIdx + 1, leadIdx + 6).map((l) => (
+              <div className="row" key={leadKey(l)} style={{ alignItems: "center", gap: 8 }}>
+                <span className="who">{l.personName ?? l.title}</span>
+                <span className="why" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  {l.hot ? "🔥 hot" : l.stageName}
+                  <button
+                    className="btn ghost"
+                    style={{ padding: "1px 7px", fontSize: 12, lineHeight: 1.4 }}
+                    title="Skip — remove from this session (recorded)"
+                    onClick={() => skipUpcoming(l)}
+                  >
+                    ✕
+                  </button>
+                </span>
+              </div>
+            ))}
+            {leads.length <= leadIdx + 1 && (
+              <div className="row"><span className="why">End of queue</span></div>
+            )}
+          </div>
         </div>
 
         {/* center: lead card + full embedded deal view */}
@@ -1074,6 +1124,20 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                 )}
                 <span className="chip stage">Pipedrive ▸ deal open</span>
               </div>
+              {/* AI buyer-profile summary — the quick read on who you're calling. */}
+              {(leadProfile.profile?.summary || leadProfile.building) && (
+                <div style={{ display: "flex", gap: 7, alignItems: "flex-start", margin: "10px 0 2px", fontSize: 13, lineHeight: 1.5, color: "var(--text-2)" }}>
+                  <span style={{ flexShrink: 0 }}>🧠</span>
+                  {leadProfile.profile?.summary ? (
+                    <span>{leadProfile.profile.summary}</span>
+                  ) : (
+                    <span style={{ color: "var(--text-3)" }}>
+                      <span className="ai-pulse" style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--accent)", display: "inline-block", marginRight: 6 }} />
+                      Building AI summary…
+                    </span>
+                  )}
+                </div>
+              )}
               {lead.callable === false && (
                 <div className="viewsub" style={{ marginBottom: 12 }}>
                   🔒 Owned by another rep — view only.
@@ -1306,6 +1370,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
             pdDealId={lead.dealId > 0 ? lead.dealId : undefined}
             dealId={lead.dealId > 0 ? undefined : lead.crmDealId}
             embedded
+            onProfile={handleProfile}
           />
         )}
         </div>
@@ -1386,30 +1451,76 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
               </Link>
             </div>
           </div>
-          <div className="card">
-            <div className="panel-h">Up next</div>
-            <div className="upnext">
-              {leads.slice(leadIdx + 1, leadIdx + 6).map((l) => (
-                <div className="row" key={leadKey(l)} style={{ alignItems: "center", gap: 8 }}>
-                  <span className="who">{l.personName ?? l.title}</span>
-                  <span className="why" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    {l.hot ? "🔥 hot" : l.stageName}
-                    <button
-                      className="btn ghost"
-                      style={{ padding: "1px 7px", fontSize: 12, lineHeight: 1.4 }}
-                      title="Skip — remove from this session (recorded)"
-                      onClick={() => skipUpcoming(l)}
-                    >
-                      ✕
-                    </button>
-                  </span>
+          {/* AI confidence + archetypes (was Up next). Tags & attributes reveal
+              on expand. */}
+          {lead && (lead.dealId > 0 || lead.crmDealId) && (() => {
+            const p = leadProfile.profile;
+            const band = p?.next_action?.data_sufficiency?.band;
+            const conf = p?.overall_confidence;
+            const attrs = Object.entries(p?.attributes ?? {}).filter(([, v]) => v?.value && !/^unknown/i.test(String(v.value))).slice(0, 16);
+            const tags = p?.tags ?? [];
+            return (
+              <div className="card">
+                <div className="panel-h" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  🧠 Buyer profile
+                  {band && (
+                    <span className="chip stage" style={{ background: BAND_COLOR[band] ?? "var(--text-3)", color: "#fff", borderColor: "transparent", fontSize: 11 }}>{band}</span>
+                  )}
+                  {conf != null && <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>{Math.round(conf * 100)}%</span>}
+                  <button className="btn ghost" style={{ marginLeft: "auto", padding: "2px 9px", fontSize: 12 }} disabled={aiRefreshing} onClick={refreshProfile} title="Rebuild the buyer profile">
+                    {aiRefreshing ? "…" : "↻"}
+                  </button>
                 </div>
-              ))}
-              {leads.length <= leadIdx + 1 && (
-                <div className="row"><span className="why">End of queue</span></div>
-              )}
-            </div>
-          </div>
+                {!p && (
+                  <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+                    {leadProfile.building || aiRefreshing ? (
+                      <><span className="ai-pulse" style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--accent)", display: "inline-block", marginRight: 6 }} />Analyzing…</>
+                    ) : "No profile yet."}
+                  </div>
+                )}
+                {p && (
+                  <>
+                    <div>
+                      {(p.archetypes ?? []).slice(0, 4).map((a) => (
+                        <div key={a.key} style={{ marginBottom: 6 }} title={(a.evidence ?? []).join(" · ")}>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 2 }}>
+                            <span style={{ fontWeight: 600 }}>{a.name}</span>
+                            <span style={{ color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>{Math.round(a.pct)}%</span>
+                          </div>
+                          <div style={{ height: 6, borderRadius: 3, background: "var(--border-soft)", overflow: "hidden" }}>
+                            <div style={{ width: `${Math.min(a.pct, 100)}%`, height: "100%", background: "var(--accent)", borderRadius: 3 }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {(tags.length > 0 || attrs.length > 0) && (
+                      <button className="btn ghost" style={{ padding: "3px 8px", fontSize: 12, marginTop: 4 }} onClick={() => setAiExpanded((v) => !v)}>
+                        {aiExpanded ? "▾" : "▸"} Tags &amp; attributes
+                      </button>
+                    )}
+                    {aiExpanded && (
+                      <div style={{ marginTop: 8 }}>
+                        {tags.length > 0 && (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: attrs.length ? 8 : 0 }}>
+                            {tags.map((t) => (
+                              <span key={t} className="chip stage" style={{ background: "var(--accent-2-soft)", color: "var(--text-1)", fontSize: 12 }}>#{t}</span>
+                            ))}
+                          </div>
+                        )}
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                          {attrs.map(([k, v]) => (
+                            <span key={k} title={`${(v.confidence ?? 0) * 100 | 0}% confident${(v.evidence ?? []).length ? " · " + (v.evidence ?? []).join(" · ") : ""}`} className="chip stage" style={{ opacity: 0.5 + Math.min(v.confidence ?? 0.5, 1) * 0.5 }}>
+                              {humanize(k)}: <strong style={{ marginLeft: 3 }}>{v.value}</strong>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
 

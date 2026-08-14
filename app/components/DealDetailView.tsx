@@ -44,6 +44,8 @@ interface DealData {
   sprintOwners: string[];
 }
 
+export type AiProfile = NonNullable<DealData["aiProfile"]>;
+
 const KIND_ICON: Record<string, string> = {
   call: "📞", sms: "💬", email: "✉️", task: "📋", note: "📝", meeting: "📅", system: "⚙️",
 };
@@ -98,7 +100,19 @@ function fmtWhen(iso: string | null) {
   });
 }
 
-export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string; pdDealId?: number; embedded?: boolean }) {
+export function DealDetailView({
+  dealId,
+  pdDealId,
+  embedded,
+  onProfile,
+}: {
+  dealId?: string;
+  pdDealId?: number;
+  embedded?: boolean;
+  // Embedded (dialer) mode surfaces the AI profile up so the dialer can render
+  // the summary + confidence/archetypes in its own chrome.
+  onProfile?: (p: { profile: AiProfile | null; stale: boolean; building: boolean }) => void;
+}) {
   const router = useRouter();
   // Seed from the prefetch cache (warmed during the dialer's review step) so an
   // advanced-to deal paints instantly; load() still revalidates in background.
@@ -148,6 +162,37 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Embedded mode: the dialer renders the profile's summary + confidence itself,
+  // so the DealProfileSection isn't mounted here — own its silent auto-build and
+  // surface the profile up via onProfile.
+  const [aiBuilding, setAiBuilding] = useState(false);
+  const autoAiTried = useRef(false);
+  useEffect(() => {
+    if (!embedded || !data?.aiProfileStale || autoAiTried.current) return;
+    autoAiTried.current = true;
+    const id = data.deal?.id;
+    if (!id) return;
+    setAiBuilding(true);
+    fetch("/api/ai/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dealId: id, manual: false }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.ran) return load();
+      })
+      .catch(() => {})
+      .finally(() => setAiBuilding(false));
+  }, [embedded, data?.aiProfileStale, data?.deal?.id, load]);
+  // New lead → allow the auto-build to run once for it.
+  useEffect(() => {
+    autoAiTried.current = false;
+  }, [dealId, pdDealId]);
+  useEffect(() => {
+    if (embedded) onProfile?.({ profile: data?.aiProfile ?? null, stale: !!data?.aiProfileStale, building: aiBuilding });
+  }, [embedded, data, aiBuilding, onProfile]);
 
   const update = async (fields: Record<string, unknown>) => {
     setSaving(true);
@@ -1088,9 +1133,11 @@ export function DealDetailView({ dealId, pdDealId, embedded }: { dealId?: string
               </div>
             </>
           )}
+          {/* Dialer: the suggested next action sits right under Call effort;
+              summary + confidence/archetypes render in the dialer chrome. */}
+          {embedded && <NextActionCard profile={data.aiProfile ?? null} building={aiBuilding} />}
           {embedded && klaviyoEl}
           {embedded && adJourneyEl}
-          {embedded && profileEl}
           {!embedded && (
             <>
           {contact ? (
@@ -1141,8 +1188,8 @@ const CHANNEL_BADGE: Record<string, string> = {
   linkedin: "#3a7ac0", twitter: "#5aa0d0",
 };
 
-const BAND_COLOR: Record<string, string> = { Thin: "var(--crit)", Developing: "var(--warn)", Solid: "var(--accent)", Rich: "var(--good)" };
-const humanize = (k: string) => k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+export const BAND_COLOR: Record<string, string> = { Thin: "var(--crit)", Developing: "var(--warn)", Solid: "var(--accent)", Rich: "var(--good)" };
+export const humanize = (k: string) => k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
 interface MergeCandidate {
   id: string;
@@ -1261,6 +1308,68 @@ function MergeDealModal({
           <button className="btn ghost" style={{ marginLeft: "auto" }} onClick={onClose}>Cancel</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Dialer-only: the suggested next action, shown right under Call effort.
+ * Collapsed shows the action line; expanding reveals the questions to ask and
+ * the data-sufficiency / gaps note.
+ */
+function NextActionCard({ profile, building }: { profile: AiProfile | null; building: boolean }) {
+  const [open, setOpen] = useState(false);
+  const na = profile?.next_action;
+  const ds = na?.data_sufficiency;
+  const hasDetail = (na?.questions_to_ask ?? []).length > 0 || !!ds?.coverage_note || (ds?.known_gaps ?? []).length > 0;
+
+  if (!na?.action) {
+    return (
+      <div style={{ marginBottom: 14, fontSize: 12.5, color: "var(--text-3)" }}>
+        {building ? (
+          <span>
+            <span className="ai-pulse" style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--accent)", display: "inline-block", marginRight: 6 }} />
+            Building AI next action…
+          </span>
+        ) : (
+          "🧠 No AI next action yet."
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ background: "var(--surface-2, rgba(127,127,127,0.06))", borderRadius: 8, padding: "10px 12px", marginBottom: 14 }}>
+      <div
+        style={{ display: "flex", alignItems: "center", gap: 8, cursor: hasDetail ? "pointer" : "default" }}
+        onClick={() => hasDetail && setOpen((v) => !v)}
+      >
+        <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--accent)", textTransform: "uppercase", letterSpacing: 0.4 }}>
+          🧠 Suggested next action
+        </span>
+        {hasDetail && <span style={{ marginLeft: "auto", color: "var(--text-3)", fontSize: 12 }}>{open ? "▾" : "▸"}</span>}
+      </div>
+      <div style={{ fontSize: 13, lineHeight: 1.5, marginTop: 4 }}>{na.action}</div>
+      {open && (
+        <>
+          {(na.questions_to_ask ?? []).length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: "var(--text-3)", marginBottom: 3 }}>Ask on the next touch:</div>
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: "var(--text-2)" }}>
+                {na.questions_to_ask!.map((q, i) => (
+                  <li key={i} style={{ marginBottom: 2 }}>&ldquo;{q}&rdquo;</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {ds && (
+            <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 8 }}>
+              {ds.coverage_note}
+              {(ds.known_gaps ?? []).length > 0 && <span> · Missing: {ds.known_gaps!.map((g) => humanize(g.attribute)).join(", ")}</span>}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
