@@ -4,15 +4,12 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { envOptional } from "@/lib/env";
 import { getMetricIds, getEventsForMetric, metricSlug } from "@/lib/klaviyo";
 import {
-  findPersonIdByEmail,
-  getOpenDealsForPerson,
   getHotLabelId,
   getDeal,
   getPersonsByIds,
   setDealLabels,
   createDueTodayActivity,
   getRecentSentThreads,
-  PipedriveRateLimitError,
 } from "@/lib/pipedrive";
 import { normalizePhone, normalizeEmail } from "@/lib/identity";
 import { evaluateDeal, DEFAULT_RULES, type HotRules } from "@/lib/hotlist";
@@ -326,66 +323,20 @@ export async function GET(req: Request) {
     }
   }
 
-  // ── 5. Match unmatched emails → deals ─────────────────────────────────────
-  // Strict Pipedrive-call diet: this stage burned ~23k calls/day when it
-  // retried every unmatched marketing email daily. Hard cap per sweep, and
-  // failed matches retry after 7 days, not 24h (fresh signals for the same
-  // email arrive as new rows with NULL attempted_at and get tried promptly).
-  const MAX_MATCH_EMAILS = 25;
-  if (hasPipedrive && remaining() > 12_000) {
+  // ── 5. Match unmatched signals → deals (CRM-native) ───────────────────────
+  // Matching is now a single indexed Postgres statement against the CRM mirror
+  // (crm_contacts email GIN → open crm_deals) — NO Pipedrive, no per-email
+  // round-trips, no 25/sweep cap. The old live-Pipedrive path was diet-capped
+  // so hard that ~86% of signals never attached to a deal, so nothing scored.
+  if (remaining() > 6_000) {
     try {
-      const retryBefore = new Date(now.getTime() - 7 * 24 * 3600_000).toISOString();
-      const { data: unmatched } = await db
-        .from("engagement_events")
-        .select("id, person_email, match_attempted_at")
-        .is("pipedrive_deal_id", null)
-        .not("person_email", "is", null)
-        .gte("occurred_at", scoringWindowStart)
-        .or(`match_attempted_at.is.null,match_attempted_at.lt.${retryBefore}`)
-        .order("occurred_at", { ascending: false })
-        .limit(500);
-      const byEmail = new Map<string, number[]>();
-      for (const ev of unmatched ?? []) {
-        byEmail.set(ev.person_email, [...(byEmail.get(ev.person_email) ?? []), ev.id]);
-      }
-      let matched = 0;
-      let processedEmails = 0;
-      let rateLimited = false;
-      for (const [email, ids] of byEmail) {
-        if (processedEmails >= MAX_MATCH_EMAILS || remaining() < 8_000) break;
-        try {
-          const personId = await findPersonIdByEmail(email);
-          const deals = personId ? await getOpenDealsForPerson(personId) : [];
-          if (deals.length > 0) {
-            const { error } = await db
-              .from("engagement_events")
-              .update({ pipedrive_deal_id: deals[0].id })
-              .in("id", ids);
-            if (error) throw new Error(error.message);
-            matched += ids.length;
-          }
-          await db
-            .from("engagement_events")
-            .update({ match_attempted_at: now.toISOString() })
-            .in("id", ids);
-          processedEmails++;
-          await new Promise((r) => setTimeout(r, 150));
-        } catch (e) {
-          if (e instanceof PipedriveRateLimitError) {
-            rateLimited = true;
-            break; // resume next sweep
-          }
-          throw e;
-        }
-      }
-      summary.matching = {
-        candidateEmails: byEmail.size,
-        processedEmails,
-        matched,
-        ...(rateLimited ? { rateLimited: true } : {}),
-      };
+      const { data: matched, error } = await db.rpc("match_engagement_to_deals", {
+        p_window_start: scoringWindowStart,
+      });
+      if (error) throw new Error(error.message);
+      summary.matching = { matched: matched ?? 0, native: true };
     } catch (e) {
-      console.error("deal matching failed", e);
+      console.error("native deal matching failed", e);
       summary.matching = { error: e instanceof Error ? e.message : String(e) };
     }
   }
