@@ -292,6 +292,11 @@ export function HotListView({ isAdmin = false }: { isAdmin?: boolean }) {
                     {expanded === f.deal_id && (
                       <tr>
                         <td colSpan={5} style={{ background: "var(--surface-2)", padding: "10px 14px" }}>
+                          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
+                            <a href={`/crm/deal/${f.deal_id}`} className="btn primary" style={{ padding: "4px 12px", fontSize: 12.5 }}>
+                              View in CRM →
+                            </a>
+                          </div>
                           {!dealEvents[f.deal_id] && (
                             <span style={{ color: "var(--text-3)", fontSize: 13.5 }}>Loading…</span>
                           )}
