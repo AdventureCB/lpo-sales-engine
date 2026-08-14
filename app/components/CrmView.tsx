@@ -101,6 +101,82 @@ interface ColDef {
   render: (d: Deal) => React.ReactNode;
 }
 
+/** Manual deal entry — name + phone and/or email, optional value/source.
+ * Reps own their own; admins can assign. New deals land in Intake. */
+function NewDealModal({ isAdmin, onClose, onCreated }: { isAdmin: boolean; onClose: () => void; onCreated: () => void }) {
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [title, setTitle] = useState("");
+  const [value, setValue] = useState("");
+  const [source, setSource] = useState("Manual entry");
+  const [ownerId, setOwnerId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const canSave = (phone.trim() || email.trim()) && !busy;
+
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    const r = await fetch("/api/crm/create-deal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: name.trim() || null,
+        phone: phone.trim() || null,
+        email: email.trim() || null,
+        title: title.trim() || (name.trim() ? name.trim() : null),
+        valueCents: value ? Math.round(Number(value) * 100) : null,
+        sourceName: source.trim() || "Manual entry",
+        ...(isAdmin && ownerId ? { ownerPipedriveId: Number(ownerId) } : {}),
+      }),
+    }).catch(() => null);
+    setBusy(false);
+    if (!r?.ok) {
+      const d = await r?.json().catch(() => ({}));
+      setErr(d?.error ?? "Create failed");
+      return;
+    }
+    const d = await r.json();
+    if (d.crmDealId) {
+      window.location.href = `/crm/deal/${d.crmDealId}`; // open the new (or linked) deal
+      return;
+    }
+    onCreated();
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460, width: "92%", display: "grid", gap: 8 }}>
+        <b style={{ fontSize: 16 }}>＋ New deal</b>
+        <div className="viewsub" style={{ marginTop: 0 }}>Enter a phone and/or email. If the person already has an open deal, we link to it instead of duplicating.</div>
+        <input className="vmsel" placeholder="Contact name" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+        <div style={{ display: "flex", gap: 8 }}>
+          <input className="vmsel" style={{ flex: 1 }} placeholder="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+          <input className="vmsel" style={{ flex: 1 }} placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        </div>
+        <input className="vmsel" placeholder="Deal title (defaults to the name)" value={title} onChange={(e) => setTitle(e.target.value)} />
+        <div style={{ display: "flex", gap: 8 }}>
+          <input className="vmsel" style={{ width: 130 }} type="number" placeholder="Value ($)" value={value} onChange={(e) => setValue(e.target.value)} />
+          <input className="vmsel" style={{ flex: 1 }} placeholder="Source" value={source} onChange={(e) => setSource(e.target.value)} />
+        </div>
+        {isAdmin && (
+          <select className="vmsel" value={ownerId} onChange={(e) => setOwnerId(e.target.value)}>
+            <option value="">Owner: unassigned</option>
+            {OWNERS.filter((o) => o.id).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+        )}
+        {err && <div style={{ color: "var(--crit)", fontSize: 13 }}>{err}</div>}
+        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+          <button className="btn primary" disabled={!canSave} onClick={save}>{busy ? "Creating…" : "Create deal"}</button>
+          <button className="btn ghost" onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // The full column catalog. Visibility + order are user-configurable.
 const ALL_COLUMNS: ColDef[] = [
   {
@@ -338,6 +414,7 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
   const [pdSyncing, setPdSyncing] = useState(false);
   const [pdPending, setPdPending] = useState(0);
   const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [newDealOpen, setNewDealOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [sprintName, setSprintName] = useState("");
 
@@ -533,7 +610,12 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
 
   return (
     <>
-      <h2 className="viewtitle">CRM · Deals</h2>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <h2 className="viewtitle" style={{ margin: 0 }}>CRM · Deals</h2>
+        <button className="btn primary" style={{ marginLeft: "auto", padding: "7px 14px", fontSize: 13.5 }} onClick={() => setNewDealOpen(true)}>
+          ＋ New deal
+        </button>
+      </div>
       <div className="viewsub">
         Native system of record · mirrored from Pipedrive continuously ·{" "}
         {meta ? `${meta.mirror.deals.toLocaleString()} deals, ${meta.mirror.contacts.toLocaleString()} contacts mirrored` : "…"}{" "}
@@ -543,6 +625,8 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
           </>
         )}
       </div>
+
+      {newDealOpen && <NewDealModal isAdmin={isAdmin} onClose={() => setNewDealOpen(false)} onCreated={() => { setNewDealOpen(false); loadDeals(); }} />}
 
       {isAdmin && (
       <div className="card" style={{ padding: "10px 14px", marginBottom: 16, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
