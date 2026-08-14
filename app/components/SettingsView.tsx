@@ -457,7 +457,7 @@ function ReassignAdmin() {
 // ── Intake Engine: Zapier-replacement funnels, fully config-driven ─────────
 
 function IntakeAdmin() {
-  const [data, setData] = useState<{ sources: any[]; reps: { name: string; pipedrive_user_id: number }[]; counts: Record<string, Record<string, number>> } | null>(null);
+  const [data, setData] = useState<{ sources: any[]; reps: { name: string; pipedrive_user_id: number }[]; counts: Record<string, Record<string, number>>; stages?: { id: string; name: string; pipedriveStageId: number | null; pipeline: string }[] } | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
   const load = useCallback(() => {
@@ -553,6 +553,29 @@ function IntakeAdmin() {
                   </label>
                 </>
               )}
+              <label style={{ fontSize: 12.5, color: "var(--text-3)" }} title="Pipeline + stage new deals from this engine land in. Native stages (no Pipedrive id) are supported.">
+                Default stage
+                <select
+                  className="vmsel"
+                  style={{ display: "block", marginTop: 3, maxWidth: 240 }}
+                  value={cfg.crm_stage_id ?? (data.stages ?? []).find((st) => st.pipedriveStageId === cfg.pipedrive_stage_id)?.id ?? ""}
+                  onChange={(e) => setCfg("crm_stage_id", e.target.value || undefined)}
+                >
+                  <option value="">— pipeline default —</option>
+                  {Object.entries(
+                    (data.stages ?? []).reduce((acc: Record<string, { id: string; name: string; pipedriveStageId: number | null; pipeline: string }[]>, st) => {
+                      (acc[st.pipeline] = acc[st.pipeline] ?? []).push(st);
+                      return acc;
+                    }, {})
+                  ).map(([pipeline, sts]) => (
+                    <optgroup key={pipeline} label={pipeline}>
+                      {sts.map((st) => (
+                        <option key={st.id} value={st.id}>{st.name}{st.pipedriveStageId ? "" : " (native)"}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </label>
               <label style={{ fontSize: 12.5, color: "var(--text-3)" }}>
                 Title template
                 <input className="vmsel" style={{ width: 220, display: "block", marginTop: 3 }} defaultValue={cfg.title_template ?? ""} onBlur={(e) => e.target.value !== (cfg.title_template ?? "") && setCfg("title_template", e.target.value)} />

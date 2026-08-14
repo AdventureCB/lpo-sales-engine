@@ -37,7 +37,13 @@ export interface IntakeSource {
     write_pipedrive?: boolean; // false = pure native (app only); default true until cutover
     owner_pool?: { pipedrive_id: number; name?: string; enabled: boolean }[];
     fallback_owner_pipedrive_id?: number; // roster empty → this owner (Zap parity: Gabi)
-    pipedrive_stage_id?: number;
+    pipedrive_stage_id?: number; // default stage by Pipedrive id
+    crm_stage_id?: string; // default stage by mirror uuid — wins over pipedrive_stage_id (needed for native stages with no PD id)
+    notify_owner?: boolean;
+    // Hot List Import / recovery-style engines:
+    reopen_keep_previous_owner?: boolean; // reopen → the deal's previous owner (not round-robin)
+    reopen_to_default_stage?: boolean; // reopen → move into this engine's default stage
+    recovery?: { window_days?: number; click_hours?: number; distinct_hours?: number; per_sweep?: number };
   };
 }
 
@@ -154,15 +160,7 @@ async function createDealNative(
   }
   if (!contact) return { crmDealId: null };
 
-  let stageId: string | null = null;
-  if (source.config.pipedrive_stage_id) {
-    const { data: stage } = await db
-      .from("crm_stages")
-      .select("id")
-      .eq("pipedrive_stage_id", source.config.pipedrive_stage_id)
-      .maybeSingle();
-    stageId = stage?.id ?? null;
-  }
+  const stageId = await resolveDefaultStageId(db, source.config);
 
   const { data: deal } = await db
     .from("crm_deals")
@@ -192,6 +190,28 @@ function touchNote(source: IntakeSource, payload: IntakePayload): { subject: str
     subject: `🔁 ${source.label} — funnel touch`,
     body: bits.join("\n") || `${source.label} signal received`,
   };
+}
+
+/** Resolve an engine's default stage to a mirror uuid. crm_stage_id (native
+ *  stages with no Pipedrive id, e.g. "Hot List Import") wins over the numeric
+ *  pipedrive_stage_id. */
+export async function resolveDefaultStageId(
+  db: SupabaseClient,
+  cfg: IntakeSource["config"]
+): Promise<string | null> {
+  if (cfg.crm_stage_id) {
+    const { data } = await db.from("crm_stages").select("id").eq("id", cfg.crm_stage_id).maybeSingle();
+    if (data) return data.id;
+  }
+  if (cfg.pipedrive_stage_id) {
+    const { data } = await db
+      .from("crm_stages")
+      .select("id")
+      .eq("pipedrive_stage_id", cfg.pipedrive_stage_id)
+      .maybeSingle();
+    return data?.id ?? null;
+  }
+  return null;
 }
 
 export async function processIntake(
@@ -239,7 +259,7 @@ export async function processIntake(
     // Most recent deal for the contact decides the path.
     const { data: deals } = await db
       .from("crm_deals")
-      .select("id, status, title, pipedrive_deal_id, owner_pipedrive_id")
+      .select("id, status, title, pipedrive_deal_id, owner_pipedrive_id, stage_id")
       .eq("contact_id", contact.id)
       .order("updated_at", { ascending: false })
       .limit(5);
@@ -267,12 +287,31 @@ export async function processIntake(
       }
       // behavior === "new_deal" falls through to creation below.
     } else if (closed && (source.config.on_existing_closed ?? "reopen_assign") === "reopen_assign") {
-      // Original owner keeps the reopened deal when still eligible (enabled in
-      // this engine's pool); otherwise round-robin.
-      const eligible = (source.config.owner_pool ?? []).some(
-        (p) => p.enabled && p.pipedrive_id === closed.owner_pipedrive_id
-      );
-      const owner = eligible ? closed.owner_pipedrive_id : await nextIntakeOwner(db, source);
+      // Owner on reopen: recovery engines default to the deal's PREVIOUS owner
+      // (they review whether it should really be reopened); otherwise keep the
+      // original owner when still pool-eligible, else round-robin.
+      let owner: number | null;
+      if (source.config.reopen_keep_previous_owner && closed.owner_pipedrive_id) {
+        owner = closed.owner_pipedrive_id;
+      } else {
+        const eligible = (source.config.owner_pool ?? []).some(
+          (p) => p.enabled && p.pipedrive_id === closed.owner_pipedrive_id
+        );
+        owner = eligible ? closed.owner_pipedrive_id : await nextIntakeOwner(db, source);
+      }
+      // Optionally move the reopened deal into this engine's default stage so
+      // every signal-driven deal sits in one reviewable place (records the
+      // prior stage for context).
+      let stageMove: { stage_id: string; stage_changed_at: string } | null = null;
+      let priorStageName: string | null = null;
+      if (source.config.reopen_to_default_stage) {
+        const target = await resolveDefaultStageId(db, source.config);
+        if (target && target !== closed.stage_id) {
+          const { data: prior } = await db.from("crm_stages").select("name").eq("id", closed.stage_id).maybeSingle();
+          priorStageName = prior?.name ?? null;
+          stageMove = { stage_id: target, stage_changed_at: new Date().toISOString() };
+        }
+      }
       await db
         .from("crm_deals")
         .update({
@@ -280,16 +319,18 @@ export async function processIntake(
           lost_at: null,
           lost_reason: null,
           ...(owner ? { owner_pipedrive_id: owner } : {}),
+          ...(stageMove ?? {}),
           updated_at: new Date().toISOString(),
         })
         .eq("id", closed.id);
       const n = touchNote(source, payload);
+      const reopenBody = priorStageName ? `Was in "${priorStageName}".\n${n.body}` : n.body;
       await db.from("crm_activities").insert({
         deal_id: closed.id,
         contact_id: contact.id,
-        type: "note",
-        subject: `♻️ Reopened via ${source.label}`,
-        body: n.body,
+        type: "system",
+        subject: `♻️ Reopened via ${source.label} — review`,
+        body: reopenBody,
         actor: "intake",
         occurred_at: eventTime(payload),
       });

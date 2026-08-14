@@ -341,6 +341,20 @@ export async function GET(req: Request) {
     }
   }
 
+  // ── 6. Recover deals for hot no-deal contacts (CRM-native) ────────────────
+  // Contacts whose recent signals qualify but who have no OPEN deal: create a
+  // new deal (Cainen-owned → reprospect pool) or reopen a closed one to its
+  // previous owner. No-op unless the "Hot List Import" engine is enabled.
+  if (remaining() > 8_000) {
+    try {
+      const { runHotlistRecovery } = await import("@/lib/hotlist-recovery");
+      summary.recovery = await runHotlistRecovery(db, { deadline: started + BUDGET_MS - 4_000 });
+    } catch (e) {
+      console.error("hotlist recovery failed", e);
+      summary.recovery = { error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
   summary.elapsedMs = Date.now() - started;
   return NextResponse.json({ ok: true, summary });
 }

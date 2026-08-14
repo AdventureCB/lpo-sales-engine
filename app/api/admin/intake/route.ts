@@ -10,13 +10,19 @@ export async function GET() {
   const user = await getSessionUser();
   if (!user || user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
   const db = supabaseAdmin();
-  const [{ data: sources }, { data: reps }, { data: recent }] = await Promise.all([
+  const [{ data: sources }, { data: reps }, { data: recent }, { data: stageRows }] = await Promise.all([
     db.from("intake_sources").select("*").order("created_at"),
     db.from("reps").select("name, pipedrive_user_id").eq("active", true).not("pipedrive_user_id", "is", null),
     db
       .from("intake_events")
       .select("source_id, action")
       .gte("created_at", new Date(Date.now() - 7 * 86_400_000).toISOString()),
+    // Pipelines + stages for the per-engine default-stage picker (uuid-keyed so
+    // native stages with no Pipedrive id, e.g. Hot List Import, are selectable).
+    db
+      .from("crm_stages")
+      .select("id, name, pipedrive_stage_id, sort_order, crm_pipelines ( name, sort_order, pipedrive_pipeline_id )")
+      .order("sort_order"),
   ]);
   // 7-day action counts per source for the panel header.
   const counts: Record<string, Record<string, number>> = {};
@@ -24,7 +30,16 @@ export async function GET() {
     counts[e.source_id] = counts[e.source_id] ?? {};
     counts[e.source_id][e.action] = (counts[e.source_id][e.action] ?? 0) + 1;
   }
-  return NextResponse.json({ sources: sources ?? [], reps: reps ?? [], counts });
+  const stages = (stageRows ?? [])
+    .map((s: any) => ({
+      id: s.id,
+      name: s.name,
+      pipedriveStageId: s.pipedrive_stage_id,
+      pipeline: s.crm_pipelines?.name ?? "—",
+      pipelineSort: s.crm_pipelines?.sort_order ?? 99,
+    }))
+    .sort((a, b) => a.pipelineSort - b.pipelineSort);
+  return NextResponse.json({ sources: sources ?? [], reps: reps ?? [], counts, stages });
 }
 
 export async function POST(req: NextRequest) {
