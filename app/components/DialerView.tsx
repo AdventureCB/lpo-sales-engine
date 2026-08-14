@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ensurePhone, getPhoneState, newOutboundCall, setOutboundHandler, subscribePhone } from "./phoneClient";
 import type { VmDrop } from "./VmPanel";
-import { DealDetailView, prefetchDeal, BAND_COLOR, humanize, type AiProfile } from "./DealDetailView";
+import { DealDetailView, prefetchDeal, fmtWhen, BAND_COLOR, humanize, type AiProfile, type DialerDeal } from "./DealDetailView";
 
 declare global {
   interface Window {
@@ -264,6 +264,13 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [aiExpanded, setAiExpanded] = useState(false);
   const [aiRefreshing, setAiRefreshing] = useState(false);
 
+  // Deal meta (pipeline/stage/source/value/record) surfaced from the embedded
+  // deal view so the dialer can render it in its own chrome.
+  const [leadDeal, setLeadDeal] = useState<DialerDeal | null>(null);
+  const handleDeal = useCallback((d: DialerDeal | null) => setLeadDeal(d), []);
+  const [pipelineSel, setPipelineSel] = useState<string | null>(null); // dialer pipeline→stage filter
+  const [valueEdit, setValueEdit] = useState<string | null>(null);
+
   // ── Momentum: today's totals, personal best, streak (goal-gradient) ──
   const [today, setToday] = useState<{
     goal: number;
@@ -320,6 +327,9 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   useEffect(() => {
     setLeadProfile({ profile: null, stale: false, building: false });
     setAiExpanded(false);
+    setLeadDeal(null);
+    setPipelineSel(null);
+    setValueEdit(null);
   }, [lead?.crmDealId, lead?.dealId]);
 
   const refreshProfile = async () => {
@@ -1093,6 +1103,55 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
 
         {/* center: lead card + full embedded deal view */}
         <div style={{ minWidth: 0 }}>
+        {/* Pipeline / stage / source — horizontal, above the contact card. */}
+        {lead && leadDeal && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+            <select
+              className="vmsel"
+              style={{ width: "auto", padding: "6px 8px", fontSize: 13 }}
+              value={pipelineSel ?? leadDeal.pipeline_id ?? ""}
+              onChange={(e) => setPipelineSel(e.target.value)}
+              disabled={leadDeal.saving}
+              title="Pipeline"
+            >
+              {leadDeal.pipelines.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            <select
+              className="vmsel"
+              style={{ width: "auto", padding: "6px 8px", fontSize: 13 }}
+              value={pipelineSel && pipelineSel !== leadDeal.pipeline_id ? "" : leadDeal.stage_id ?? ""}
+              onChange={(e) => {
+                if (!e.target.value) return;
+                void leadDeal.update({ stageId: e.target.value });
+                setPipelineSel(null);
+              }}
+              disabled={leadDeal.saving}
+              title="Stage"
+            >
+              <option value="" disabled>Pick a stage…</option>
+              {leadDeal.stages
+                .filter((s) => s.pipeline_id === (pipelineSel ?? leadDeal.pipeline_id))
+                .map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+            </select>
+            <select
+              className="vmsel"
+              style={{ width: "auto", padding: "6px 8px", fontSize: 13 }}
+              value={leadDeal.source_id ?? ""}
+              onChange={(e) => leadDeal.update({ sourceId: e.target.value || null })}
+              disabled={leadDeal.saving}
+              title="Source"
+            >
+              <option value="">— source —</option>
+              {leadDeal.sources.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="card lead-card" style={{ position: "relative", marginBottom: 18 }}>
           {rewards.map((r) => (
             <span key={r.id} className="reward-float" style={{ right: 34, bottom: 96 }}>
@@ -1123,6 +1182,32 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                   </span>
                 )}
                 <span className="chip stage">Pipedrive ▸ deal open</span>
+                {leadDeal && (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 13.5, fontWeight: 600, color: "var(--text-2)" }} title="Deal value">
+                    $
+                    <input
+                      className="vmsel"
+                      style={{ width: 84, padding: "3px 6px", fontSize: 13.5, fontVariantNumeric: "tabular-nums" }}
+                      inputMode="numeric"
+                      placeholder="—"
+                      value={valueEdit ?? (leadDeal.value_cents != null ? String(Math.round(leadDeal.value_cents / 100)) : "")}
+                      disabled={leadDeal.saving}
+                      onChange={(e) => setValueEdit(e.target.value.replace(/[^\d]/g, ""))}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && valueEdit !== null) {
+                          void leadDeal.update({ valueDollars: valueEdit === "" ? null : Number(valueEdit) });
+                          setValueEdit(null);
+                        }
+                      }}
+                      onBlur={() => {
+                        if (valueEdit !== null && valueEdit !== (leadDeal.value_cents != null ? String(Math.round(leadDeal.value_cents / 100)) : "")) {
+                          void leadDeal.update({ valueDollars: valueEdit === "" ? null : Number(valueEdit) });
+                        }
+                        setValueEdit(null);
+                      }}
+                    />
+                  </span>
+                )}
               </div>
               {/* AI buyer-profile summary — the quick read on who you're calling. */}
               {(leadProfile.profile?.summary || leadProfile.building) && (
@@ -1371,6 +1456,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
             dealId={lead.dealId > 0 ? undefined : lead.crmDealId}
             embedded
             onProfile={handleProfile}
+            onDeal={handleDeal}
           />
         )}
         </div>
@@ -1521,6 +1607,19 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
               </div>
             );
           })()}
+
+          {/* Record — moved here from the embedded deal, below Buyer profile. */}
+          {lead && leadDeal && (
+            <div className="card">
+              <div className="panel-h">Record</div>
+              <div style={{ fontSize: 13, color: "var(--text-3)", lineHeight: 1.8 }}>
+                Created {fmtWhen(leadDeal.record.created)}<br />
+                Stage changed {fmtWhen(leadDeal.record.stageChanged)}<br />
+                Last activity {fmtWhen(leadDeal.record.lastActivity)}<br />
+                Pipedrive #{leadDeal.record.pdId ?? "—"}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

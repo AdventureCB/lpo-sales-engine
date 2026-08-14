@@ -46,6 +46,21 @@ interface DealData {
 
 export type AiProfile = NonNullable<DealData["aiProfile"]>;
 
+// Deal meta the dialer renders in its own chrome (pipeline/stage/source above
+// the lead card, value in the card, Record in the right rail).
+export interface DialerDeal {
+  value_cents: number | null;
+  pipeline_id: string | null;
+  stage_id: string | null;
+  source_id: string | null;
+  pipelines: { id: string; name: string }[];
+  stages: { id: string; name: string; pipeline_id: string }[];
+  sources: { id: string; name: string }[];
+  record: { created: string | null; stageChanged: string | null; lastActivity: string | null; pdId: number | null };
+  saving: boolean;
+  update: (fields: Record<string, unknown>) => Promise<void>;
+}
+
 const KIND_ICON: Record<string, string> = {
   call: "📞", sms: "💬", email: "✉️", task: "📋", note: "📝", meeting: "📅", system: "⚙️",
 };
@@ -93,7 +108,7 @@ export async function prefetchDeal(opts: { dealId?: string; pdDealId?: number | 
   } catch {}
 }
 
-function fmtWhen(iso: string | null) {
+export function fmtWhen(iso: string | null) {
   if (!iso) return "—";
   return new Date(iso).toLocaleString("en-US", {
     timeZone: "America/Los_Angeles", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
@@ -105,6 +120,7 @@ export function DealDetailView({
   pdDealId,
   embedded,
   onProfile,
+  onDeal,
 }: {
   dealId?: string;
   pdDealId?: number;
@@ -112,6 +128,8 @@ export function DealDetailView({
   // Embedded (dialer) mode surfaces the AI profile up so the dialer can render
   // the summary + confidence/archetypes in its own chrome.
   onProfile?: (p: { profile: AiProfile | null; stale: boolean; building: boolean }) => void;
+  // …and the deal meta (value, pipeline/stage/source, record + update fn).
+  onDeal?: (d: DialerDeal | null) => void;
 }) {
   const router = useRouter();
   // Seed from the prefetch cache (warmed during the dialer's review step) so an
@@ -194,25 +212,56 @@ export function DealDetailView({
     if (embedded) onProfile?.({ profile: data?.aiProfile ?? null, stale: !!data?.aiProfileStale, building: aiBuilding });
   }, [embedded, data, aiBuilding, onProfile]);
 
-  const update = async (fields: Record<string, unknown>) => {
-    setSaving(true);
-    setWarn(null);
-    const r = await fetch("/api/crm/deal", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: data?.deal?.id ?? dealId, ...fields }),
-    }).catch(() => null);
-    if (r?.ok) {
-      const d = await r.json();
-      if (d.writeThroughError) {
-        setWarn(`Saved here — Pipedrive write-through failed (${d.writeThroughError}). It will match after cutover or a re-sync.`);
+  const update = useCallback(
+    async (fields: Record<string, unknown>) => {
+      setSaving(true);
+      setWarn(null);
+      const r = await fetch("/api/crm/deal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: data?.deal?.id ?? dealId, ...fields }),
+      }).catch(() => null);
+      if (r?.ok) {
+        const d = await r.json();
+        if (d.writeThroughError) {
+          setWarn(`Saved here — Pipedrive write-through failed (${d.writeThroughError}). It will match after cutover or a re-sync.`);
+        }
+        await load();
+      } else {
+        setWarn("Update failed");
       }
-      await load();
-    } else {
-      setWarn("Update failed");
+      setSaving(false);
+    },
+    [data?.deal?.id, dealId, load]
+  );
+
+  // Surface deal meta to the dialer (renders pipeline/stage/source/value/record
+  // in its own chrome). Only the fields the dialer needs, plus the update fn.
+  useEffect(() => {
+    if (!embedded) return;
+    const d = data?.deal;
+    if (!d) {
+      onDeal?.(null);
+      return;
     }
-    setSaving(false);
-  };
+    onDeal?.({
+      value_cents: d.value_cents ?? null,
+      pipeline_id: d.crm_stages?.pipeline_id ?? null,
+      stage_id: d.stage_id ?? null,
+      source_id: d.source_id ?? null,
+      pipelines: data.pipelines,
+      stages: data.stages,
+      sources: data.sources,
+      record: {
+        created: d.pd_add_time ?? d.created_at ?? null,
+        stageChanged: d.stage_changed_at ?? null,
+        lastActivity: d.last_activity_at ?? null,
+        pdId: d.pipedrive_deal_id ?? null,
+      },
+      saving,
+      update,
+    });
+  }, [embedded, data, saving, update, onDeal]);
 
   if (error) return <div className="viewsub">Couldn’t load deal: {error}</div>;
   if (!data) return <div className="viewsub">Loading…</div>;
@@ -349,6 +398,21 @@ export function DealDetailView({
               </div>
     </>
   );
+  // Embedded (dialer) keeps only the read-only Ad attribution here; pipeline/
+  // stage/source/value/owner move into the dialer chrome.
+  const adFieldEl =
+    data.adInfo && (data.adInfo.source || data.adInfo.channel) ? (
+      <div className="field">
+        <label>Ad</label>
+        <div style={{ fontSize: 13.5, paddingTop: 7, whiteSpace: "nowrap" }} title="From Triple Whale pixel / first-party capture">
+          <span style={{ color: "var(--accent)", fontWeight: 650 }}>{data.adInfo.source ?? data.adInfo.channel}</span>
+          {data.adInfo.campaign && <span style={{ color: "var(--text-3)" }}> · {String(data.adInfo.campaign).slice(0, 16)}</span>}
+          {data.adInfo.leadCostCents != null && (
+            <span style={{ color: "var(--text-2)" }}> · ~${Math.round(data.adInfo.leadCostCents / 100)}/lead</span>
+          )}
+        </div>
+      </div>
+    ) : null;
   // Truck lives in the contact section (it's about the customer's vehicle).
   // A Save button appears once you start editing (no accidental blur-saves).
   const truckDirty = truckEdit !== null && truckEdit.trim() !== (d.truck_model ?? "");
@@ -428,6 +492,7 @@ export function DealDetailView({
       knownPhones={phones.map((p) => p.e164 ?? p.value)}
       knownTruck={d.truck_model ?? null}
       onSaved={load}
+      compact={embedded}
     />
   ) : null;
   const adJourneyEl = data.adJourney ? <AdJourneySection journey={data.adJourney} /> : null;
@@ -1150,8 +1215,11 @@ export function DealDetailView({
           )}
             </>
           )}
-          <div style={embedded ? { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" } : undefined}>
-            <div style={embedded ? { flex: 1, minWidth: 170 } : undefined}>
+          {/* Record + editable pipeline/stage/source/value move into the dialer
+              chrome in embedded mode (surfaced via onDeal); keep Ad + truck +
+              interests here for context. */}
+          {!embedded && (
+            <>
               <div className="panel-h" style={{ marginTop: 16 }}>Record</div>
               <div style={{ fontSize: 13.5, color: "var(--text-3)", lineHeight: 1.8 }}>
                 Created {fmtWhen(d.pd_add_time ?? d.created_at)}<br />
@@ -1159,15 +1227,15 @@ export function DealDetailView({
                 Last activity {fmtWhen(d.last_activity_at)}<br />
                 Pipedrive #{d.pipedrive_deal_id ?? "—"}
               </div>
+            </>
+          )}
+          {embedded && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
+              {adFieldEl}
+              {truckFieldEl}
+              {interestsEl}
             </div>
-            {embedded && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16, minWidth: 210 }}>
-                {propertyFields}
-                {truckFieldEl}
-                {interestsEl}
-              </div>
-            )}
-          </div>
+          )}
           {!embedded && klaviyoEl}
           {!embedded && adJourneyEl}
           {!embedded && profileEl}
@@ -1318,10 +1386,8 @@ function MergeDealModal({
  * the data-sufficiency / gaps note.
  */
 function NextActionCard({ profile, building }: { profile: AiProfile | null; building: boolean }) {
-  const [open, setOpen] = useState(false);
   const na = profile?.next_action;
   const ds = na?.data_sufficiency;
-  const hasDetail = (na?.questions_to_ask ?? []).length > 0 || !!ds?.coverage_note || (ds?.known_gaps ?? []).length > 0;
 
   if (!na?.action) {
     return (
@@ -1345,37 +1411,23 @@ function NextActionCard({ profile, building }: { profile: AiProfile | null; buil
         🧠 Suggested next action
       </div>
       <div style={{ fontSize: 13, lineHeight: 1.5, marginTop: 4 }}>{na.action}</div>
-      {hasDetail && (
-        <>
-          {/* "Ask on the next touch" is always visible; the bigger arrow beside
-              it expands the actual questions + gaps. */}
-          <div
-            style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, cursor: "pointer" }}
-            onClick={() => setOpen((v) => !v)}
-          >
-            <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--text-2)", textTransform: "uppercase", letterSpacing: 0.4 }}>
-              Ask on the next touch
-            </span>
-            <span style={{ color: "var(--accent)", fontSize: 17, lineHeight: 1 }}>{open ? "▾" : "▸"}</span>
+      {hasQuestions && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--text-2)", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3 }}>
+            Ask on the next touch
           </div>
-          {open && (
-            <>
-              {hasQuestions && (
-                <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 12.5, color: "var(--text-2)" }}>
-                  {na.questions_to_ask!.map((q, i) => (
-                    <li key={i} style={{ marginBottom: 2 }}>&ldquo;{q}&rdquo;</li>
-                  ))}
-                </ul>
-              )}
-              {ds && (
-                <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 8 }}>
-                  {ds.coverage_note}
-                  {(ds.known_gaps ?? []).length > 0 && <span> · Missing: {ds.known_gaps!.map((g) => humanize(g.attribute)).join(", ")}</span>}
-                </div>
-              )}
-            </>
-          )}
-        </>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: "var(--text-2)" }}>
+            {na.questions_to_ask!.map((q, i) => (
+              <li key={i} style={{ marginBottom: 2 }}>&ldquo;{q}&rdquo;</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {ds && (
+        <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 8 }}>
+          {ds.coverage_note}
+          {(ds.known_gaps ?? []).length > 0 && <span> · Missing: {ds.known_gaps!.map((g) => humanize(g.attribute)).join(", ")}</span>}
+        </div>
       )}
     </div>
   );
@@ -1699,6 +1751,7 @@ function KlaviyoActivity({
   knownPhones,
   knownTruck,
   onSaved,
+  compact,
 }: {
   email: string;
   contactId: string | null;
@@ -1706,6 +1759,7 @@ function KlaviyoActivity({
   knownPhones: string[];
   knownTruck?: string | null;
   onSaved: () => void;
+  compact?: boolean;
 }) {
   const [events, setEvents] = useState<{ metric: string; at: string; detail: Record<string, unknown> }[] | null>(null);
   const [profilePhones, setProfilePhones] = useState<string[]>([]);
@@ -1752,7 +1806,8 @@ function KlaviyoActivity({
     if (r?.ok) onSaved();
   };
 
-  const shown = events ? (showAll ? events : events.slice(0, 15)) : [];
+  const collapsedLimit = compact ? 3 : 15;
+  const shown = events ? (showAll ? events : events.slice(0, collapsedLimit)) : [];
   // Buying-mode banner: freshest cart/saved-build signal in the last 14 days.
   const freshBuying = (events ?? []).find(
     (e) => isBuying(eventKind(e.metric)) && Date.now() - Date.parse(e.at) < 14 * 86_400_000
@@ -1943,9 +1998,9 @@ function KlaviyoActivity({
               </div>
             );
           })}
-          {events && events.length > 15 && !showAll && (
-            <button className="btn ghost" style={{ width: "100%", justifyContent: "center", padding: "6px 0", fontSize: 13 }} onClick={() => setShowAll(true)}>
-              Show all {events.length} events
+          {events && events.length > collapsedLimit && (
+            <button className="btn ghost" style={{ width: "100%", justifyContent: "center", padding: "6px 0", fontSize: 13 }} onClick={() => setShowAll((v) => !v)}>
+              {showAll ? "▴ Show fewer" : `▾ Show all ${events.length} events`}
             </button>
           )}
         </div>
