@@ -454,7 +454,10 @@ export interface TranscriptResult {
  * from the dual-channel recording) when DEEPGRAM_API_KEY is set; Telnyx AI
  * Whisper (plain text) otherwise.
  */
-export async function transcribeRecording(mp3Url: string): Promise<TranscriptResult | null> {
+export async function transcribeRecording(
+  mp3Url: string,
+  opts?: { voicemail?: boolean } // single speaker: the caller — no Rep/Customer labels
+): Promise<TranscriptResult | null> {
   const audio = await fetch(mp3Url);
   if (!audio.ok) throw new Error(`recording download ${audio.status}`);
 
@@ -479,6 +482,12 @@ export async function transcribeRecording(mp3Url: string): Promise<TranscriptRes
       .filter((u: any) => u.text)
       .sort((a: any, b: any) => a.start - b.start);
     if (utts.length === 0) return null;
+    if (opts?.voicemail) {
+      // Voicemail = one speaker (the caller); channel labels are meaningless
+      // and "Rep:" would be plain wrong.
+      const text = utts.map((u: any) => u.text).join("\n");
+      return { text, utterances: utts.map(({ text }: any) => ({ speaker: "contact" as const, text })) };
+    }
     const text = utts
       .map((u: any) => `${u.speaker === "rep" ? "Rep" : "Customer"}: ${u.text}`)
       .join("\n");

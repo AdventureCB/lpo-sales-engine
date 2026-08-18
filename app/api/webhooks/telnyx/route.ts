@@ -294,7 +294,7 @@ export async function POST(req: NextRequest) {
           }
         }
         const { transcribeRecording } = await import("@/lib/telnyx");
-        const result = await transcribeRecording(mp3).catch(() => null);
+        const result = await transcribeRecording(mp3, { voicemail: isVm }).catch(() => null);
         if (existing && (isVm || result?.text?.trim())) {
           let classification = existing.classification;
           if (isVm) {
