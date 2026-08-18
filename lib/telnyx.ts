@@ -300,6 +300,25 @@ export async function ensureInboundApp(db: SupabaseClient): Promise<{ inboundApp
       .upsert({ key: "telnyx", value: { ...state, inboundAppId: appId } }, { onConflict: "key" });
   }
 
+  // The transfer's outbound leg (app → rep's SIP client) needs an outbound
+  // voice profile on the application, same as any outbound-capable connection.
+  try {
+    const ovps = await tx("/outbound_voice_profiles?filter[name][contains]=lpo-outbound");
+    const ovp = (ovps.data ?? [])[0];
+    if (ovp) {
+      await tx(`/call_control_applications/${appId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          application_name: "lpo-inbound",
+          webhook_event_url: "https://lpo-sales-engine.vercel.app/api/webhooks/telnyx",
+          outbound: { outbound_voice_profile_id: ovp.id },
+        }),
+      });
+    }
+  } catch (e) {
+    console.error("inbound app OVP attach failed", e);
+  }
+
   // Point every assigned number (reps + the account default) at the app.
   const targets = new Set<string>();
   const { data: reps } = await db.from("reps").select("telnyx_number").not("telnyx_number", "is", null);

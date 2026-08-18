@@ -148,6 +148,26 @@ export async function POST(req: NextRequest) {
 
   const db = supabaseAdmin();
 
+  // Debug trail for multi-leg flows (transfer/VM) — cheap, call events only.
+  void db
+    .from("telnyx_event_log")
+    .insert({
+      event_type: type,
+      session_id: p.call_session_id ?? null,
+      leg_to: typeof p.to === "string" ? p.to : null,
+      leg_from: typeof p.from === "string" ? p.from : null,
+      client_state: p.client_state ?? null,
+      payload: { ccid: p.call_control_id, leg_id: p.call_leg_id, direction: p.direction, state: p.state, cause: p.hangup_cause, connection_id: p.connection_id },
+    })
+    .then(({ error: e }) => e && console.error("event log", e));
+
+  // The transfer's browser-bound leg (to sip:…) shares the A-leg's session id —
+  // letting it through the lifecycle upsert clobbers the inbound row (direction,
+  // completed_at) and kills the voicemail timer. Track it only in the log.
+  if (typeof p.to === "string" && p.to.startsWith("sip:")) {
+    return NextResponse.json({ ok: true, ignored: "sip-leg" });
+  }
+
   // Voicemail legs are marked via client_state — they skip the normal
   // auto-record (greeting first, then a beeped recording).
   const { decodeClientState } = await import("@/lib/telnyx");
