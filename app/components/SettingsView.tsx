@@ -1125,33 +1125,110 @@ function PipelineAdmin() {
   );
 }
 
-// ── Telnyx voicemail: greeting, ring window, on/off ─────────────────────────
+// ── Telnyx voicemail: greeting (TTS or recorded), ring window, on/off ──────
+
+/** AudioBuffer → mono 16-bit WAV (same encoding the VM-drop recorder uses). */
+function audioBufferToWav(buffer: AudioBuffer): Blob {
+  const ch = buffer.getChannelData(0);
+  const sampleRate = buffer.sampleRate;
+  const out = new DataView(new ArrayBuffer(44 + ch.length * 2));
+  const writeStr = (o: number, s: string) => [...s].forEach((cc, i) => out.setUint8(o + i, cc.charCodeAt(0)));
+  writeStr(0, "RIFF");
+  out.setUint32(4, 36 + ch.length * 2, true);
+  writeStr(8, "WAVEfmt ");
+  out.setUint32(16, 16, true);
+  out.setUint16(20, 1, true);
+  out.setUint16(22, 1, true);
+  out.setUint32(24, sampleRate, true);
+  out.setUint32(28, sampleRate * 2, true);
+  out.setUint16(32, 2, true);
+  out.setUint16(34, 16, true);
+  writeStr(36, "data");
+  out.setUint32(40, ch.length * 2, true);
+  for (let i = 0; i < ch.length; i++) {
+    const s = Math.max(-1, Math.min(1, ch[i]));
+    out.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([out.buffer], { type: "audio/wav" });
+}
 
 function VoicemailAdmin() {
-  const [cfg, setCfg] = useState<{ enabled: boolean; delay_s: number; greeting: string } | null>(null);
+  const [cfg, setCfg] = useState<{ enabled: boolean; delay_s: number; greeting: string; greeting_mode: "tts" | "audio"; greeting_audio_path: string | null } | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [recorder, setRecorder] = useState<MediaRecorder | null>(null);
 
   useEffect(() => {
     fetch("/api/admin/voicemail")
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => d?.config && setCfg(d.config))
+      .then((d) => {
+        if (!d?.config) return;
+        setCfg(d.config);
+        setAudioUrl(d.greetingAudioUrl ?? null);
+      })
       .catch(() => {});
   }, []);
 
   const save = async (patch: Record<string, unknown>) => {
+    setSaving(true);
     const r = await fetch("/api/admin/voicemail", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     }).catch(() => null);
+    setSaving(false);
     if (r?.ok) {
       const d = await r.json();
       setCfg(d.config);
+      setAudioUrl(d.greetingAudioUrl ?? null);
       setMsg("Saved ✓");
       setTimeout(() => setMsg(null), 2500);
     } else {
-      setMsg("Save failed");
+      const d = await r?.json().catch(() => null);
+      setMsg(d?.error ?? "Save failed");
     }
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream);
+      const chunks: Blob[] = [];
+      rec.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data);
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setRecording(false);
+        try {
+          const raw = new Blob(chunks);
+          const ctx = new AudioContext();
+          const buf = await ctx.decodeAudioData(await raw.arrayBuffer());
+          void ctx.close();
+          const wav = audioBufferToWav(buf);
+          const b64 = btoa(String.fromCharCode(...new Uint8Array(await wav.arrayBuffer())));
+          await save({ audioBase64: b64, audioMime: "audio/wav", greeting_mode: "audio" });
+        } catch {
+          setMsg("Recording failed — try again");
+        }
+      };
+      rec.start();
+      setRecorder(rec);
+      setRecording(true);
+    } catch {
+      setMsg("Microphone unavailable — allow mic access and retry");
+    }
+  };
+
+  const uploadFile = async (f: File) => {
+    if (!/audio\/(wav|x-wav|mpeg|mp3)/.test(f.type)) {
+      setMsg("WAV or MP3 only");
+      return;
+    }
+    const b = new Uint8Array(await f.arrayBuffer());
+    let s = "";
+    for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000));
+    await save({ audioBase64: btoa(s), audioMime: f.type.includes("mpeg") || f.type.includes("mp3") ? "audio/mpeg" : "audio/wav", greeting_mode: "audio" });
   };
 
   if (!cfg) return null;
@@ -1159,14 +1236,15 @@ function VoicemailAdmin() {
     <div className="card" style={{ marginTop: 18 }}>
       <h3 style={{ margin: "0 0 4px" }}>📼 Voicemail (Telnyx)</h3>
       <p className="viewsub" style={{ marginTop: 0 }}>
-        Unanswered inbound calls get a spoken greeting, a beep, and a recorded message — transcribed and
-        surfaced on the deal timeline + notifications. Applies to Telnyx numbers only (Quo keeps its own VM until port).
-        {msg && <span style={{ marginLeft: 10, color: "var(--good)" }}>{msg}</span>}
+        Unanswered inbound calls get the greeting, a beep, and a recorded message — transcribed and surfaced on
+        the deal timeline + notifications. Telnyx numbers only (Quo keeps its own VM until port).
+        {msg && <span style={{ marginLeft: 10, color: msg === "Saved ✓" ? "var(--good)" : "var(--crit)" }}>{msg}</span>}
       </p>
       <div style={{ display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
         <button
           className={`btn ${cfg.enabled ? "primary" : "ghost"}`}
           style={{ padding: "6px 14px", fontSize: 13 }}
+          disabled={saving}
           onClick={() => save({ enabled: !cfg.enabled })}
         >
           {cfg.enabled ? "Enabled" : "Disabled"}
@@ -1181,17 +1259,60 @@ function VoicemailAdmin() {
             onBlur={(e) => Number(e.target.value) !== cfg.delay_s && save({ delay_s: Number(e.target.value) })}
           />
         </label>
-        <label style={{ fontSize: 12.5, color: "var(--text-3)", flex: 1, minWidth: 320 }}>
-          Greeting (spoken by text-to-speech)
+        <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+          Greeting
+          <div className="range-toggle" style={{ marginTop: 3 }}>
+            <button className={cfg.greeting_mode !== "audio" ? "active" : ""} disabled={saving} onClick={() => save({ greeting_mode: "tts" })}>
+              🗣 Text-to-speech
+            </button>
+            <button className={cfg.greeting_mode === "audio" ? "active" : ""} disabled={saving} onClick={() => save({ greeting_mode: "audio" })}>
+              🎙 Recorded
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {cfg.greeting_mode !== "audio" ? (
+        <label style={{ fontSize: 12.5, color: "var(--text-3)", display: "block", marginTop: 12 }}>
+          Spoken by text-to-speech
           <textarea
             className="vmsel"
             rows={2}
-            style={{ display: "block", marginTop: 3, width: "100%", resize: "vertical" }}
+            style={{ display: "block", marginTop: 3, width: "100%", maxWidth: 720, resize: "vertical" }}
             defaultValue={cfg.greeting}
             onBlur={(e) => e.target.value.trim() !== cfg.greeting && save({ greeting: e.target.value.trim() })}
           />
         </label>
-      </div>
+      ) : (
+        <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          {!recording ? (
+            <button className="btn" style={{ padding: "6px 14px", fontSize: 13 }} disabled={saving} onClick={startRecording}>
+              ⏺ Record greeting
+            </button>
+          ) : (
+            <button className="btn" style={{ padding: "6px 14px", fontSize: 13, background: "var(--crit)", color: "#fff" }} onClick={() => recorder?.stop()}>
+              ⏹ Stop &amp; save
+            </button>
+          )}
+          <label className="btn ghost" style={{ padding: "6px 14px", fontSize: 13, cursor: "pointer" }}>
+            ⬆ Upload WAV/MP3
+            <input type="file" accept="audio/wav,audio/mpeg,audio/mp3,.wav,.mp3" style={{ display: "none" }} onChange={(e) => e.target.files?.[0] && void uploadFile(e.target.files[0])} />
+          </label>
+          {audioUrl ? (
+            <>
+              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+              <audio controls preload="none" src={audioUrl} style={{ height: 34 }} />
+              <button className="btn ghost" style={{ padding: "5px 10px", fontSize: 12.5 }} disabled={saving} onClick={() => save({ clearAudio: true, greeting_mode: "tts" })}>
+                🗑 Remove
+              </button>
+            </>
+          ) : (
+            <span style={{ fontSize: 12.5, color: "var(--warn, #d9a234)" }}>
+              No recording yet — callers hear the text-to-speech greeting until one is saved.
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

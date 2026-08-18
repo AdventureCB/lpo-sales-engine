@@ -242,6 +242,17 @@ export async function speakCall(callControlId: string, text: string, clientState
   });
 }
 
+/** Play an audio file into the call (recorded voicemail greeting). */
+export async function playbackCall(callControlId: string, audioUrl: string, clientState: string): Promise<void> {
+  await tx(`/calls/${callControlId}/actions/playback_start`, {
+    method: "POST",
+    body: JSON.stringify({
+      audio_url: audioUrl,
+      client_state: Buffer.from(clientState).toString("base64"),
+    }),
+  });
+}
+
 /** Decode the client_state a webhook event echoes back (base64 → string). */
 export function decodeClientState(cs: unknown): string | null {
   if (typeof cs !== "string" || !cs) return null;

@@ -157,15 +157,38 @@ export async function POST(req: NextRequest) {
   // the AI transcript. Never fail the webhook over recording problems.
   if (type === "call.answered" && p.call_control_id) {
     if (vmState) {
-      // VM takeover answered: play the greeting; recording starts at speak end.
+      // VM takeover answered: play the greeting (recorded audio when
+      // configured, TTS otherwise); recording starts when the greeting ends.
       const { data: cfgRow } = await db.from("crm_sync_state").select("value").eq("key", "telnyx_vm").maybeSingle();
-      const greeting = ((cfgRow?.value as any)?.greeting as string) || VM_DEFAULTS.greeting;
-      const { speakCall } = await import("@/lib/telnyx");
-      speakCall(p.call_control_id, greeting, "vm").catch((e) => console.error("vm speak", e));
+      const cfg = (cfgRow?.value as any) ?? {};
+      const greeting = (cfg.greeting as string) || VM_DEFAULTS.greeting;
+      const { speakCall, playbackCall } = await import("@/lib/telnyx");
+      let played = false;
+      if (cfg.greeting_mode === "audio" && cfg.greeting_audio_path) {
+        try {
+          const { data: signed } = await db.storage.from("vm-drops").createSignedUrl(cfg.greeting_audio_path, 3600);
+          if (signed?.signedUrl) {
+            await playbackCall(p.call_control_id, signed.signedUrl, "vm");
+            played = true;
+          }
+        } catch (e) {
+          console.error("vm audio greeting failed — falling back to TTS", e);
+        }
+      }
+      if (!played) speakCall(p.call_control_id, greeting, "vm").catch((e) => console.error("vm speak", e));
     } else {
       const { startRecording } = await import("@/lib/telnyx");
       startRecording(p.call_control_id).catch((e) => console.error("record_start", e));
     }
+  }
+
+  // Recorded greeting finished → beep + record the message.
+  if (type === "call.playback.ended") {
+    if (vmState && p.call_control_id) {
+      const { startRecording } = await import("@/lib/telnyx");
+      startRecording(p.call_control_id, { beep: true, clientState: "vm" }).catch((e) => console.error("vm record", e));
+    }
+    return NextResponse.json({ ok: true }); // playback events aren't call lifecycle
   }
 
   // Greeting finished → beep + record the message.
