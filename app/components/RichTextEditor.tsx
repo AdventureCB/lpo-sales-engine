@@ -82,11 +82,32 @@ export default function RichTextEditor({
     emit();
   };
 
-  /** Open the link popover, remembering the selection the URL applies to. */
-  const openLink = () => {
+  /** Remember the editor selection before a toolbar control steals focus. */
+  const saveSel = () => {
     const sel = window.getSelection();
     savedRange.current =
       sel && sel.rangeCount > 0 && ref.current?.contains(sel.anchorNode) ? sel.getRangeAt(0).cloneRange() : null;
+  };
+
+  /** Re-apply the remembered selection (dropdown/popover interactions drop it). */
+  const restoreSel = () => {
+    const sel = window.getSelection();
+    if (savedRange.current && sel) {
+      sel.removeAllRanges();
+      sel.addRange(savedRange.current);
+    }
+  };
+
+  const applyFontSize = (v: string) => {
+    ref.current?.focus();
+    restoreSel();
+    document.execCommand("fontSize", false, v);
+    emit();
+  };
+
+  /** Open the link popover, remembering the selection the URL applies to. */
+  const openLink = () => {
+    saveSel();
     setLinkText(savedRange.current && !savedRange.current.collapsed ? "" : "");
     setLinkUrl("");
     setErr(null);
@@ -97,14 +118,9 @@ export default function RichTextEditor({
     let url = linkUrl.trim();
     if (!url) return;
     if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
-    const el = ref.current;
-    el?.focus();
+    ref.current?.focus();
     // Restore the selection the rep had before clicking into the popover.
-    const sel = window.getSelection();
-    if (savedRange.current && sel) {
-      sel.removeAllRanges();
-      sel.addRange(savedRange.current);
-    }
+    restoreSel();
     if (savedRange.current && !savedRange.current.collapsed) {
       document.execCommand("createLink", false, url);
     } else {
@@ -189,6 +205,25 @@ export default function RichTextEditor({
         {tbtn("B", "Bold", () => exec("bold"), { on: active.bold, style: { fontWeight: 700 } })}
         {tbtn("I", "Italic", () => exec("italic"), { on: active.italic, style: { fontStyle: "italic" } })}
         {tbtn("U", "Underline", () => exec("underline"), { on: active.underline, style: { textDecoration: "underline" } })}
+        <select
+          className="vmsel"
+          style={{ width: "auto", fontSize: 12, padding: "2px 6px" }}
+          value=""
+          title="Font size — applies to the selected text"
+          onMouseDown={saveSel}
+          onChange={(e) => {
+            if (e.target.value) applyFontSize(e.target.value);
+            e.target.value = "";
+          }}
+        >
+          <option value="">Aa Size…</option>
+          <option value="1">Tiny</option>
+          <option value="2">Small</option>
+          <option value="3">Normal</option>
+          <option value="4">Medium</option>
+          <option value="5">Large</option>
+          <option value="7">Huge</option>
+        </select>
         {tbtn("• List", "Bullet list", () => exec("insertUnorderedList"), { on: active.insertUnorderedList })}
         {tbtn("🔗 Link", "Insert link", openLink, { on: linkOpen })}
         {tbtn(uploading ? "…" : "🖼 Image", "Insert image", () => fileRef.current?.click())}
