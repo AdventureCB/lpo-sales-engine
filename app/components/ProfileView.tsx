@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { VmPanel, type VmDrop } from "./VmPanel";
+import { RingtonePicker } from "./RingtonePicker";
 import { VersionStamp } from "./VersionStamp";
 
 /**
@@ -69,6 +70,11 @@ export function ProfileView({ isAdmin }: { isAdmin: boolean }) {
 
       <div style={{ maxWidth: 440 }}>
         <VmPanel selected={vmDrop} onSelect={select} />
+      </div>
+
+      <div className="card" style={{ maxWidth: 560, marginTop: 18 }}>
+        <div className="panel-h">📳 Ringtone</div>
+        <RingtonePicker />
       </div>
 
       <div className="card" style={{ maxWidth: 560, marginTop: 18 }}>

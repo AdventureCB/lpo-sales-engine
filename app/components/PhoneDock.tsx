@@ -6,6 +6,7 @@ import {
   answerIncoming,
   endIncoming,
   ensurePhone,
+  silenceRing,
   getPhoneState,
   phoneRequired,
   subscribePhone,
@@ -121,6 +122,17 @@ export function PhoneDock() {
             <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 22 }}>
               <button className="btn primary" style={{ padding: "12px 28px", fontSize: 15 }} onClick={answerIncoming}>
                 ✅ Answer
+              </button>
+              <button
+                className="btn"
+                style={{ padding: "12px 22px", fontSize: 15 }}
+                title="Silence the ring and keep working — the caller keeps ringing into voicemail"
+                onClick={() => {
+                  silenceRing();
+                  setMinimized(true);
+                }}
+              >
+                🔕 Ignore
               </button>
               <button className="btn ghost" style={{ padding: "12px 22px", fontSize: 15 }} onClick={endIncoming}>
                 Decline

@@ -42,43 +42,101 @@ if (typeof window !== "undefined") {
   window.addEventListener("pointerdown", primeAudio, { once: true });
 }
 
-function startRinging() {
-  if (ring) return;
+// Ring patterns — per-machine choice (localStorage "ringtone"), previewable
+// from My Profile. "custom" plays an uploaded audio file (data URL).
+const RING_PATTERNS: Record<string, { freqs: number[]; steps: [number, number][]; period: number }> = {
+  // steps: [offsetSeconds, durationSeconds] bursts within each period
+  classic: { freqs: [440, 480], steps: [[0, 2]], period: 6 },
+  digital: { freqs: [950, 1400], steps: [[0, 0.15], [0.3, 0.15], [0.6, 0.15], [0.9, 0.15]], period: 2.4 },
+  chime: { freqs: [660, 880], steps: [[0, 0.5], [0.8, 0.5]], period: 3.2 },
+  pulse: { freqs: [520], steps: [[0, 0.35]], period: 0.8 },
+};
+
+export function getRingtoneKind(): string {
   try {
+    return localStorage.getItem("ringtone") ?? "classic";
+  } catch {
+    return "classic";
+  }
+}
+
+let customAudio: HTMLAudioElement | null = null;
+
+function startRinging(kindOverride?: string) {
+  if (ring || customAudio) return;
+  const kind = kindOverride ?? getRingtoneKind();
+  try {
+    if (kind === "custom") {
+      let data: string | null = null;
+      try {
+        data = localStorage.getItem("ringtoneData");
+      } catch {}
+      if (data) {
+        customAudio = new Audio(data);
+        customAudio.loop = true;
+        customAudio.volume = 0.6;
+        void customAudio.play().catch(() => {
+          customAudio = null;
+          startRinging("classic"); // custom blocked/broken → default tone
+        });
+        return;
+      }
+      // no file saved — fall through to classic
+    }
     primeAudio();
     if (!ringCtx) return;
+    const pattern = RING_PATTERNS[kind] ?? RING_PATTERNS.classic;
     const gain = ringCtx.createGain();
     gain.gain.value = 0;
     gain.connect(ringCtx.destination);
-    const osc1 = ringCtx.createOscillator();
-    osc1.frequency.value = 440;
-    const osc2 = ringCtx.createOscillator();
-    osc2.frequency.value = 480;
-    osc1.connect(gain);
-    osc2.connect(gain);
-    osc1.start();
-    osc2.start();
+    const oscs = pattern.freqs.map((f) => {
+      const o = ringCtx!.createOscillator();
+      o.frequency.value = f;
+      o.connect(gain);
+      o.start();
+      return o;
+    });
     const burst = () => {
       if (!ringCtx) return;
       const t = ringCtx.currentTime;
       gain.gain.cancelScheduledValues(t);
-      gain.gain.setValueAtTime(0.15, t);
-      gain.gain.setValueAtTime(0, t + 2);
+      for (const [off, dur] of pattern.steps) {
+        gain.gain.setValueAtTime(0.15, t + off);
+        gain.gain.setValueAtTime(0, t + off + dur);
+      }
     };
-    ring = { osc1, osc2, gain, iv: setInterval(burst, 6000) };
+    ring = { osc1: oscs[0], osc2: oscs[1] ?? oscs[0], gain, iv: setInterval(burst, pattern.period * 1000) };
     burst();
   } catch {}
 }
 
 function stopRinging() {
+  if (customAudio) {
+    try {
+      customAudio.pause();
+    } catch {}
+    customAudio = null;
+  }
   if (!ring) return;
   clearInterval(ring.iv);
   try {
     ring.osc1.stop();
-    ring.osc2.stop();
+    if (ring.osc2 !== ring.osc1) ring.osc2.stop();
     ring.gain.disconnect();
   } catch {}
   ring = null;
+}
+
+/** Silence the current ring WITHOUT touching the call (Ignore button). */
+export function silenceRing() {
+  stopRinging();
+}
+
+/** Short preview for the ringtone picker. */
+export function previewRingtone(kind: string) {
+  stopRinging();
+  startRinging(kind);
+  setTimeout(stopRinging, 2600);
 }
 
 const emit = () => subs.forEach((f) => f());
