@@ -10,7 +10,7 @@ const DEFAULTS = {
   enabled: true,
   delay_s: 25,
   greeting:
-    "Hi, you've reached Lone Peak Overland. We can't take your call right now — please leave your name, number, and a quick message after the tone, and we'll get right back to you.",
+    "Hi, you've reached Lone Peak Overland. Please leave your name, number, and a quick message after the tone.",
   greeting_mode: "tts" as "tts" | "audio",
   greeting_audio_path: null as string | null,
 };

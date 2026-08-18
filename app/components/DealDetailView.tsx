@@ -1167,11 +1167,13 @@ export function DealDetailView({
                         </div>
                       )}
                       {isOpen && t.audio && (
-                        // eslint-disable-next-line jsx-a11y/media-has-caption
-                        <audio controls preload="none" src={t.audio} style={{ width: "100%", maxWidth: 340, marginTop: 6, height: 36 }} />
+                        <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 6 }}>
+                          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                          <audio controls preload="none" src={t.audio} style={{ width: "100%", maxWidth: 340, height: 36 }} />
+                        </div>
                       )}
                       {isOpen && (t.media ?? []).length > 0 && (
-                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                        <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
                           {t.media!.map((u, mi) => (
                             <a key={mi} href={u} target="_blank" rel="noreferrer">
                               {/* eslint-disable-next-line @next/next/no-img-element */}
