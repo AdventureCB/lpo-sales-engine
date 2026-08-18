@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
+import { publishNotifs } from "./notifStore";
 
 type NotifGroup = "deals" | "notes" | "comms" | "tasks";
 interface Notif {
@@ -52,6 +53,7 @@ export function NotificationBell() {
         setOverdueCount(d.overdueCount ?? 0);
         setItems(d.items ?? []);
         setCounts(d.counts ?? {});
+        publishNotifs(d.items ?? []); // feeds the Texts nav badge — no extra poll
       })
       .catch(() => {});
   }, []);

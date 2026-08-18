@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { TextNavBadge } from "./TextNavBadge";
 
 export interface NavGroupItem {
   label: string;
@@ -49,8 +50,14 @@ export function NavGroup({
       </h5>
       {open &&
         items.map((t) => (
-          <Link key={t.href} href={t.href} className={active === t.href ? "active" : ""}>
+          <Link
+            key={t.href}
+            href={t.href}
+            className={active === t.href ? "active" : ""}
+            style={t.href === "/texts" ? { display: "flex", alignItems: "center", gap: 6 } : undefined}
+          >
             {t.label}
+            {t.href === "/texts" && <TextNavBadge />}
           </Link>
         ))}
     </div>

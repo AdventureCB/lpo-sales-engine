@@ -33,7 +33,13 @@ export async function GET(req: NextRequest) {
   const activityFilter = deal.contact_id
     ? `deal_id.eq.${deal.id},contact_id.eq.${deal.contact_id}`
     : `deal_id.eq.${deal.id}`;
-  const [activities, calls, stages, sprints, dealSprints, owners] = await Promise.all([
+  // Inbound texts live in sms_messages (webhook-fed), keyed by phone — merge
+  // them into the timeline so replies show on the deal page. Outbound texts
+  // already land as crm_activities rows at send time.
+  const timelinePhones = ((deal.crm_contacts?.phones as any[]) ?? [])
+    .map((p) => p.e164 ?? p.value)
+    .filter(Boolean);
+  const [activities, calls, stages, sprints, dealSprints, owners, inboundSms] = await Promise.all([
     db
       .from("crm_activities")
       .select("id, type, subject, body, actor, due_at, done_at, occurred_at, deal_id")
@@ -59,6 +65,15 @@ export async function GET(req: NextRequest) {
       .order("created_at", { ascending: false }),
     db.from("crm_sprint_items").select("sprint_id").eq("deal_id", deal.id),
     db.from("app_users").select("email, role").order("email"),
+    timelinePhones.length
+      ? db
+          .from("sms_messages")
+          .select("id, body, sent_at, our_number")
+          .eq("direction", "incoming")
+          .in("peer_phone", timelinePhones)
+          .order("sent_at", { ascending: false })
+          .limit(30)
+      : Promise.resolve({ data: [] as any[] }),
   ]);
   const [{ data: sources }, { data: pipelines }] = await Promise.all([
     db.from("deal_sources").select("id, name").order("sort_order").order("name"),
@@ -92,6 +107,16 @@ export async function GET(req: NextRequest) {
       ]
         .filter(Boolean)
         .join(" — "),
+      actor: null,
+      done: true,
+      due: null,
+    })),
+    ...((inboundSms as any).data ?? []).map((m: any) => ({
+      id: `sms-in-${m.id}`,
+      kind: "sms",
+      at: m.sent_at,
+      title: "💬 Text received",
+      body: m.body,
       actor: null,
       done: true,
       due: null,

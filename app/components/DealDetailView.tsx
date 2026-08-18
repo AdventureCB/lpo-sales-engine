@@ -181,6 +181,16 @@ export function DealDetailView({
     void load();
   }, [load]);
 
+  // Keep the timeline live — inbound texts/calls land via webhook, so a
+  // gentle refresh surfaces replies without a manual reload. Skips hidden tabs.
+  useEffect(() => {
+    const iv = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      void load();
+    }, 30_000);
+    return () => clearInterval(iv);
+  }, [load]);
+
   // Embedded mode: the dialer renders the profile's summary + confidence itself,
   // so the DealProfileSection isn't mounted here — own its silent auto-build and
   // surface the profile up via onProfile.

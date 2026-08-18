@@ -11,7 +11,19 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const db = supabaseAdmin();
-  const { data: threads, error } = await db.rpc("sms_threads", { p_limit: 200 });
+  // Reps see only conversations on their own line(s); admins see everything.
+  let ourNumbers: string[] | null = null;
+  if (user.role !== "admin") {
+    if (!user.repId) return NextResponse.json({ threads: [] });
+    const { data: rep } = await db
+      .from("reps")
+      .select("telnyx_number, quo_phone_number")
+      .eq("id", user.repId)
+      .maybeSingle();
+    ourNumbers = [rep?.telnyx_number, rep?.quo_phone_number].filter(Boolean) as string[];
+    if (ourNumbers.length === 0) return NextResponse.json({ threads: [] });
+  }
+  const { data: threads, error } = await db.rpc("sms_threads", { p_limit: 200, p_our_numbers: ourNumbers });
   if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
 
   const phones = (threads ?? []).map((t: any) => t.peer_phone);
