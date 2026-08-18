@@ -146,6 +146,7 @@ export async function POST(req: NextRequest) {
       body: (content || "📷 photo").slice(0, 500),
       actor: user.email,
       occurred_at: new Date().toISOString(),
+      ...(mediaUrls.length ? { meta: { media: mediaUrls } } : {}),
     });
   }
 

@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
   const [activities, calls, stages, sprints, dealSprints, owners, inboundSms] = await Promise.all([
     db
       .from("crm_activities")
-      .select("id, type, subject, body, actor, due_at, done_at, occurred_at, deal_id")
+      .select("id, type, subject, body, actor, due_at, done_at, occurred_at, deal_id, meta")
       .or(activityFilter)
       .order("occurred_at", { ascending: false })
       .limit(150),
@@ -68,7 +68,7 @@ export async function GET(req: NextRequest) {
     timelinePhones.length
       ? db
           .from("sms_messages")
-          .select("id, body, sent_at, our_number")
+          .select("id, body, media, sent_at, our_number")
           .eq("direction", "incoming")
           .in("peer_phone", timelinePhones)
           .order("sent_at", { ascending: false })
@@ -87,6 +87,7 @@ export async function GET(req: NextRequest) {
       at: a.occurred_at,
       title: (a.subject ?? a.type) + (a.deal_id === deal.id ? "" : " · (contact)"),
       body: a.body,
+      media: (a as any).meta?.media ?? null,
       actor: a.actor,
       done: Boolean(a.done_at),
       due: a.due_at,
@@ -117,6 +118,7 @@ export async function GET(req: NextRequest) {
       at: m.sent_at,
       title: "💬 Text received",
       body: m.body,
+      media: m.media ?? null,
       actor: null,
       done: true,
       due: null,

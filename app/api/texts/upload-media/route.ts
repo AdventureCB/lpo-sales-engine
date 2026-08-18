@@ -13,8 +13,9 @@ const ALLOWED = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 /**
  * Ad-hoc image upload for texting (MMS). Stores in the comm-media bucket
- * under sms/ and returns a 24h signed URL — Telnyx fetches the media right
- * at send time, so the expiry is ample.
+ * under sms/ and returns a LONG-lived signed URL — the same URL is persisted
+ * on the message and rendered later in the conversation + deal timeline, so
+ * it must outlive the send (10 years ≈ permanent).
  */
 export async function POST(req: NextRequest) {
   const user = await getSessionUser();
@@ -41,7 +42,7 @@ export async function POST(req: NextRequest) {
   const db = supabaseAdmin();
   const { error: upErr } = await db.storage.from(BUCKET).upload(path, buf, { contentType: body.mimeType, upsert: false });
   if (upErr) return NextResponse.json({ error: `upload failed: ${upErr.message}` }, { status: 500 });
-  const { data: signed, error: sErr } = await db.storage.from(BUCKET).createSignedUrl(path, 24 * 3600);
+  const { data: signed, error: sErr } = await db.storage.from(BUCKET).createSignedUrl(path, 10 * 365 * 24 * 3600);
   if (sErr || !signed?.signedUrl) return NextResponse.json({ error: "sign failed" }, { status: 500 });
   return NextResponse.json({ ok: true, url: signed.signedUrl, contentType: body.mimeType });
 }

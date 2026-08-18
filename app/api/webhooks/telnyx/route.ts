@@ -70,6 +70,37 @@ export async function POST(req: NextRequest) {
       repId = rep?.id ?? null;
     }
 
+    // Inbound MMS: Telnyx's media URLs expire, so mirror each file into our
+    // bucket (long-lived signed URL) — best-effort, original URL on failure.
+    // Outbound events must NOT touch media (we already stored durable URLs at
+    // send time; Telnyx's copies would clobber them with expiring ones).
+    let inboundMedia: string[] | null = null;
+    if (inbound && Array.isArray(p.media) && p.media.length) {
+      const mirrored: (string | null)[] = await Promise.all(
+        p.media.slice(0, 3).map(async (m: any) => {
+          const src = m?.url;
+          if (!src) return null;
+          try {
+            const res = await fetch(src);
+            if (!res.ok) return src;
+            const buf = Buffer.from(await res.arrayBuffer());
+            if (buf.length === 0 || buf.length > 8 * 1024 * 1024) return src;
+            const ct = m.content_type ?? res.headers.get("content-type") ?? "image/jpeg";
+            const ext = (ct.split("/")[1] ?? "jpg").replace("jpeg", "jpg").slice(0, 5);
+            const path = `sms-in/${crypto.randomUUID()}.${ext}`;
+            const { error } = await mdb.storage.from("comm-media").upload(path, buf, { contentType: ct });
+            if (error) return src;
+            const { data: signed } = await mdb.storage.from("comm-media").createSignedUrl(path, 10 * 365 * 24 * 3600);
+            return signed?.signedUrl ?? src;
+          } catch {
+            return src;
+          }
+        })
+      );
+      const kept = mirrored.filter(Boolean) as string[];
+      inboundMedia = kept.length > 0 ? kept : null;
+    }
+
     await mdb.from("sms_messages").upsert(
       {
         provider: "telnyx",
@@ -81,9 +112,7 @@ export async function POST(req: NextRequest) {
         our_number: ourNumber,
         peer_phone: peerPhone,
         body: p.text ?? null,
-        media: Array.isArray(p.media) && p.media.length
-          ? p.media.map((m: any) => m.url).filter(Boolean)
-          : null,
+        ...(inbound ? { media: inboundMedia } : {}),
         sent_at: p.received_at ?? p.sent_at ?? p.completed_at ?? new Date().toISOString(),
       },
       { onConflict: "provider,provider_message_id", ignoreDuplicates: false }

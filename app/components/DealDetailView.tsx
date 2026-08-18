@@ -11,7 +11,7 @@ import { openChat } from "./chatDockStore";
 
 interface DealData {
   deal: any;
-  timeline: { id?: string; kind: string; at: string | null; title: string; body: string | null; actor: string | null; done: boolean; due: string | null }[];
+  timeline: { id?: string; kind: string; at: string | null; title: string; body: string | null; media?: string[] | null; actor: string | null; done: boolean; due: string | null }[];
   callStats: { dials: number; answered: number; talkS: number; inbound: number } | null;
   adInfo?: { source: string | null; campaign: string | null; channel: string | null; leadCostCents: number | null } | null;
   adJourney?: {
@@ -1164,6 +1164,16 @@ export function DealDetailView({
                       {t.body && isOpen && (
                         <div style={{ fontSize: 13.5, color: "var(--text-2)", whiteSpace: "pre-wrap", wordBreak: "break-word", marginTop: 4 }}>
                           {t.body}
+                        </div>
+                      )}
+                      {isOpen && (t.media ?? []).length > 0 && (
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                          {t.media!.map((u, mi) => (
+                            <a key={mi} href={u} target="_blank" rel="noreferrer">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={u} alt="attachment" loading="lazy" style={{ maxWidth: 180, maxHeight: 180, borderRadius: 8, border: "1px solid var(--border-soft)", display: "block" }} />
+                            </a>
+                          ))}
                         </div>
                       )}
                       {t.actor && <div style={{ fontSize: 12, color: "var(--text-3)" }}>{t.actor}</div>}
