@@ -106,7 +106,7 @@ export async function GET(req: NextRequest) {
         c.quality
           ? `📶 ${c.quality.avg_loss_pct ?? 0}% loss · ${c.quality.max_jitter_ms ?? 0}ms jitter`
           : null,
-        c.transcript ? `🎙 ${String(c.transcript).slice(0, 700)}${String(c.transcript).length > 700 ? "…" : ""}` : null,
+        c.transcript ? `🎙 ${c.transcript}` : null,
       ]
         .filter(Boolean)
         .join(" — "),
@@ -229,6 +229,7 @@ export async function POST(req: NextRequest) {
     status?: string;
     lostReason?: string;
     note?: string;
+    noteTitle?: string;
     ownerPipedriveId?: number;
     activity?: { type: string; subject: string; dueAt?: string | null };
     logActivity?: { type: string; subject: string; body?: string; occurredAt?: string };
@@ -236,7 +237,7 @@ export async function POST(req: NextRequest) {
     truckModel?: string | null;
     interests?: string[];
     completeActivityId?: string;
-    editActivity?: { activityId: string; subject?: string; type?: string; dueAt?: string | null };
+    editActivity?: { activityId: string; subject?: string; type?: string; dueAt?: string | null; body?: string | null };
     deleteActivityId?: string;
     sprint?: { sprintId?: string; name?: string; owner?: string };
   };
@@ -441,6 +442,7 @@ export async function POST(req: NextRequest) {
     if (e.subject?.trim()) patch.subject = e.subject.trim();
     if (e.type && ["call", "sms", "email", "task", "note", "meeting"].includes(e.type)) patch.type = e.type;
     if (e.dueAt !== undefined) patch.due_at = e.dueAt;
+    if (e.body !== undefined) patch.body = e.body?.trim() || null;
     if (Object.keys(patch).length === 0) return NextResponse.json({ error: "nothing to change" }, { status: 400 });
     const { error } = await db.from("crm_activities").update(patch).eq("id", act.id);
     if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
@@ -502,9 +504,11 @@ export async function POST(req: NextRequest) {
   }
 
   if (body.note?.trim()) {
+    const title = body.noteTitle?.trim();
     const { error } = await db.from("crm_activities").insert({
       deal_id: deal.id,
       type: "note",
+      subject: title ? `📝 ${title}` : null,
       body: body.note.trim(),
       actor: user.email,
     });

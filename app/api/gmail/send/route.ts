@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
     contact_id: body.contactId ?? null,
     type: "email",
     subject: `📤 ${subject}`,
-    body: bodyPlain.slice(0, 500),
+    body: bodyPlain.slice(0, 50_000),
     actor: user.email,
     occurred_at: new Date().toISOString(),
     meta: { gmail: true, direction: "outbound" },

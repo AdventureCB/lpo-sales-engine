@@ -139,6 +139,10 @@ export function DealDetailView({
   const [data, setData] = useState<DealData | null>(() => getCachedDeal(dealId, pdDealId));
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  const [noteTitle, setNoteTitle] = useState("");
+  // Editing an existing timeline note (✏️ on an expanded note row).
+  const [noteEdit, setNoteEdit] = useState<{ id: string; title: string; body: string } | null>(null);
+  const [noteDelArmed, setNoteDelArmed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [warn, setWarn] = useState<string | null>(null);
   const [schedType, setSchedType] = useState("call");
@@ -693,6 +697,13 @@ export function DealDetailView({
 
           {modal === "note" && (
             <ActionModal title="Add note" onClose={() => setModal(null)}>
+              <input
+                className="vmsel"
+                placeholder="Title (optional)"
+                value={noteTitle}
+                onChange={(e) => setNoteTitle(e.target.value)}
+                style={{ marginBottom: 8 }}
+              />
               <textarea
                 className="vmsel"
                 rows={4}
@@ -707,8 +718,9 @@ export function DealDetailView({
                   className="btn primary"
                   disabled={!note.trim() || saving}
                   onClick={async () => {
-                    await update({ note });
+                    await update({ note, noteTitle });
                     setNote("");
+                    setNoteTitle("");
                     setModal(null);
                   }}
                 >
@@ -1167,6 +1179,21 @@ export function DealDetailView({
                           {t.body}
                         </div>
                       )}
+                      {isOpen && t.kind === "note" && t.id && !String(t.id).startsWith("sms-") && (
+                        <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 6 }}>
+                          <button
+                            className="btn ghost"
+                            style={{ padding: "2px 10px", fontSize: 12 }}
+                            onClick={() => {
+                              const title = t.title.replace(/ · \(contact\)$/, "").replace(/^📝\s*/, "").trim();
+                              setNoteDelArmed(false);
+                              setNoteEdit({ id: String(t.id), title: /^note$/i.test(title) ? "" : title, body: t.body ?? "" });
+                            }}
+                          >
+                            ✏️ Edit note
+                          </button>
+                        </div>
+                      )}
                       {isOpen && t.audio && (
                         <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 6 }}>
                           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
@@ -1197,6 +1224,61 @@ export function DealDetailView({
             })}
           </div>
         </div>
+
+        {noteEdit && (
+          <ActionModal title="Edit note" onClose={() => setNoteEdit(null)}>
+            <input
+              className="vmsel"
+              placeholder="Title (optional)"
+              value={noteEdit.title}
+              onChange={(e) => setNoteEdit((n) => (n ? { ...n, title: e.target.value } : n))}
+              style={{ marginBottom: 8 }}
+            />
+            <textarea
+              className="vmsel"
+              rows={6}
+              style={{ resize: "vertical" }}
+              value={noteEdit.body}
+              autoFocus
+              onChange={(e) => setNoteEdit((n) => (n ? { ...n, body: e.target.value } : n))}
+            />
+            <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center" }}>
+              <button
+                className="btn primary"
+                disabled={!noteEdit.body.trim() || saving}
+                onClick={async () => {
+                  await update({
+                    editActivity: {
+                      activityId: noteEdit.id,
+                      subject: noteEdit.title.trim() ? `📝 ${noteEdit.title.trim()}` : "📝 Note",
+                      body: noteEdit.body,
+                    },
+                  });
+                  setNoteEdit(null);
+                }}
+              >
+                Save
+              </button>
+              <button className="btn ghost" onClick={() => setNoteEdit(null)}>Cancel</button>
+              {/* Two-click delete — window.confirm is a no-op in the companion. */}
+              <button
+                className="btn ghost"
+                style={{ marginLeft: "auto", color: "var(--crit)" }}
+                disabled={saving}
+                onClick={async () => {
+                  if (!noteDelArmed) {
+                    setNoteDelArmed(true);
+                    return;
+                  }
+                  await update({ deleteActivityId: noteEdit.id });
+                  setNoteEdit(null);
+                }}
+              >
+                {noteDelArmed ? "🗑 Really delete?" : "🗑 Delete"}
+              </button>
+            </div>
+          </ActionModal>
+        )}
 
         <div className="card" style={embedded ? { order: -1 } : undefined}>
           {data.callStats && (
@@ -2168,6 +2250,7 @@ function CommBar({
   const [attachIds, setAttachIds] = useState<string[]>([]);
   const [body, setBody] = useState("");
   const [subject, setSubject] = useState("");
+  const [noteTitle, setNoteTitle] = useState("");
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -2419,13 +2502,17 @@ function CommBar({
         r = await fetch("/api/crm/deal", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: dealId, logActivity: { type: "note", subject: "📝 Note", body: text } }),
+          body: JSON.stringify({
+            id: dealId,
+            logActivity: { type: "note", subject: noteTitle.trim() ? `📝 ${noteTitle.trim()}` : "📝 Note", body: text },
+          }),
         });
       }
       const d = await r?.json().catch(() => ({}));
       if (!r?.ok || d?.error) throw new Error(d?.error ?? `HTTP ${r?.status}`);
       setBody("");
       setSubject("");
+      setNoteTitle("");
       setAttachIds([]);
       setChannel(null);
       flashOk(channel === "note" ? "Note saved ✓" : "Sent ✓");
@@ -2636,6 +2723,14 @@ function CommBar({
               placeholder="Subject…"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
+            />
+          )}
+          {channel === "note" && (
+            <input
+              className="vmsel"
+              placeholder="Title (optional)"
+              value={noteTitle}
+              onChange={(e) => setNoteTitle(e.target.value)}
             />
           )}
           {channel === "email" ? (

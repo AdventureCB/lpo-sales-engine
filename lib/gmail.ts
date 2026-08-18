@@ -3,6 +3,7 @@ import crypto from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { env, envOptional } from "./env";
 import { normalizeEmail } from "./identity";
+import { htmlToPlain } from "./richtext";
 
 /**
  * Per-rep Gmail integration (read-only): OAuth connect + a periodic sweep
@@ -189,6 +190,23 @@ function header(headers: any[], name: string): string | null {
   return headers?.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? null;
 }
 
+/** Walk a full-format payload for the best body: text/plain, else stripped text/html. */
+function extractBody(payload: any): string | null {
+  const parts: any[] = [];
+  const walk = (p: any) => {
+    if (!p) return;
+    parts.push(p);
+    (p.parts ?? []).forEach(walk);
+  };
+  walk(payload);
+  const decode = (data: string) => Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+  const plain = parts.find((p) => p.mimeType === "text/plain" && p.body?.data);
+  if (plain) return decode(plain.body.data).trim() || null;
+  const html = parts.find((p) => p.mimeType === "text/html" && p.body?.data);
+  if (html) return htmlToPlain(decode(html.body.data)) || null;
+  return null;
+}
+
 function addressesIn(value: string | null): string[] {
   if (!value) return [];
   return [...value.matchAll(/[\w.+-]+@[\w-]+\.[\w.-]+/g)].map((m) => m[0].toLowerCase());
@@ -267,13 +285,23 @@ export async function sweepGmailAccount(
     const occurredAt = msg.internalDate
       ? new Date(Number(msg.internalDate)).toISOString()
       : new Date().toISOString();
+    // Matched messages get their FULL body (snippet is ~200 chars and reads
+    // truncated on the timeline). Only matched ones — the extra fetch is
+    // wasted on the rest.
+    let bodyText: string | null = msg.snippet ? decodeEntities(msg.snippet) : null;
+    try {
+      const full = await fetch(`${API}/messages/${id}?format=full`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).then((r) => r.json());
+      bodyText = extractBody(full.payload)?.slice(0, 50_000) ?? bodyText;
+    } catch {}
     const { error } = await db.from("crm_activities").upsert(
       {
         pd_key: key,
         contact_id: contactId,
         type: "email",
         subject: `${inbound ? "📥" : "📤"} ${header(headers, "Subject") || "(no subject)"}`,
-        body: msg.snippet ? decodeEntities(msg.snippet) : null,
+        body: bodyText,
         actor: inbound ? matchedEmail : account.user_email,
         occurred_at: occurredAt,
         meta: { gmail: true, direction: inbound ? "inbound" : "outbound" },
