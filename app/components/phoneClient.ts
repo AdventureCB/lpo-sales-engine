@@ -229,6 +229,10 @@ export async function ensurePhone(): Promise<any> {
         if (s === "ringing") {
           state.incoming = { call, from: call.options?.remoteCallerNumber ?? "unknown caller", active: false };
           startRinging();
+          // Companion: surface the app when a call rings while minimized/behind.
+          const tauri = (window as any).__TAURI__;
+          if (tauri?.core?.invoke) void tauri.core.invoke("focus_main").catch(() => {});
+          else if (typeof window !== "undefined") window.focus(); // browsers: best-effort
         } else if (s === "active") {
           if (state.incoming) state.incoming = { ...state.incoming, call, active: true };
           state.callPhase = "talking"; // answered inbound = engaged

@@ -48,6 +48,19 @@ fn open_url_window(app: tauri::AppHandle, url: String, label: String) -> Result<
     Ok(())
 }
 
+/// Bring the main window to the front — invoked when a call rings while the
+/// app is minimized or behind other windows.
+#[tauri::command]
+fn focus_main(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+    Ok(())
+}
+
 /// Companion version — surfaced on the web app's Settings page.
 #[tauri::command]
 fn app_version() -> String {
@@ -228,6 +241,7 @@ fn main() {
             open_tel,
             open_url_window,
             app_version,
+            focus_main,
             open_external,
             end_call
         ])
