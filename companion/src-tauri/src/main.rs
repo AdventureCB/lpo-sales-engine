@@ -18,6 +18,29 @@ const VM_DEVICE_NAME: &str = "BlackHole 2ch";
 /// confirmation whose call button is the default action — auto-confirm by
 /// pressing Return in Quo (requires the one-time Accessibility/Automation
 /// grant; if denied, the rep just clicks like before).
+/// Open an app page in its own native window — chat popouts for dual-screen.
+/// Shares the main webview's cookie store, so the session carries over.
+/// Restricted to the app's own origin.
+#[tauri::command]
+fn open_url_window(app: tauri::AppHandle, url: String, label: String) -> Result<(), String> {
+    use tauri::Manager;
+    let parsed: tauri::Url = url.parse().map_err(|e| format!("bad url: {e}"))?;
+    if parsed.host_str() != Some("lpo-sales-engine.vercel.app") {
+        return Err("origin not allowed".into());
+    }
+    let safe: String = label.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+    if let Some(w) = app.get_webview_window(&safe) {
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    tauri::WebviewWindowBuilder::new(&app, &safe, tauri::WebviewUrl::External(parsed))
+        .title("LPO Text")
+        .inner_size(430.0, 680.0)
+        .build()
+        .map_err(|e| format!("window: {e}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 fn open_tel(url: String) -> Result<(), String> {
     if !url.starts_with("tel:") {
@@ -176,6 +199,7 @@ fn main() {
             setup_audio,
             audio_status,
             open_tel,
+            open_url_window,
             end_call
         ])
         .run(tauri::generate_context!())

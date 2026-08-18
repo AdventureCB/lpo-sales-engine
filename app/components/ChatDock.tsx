@@ -26,15 +26,28 @@ export function ChatDock() {
   if (pathname?.startsWith("/texts/chat")) return null;
   if (chats.length === 0) return null;
 
-  const popout = (c: ChatSession) => {
+  const popout = async (c: ChatSession) => {
     const params = new URLSearchParams({ phone: c.phone });
     if (c.name) params.set("name", c.name);
     if (c.dealId) params.set("dealId", c.dealId);
     const url = `/texts/chat?${params}`;
-    // Only drop the docked copy once a window actually opened — popup blockers
-    // (and the desktop companion's webview) return null, and closing the dock
-    // chat then would make the conversation vanish entirely.
-    let w = window.open(url, `chat-${c.phone.replace(/\D/g, "")}`, "width=430,height=680,resizable=yes,popup=yes");
+    const label = `chat-${c.phone.replace(/\D/g, "")}`;
+    // Desktop companion: the webview blocks window.open — open a real native
+    // window via the Tauri command (shares the session). Requires companion
+    // ≥ 0.2.0; older builds error and the chat stays docked.
+    const tauri = (window as any).__TAURI__;
+    if (tauri?.core?.invoke) {
+      try {
+        await tauri.core.invoke("open_url_window", { url: `${window.location.origin}${url}`, label });
+        closeChat(c.phone);
+      } catch (e) {
+        console.error("companion popout failed (update the companion app?)", e);
+      }
+      return;
+    }
+    // Browser: only drop the docked copy once a window actually opened —
+    // popup blockers return null, and closing then would lose the chat.
+    let w = window.open(url, label, "width=430,height=680,resizable=yes,popup=yes");
     if (!w) w = window.open(url, "_blank"); // fallback: plain new tab
     if (w) closeChat(c.phone);
   };

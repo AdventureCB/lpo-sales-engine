@@ -1,6 +1,6 @@
 [package]
 name = "lpo-queue-runner"
-version = "0.1.0"
+version = "0.2.0"
 description = "LPO Sales Engine dialer companion"
 edition = "2021"
 
