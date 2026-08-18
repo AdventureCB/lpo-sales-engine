@@ -163,8 +163,31 @@ export async function POST(req: NextRequest) {
 
   // The transfer's browser-bound leg (to sip:…) shares the A-leg's session id —
   // letting it through the lifecycle upsert clobbers the inbound row (direction,
-  // completed_at) and kills the voicemail timer. Track it only in the log.
+  // completed_at) and kills the voicemail timer. Track it only in the log —
+  // EXCEPT a fast failure (unregistered target → user_busy), which triggers one
+  // fallback ring at the SHARED identity (token clients, e.g. kyle@ sessions).
   if (typeof p.to === "string" && p.to.startsWith("sip:")) {
+    if (type === "call.hangup" && p.hangup_cause && p.hangup_cause !== "normal_clearing") {
+      try {
+        const sessionKey = `tx:${p.call_session_id}`;
+        const { data: cur } = await db
+          .from("call_events")
+          .select("id, answered_at, completed_at, raw")
+          .eq("quo_call_id", sessionKey)
+          .maybeSingle();
+        const craw = ((cur?.raw as any) ?? {}) as Record<string, unknown>;
+        if (cur && !cur.answered_at && !cur.completed_at && craw.a_ccid && !craw.ring2) {
+          await db.from("call_events").update({ raw: { ...craw, ring2: true } }).eq("id", cur.id);
+          const { transferCall, getSharedSipUsername } = await import("@/lib/telnyx");
+          const shared = await getSharedSipUsername(db);
+          if (shared && !p.to.includes(`${shared}@`)) {
+            await transferCall(String(craw.a_ccid), `sip:${shared}@sip.telnyx.com`, { timeoutSecs: 55, clientState: "ring" });
+          }
+        }
+      } catch (e) {
+        console.error("shared-ring fallback failed", e);
+      }
+    }
     return NextResponse.json({ ok: true, ignored: "sip-leg" });
   }
 
@@ -352,6 +375,7 @@ export async function POST(req: NextRequest) {
     raw: {
       ...((prior?.raw as any) ?? {}),
       ...(vmState ? { vm: true } : {}),
+      ...(isIncoming && type === "call.initiated" ? { a_ccid: p.call_control_id } : {}),
       telnyx: true,
       data: { object: { participants: [p.from, p.to].filter(Boolean) } },
       event,

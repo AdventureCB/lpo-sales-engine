@@ -344,6 +344,29 @@ export async function ensureInboundApp(db: SupabaseClient): Promise<{ inboundApp
   return { inboundAppId: appId, moved };
 }
 
+/** SIP username of the shared token credential ("lpo-dialer") — where
+ * token-authenticated clients (sessions without a per-rep SIP login, e.g.
+ * the kyle@ admin account) register. Cached in crm_sync_state.telnyx. */
+export async function getSharedSipUsername(db: SupabaseClient): Promise<string | null> {
+  const { data } = await db.from("crm_sync_state").select("value").eq("key", "telnyx").maybeSingle();
+  const state = ((data?.value as any) ?? {}) as Record<string, unknown>;
+  if (state.sharedSipUsername) return state.sharedSipUsername as string;
+  if (!state.credentialId) return null;
+  try {
+    const cred = await tx(`/telephony_credentials/${state.credentialId}`);
+    const u = cred.data?.sip_username ?? null;
+    if (u) {
+      await db
+        .from("crm_sync_state")
+        .upsert({ key: "telnyx", value: { ...state, sharedSipUsername: u } }, { onConflict: "key" });
+    }
+    return u;
+  } catch (e) {
+    console.error("shared sip lookup failed", e);
+    return null;
+  }
+}
+
 /** Play an audio file into the call (recorded voicemail greeting). */
 export async function playbackCall(callControlId: string, audioUrl: string, clientState: string): Promise<void> {
   await tx(`/calls/${callControlId}/actions/playback_start`, {
