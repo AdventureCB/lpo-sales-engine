@@ -30,8 +30,13 @@ export function ChatDock() {
     const params = new URLSearchParams({ phone: c.phone });
     if (c.name) params.set("name", c.name);
     if (c.dealId) params.set("dealId", c.dealId);
-    window.open(`/texts/chat?${params}`, `chat-${c.phone.replace(/\D/g, "")}`, "width=430,height=680,resizable=yes");
-    closeChat(c.phone);
+    const url = `/texts/chat?${params}`;
+    // Only drop the docked copy once a window actually opened — popup blockers
+    // (and the desktop companion's webview) return null, and closing the dock
+    // chat then would make the conversation vanish entirely.
+    let w = window.open(url, `chat-${c.phone.replace(/\D/g, "")}`, "width=430,height=680,resizable=yes,popup=yes");
+    if (!w) w = window.open(url, "_blank"); // fallback: plain new tab
+    if (w) closeChat(c.phone);
   };
 
   const minimize = (c: ChatSession, incomingNow: number) => {
