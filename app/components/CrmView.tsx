@@ -783,7 +783,7 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
         <input
           className="vmsel"
           style={{ width: 300, maxWidth: "100%" }}
-          placeholder="🔍 Search deals by name…"
+          placeholder="🔍 Search deal, contact, phone, email, source…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && (setPage(0), void loadDeals())}

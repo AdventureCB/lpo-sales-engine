@@ -65,8 +65,18 @@ export async function GET(req: NextRequest) {
   if (p.get("valueMin")) q = q.gte("value_cents", Math.round(Number(p.get("valueMin")) * 100));
   if (p.get("valueMax")) q = q.lte("value_cents", Math.round(Number(p.get("valueMax")) * 100));
 
+  // Search matches the trigger-maintained search_blob (migration 00090):
+  // title + contact name + emails + phone digits + source name. Words AND
+  // together; phone-looking words collapse to digits (last 10, matching
+  // contact_phone_set's normalization).
   const search = (p.get("q") ?? "").trim();
-  if (search) q = q.ilike("title", `%${search.replace(/[%_]/g, "")}%`);
+  if (search) {
+    const words = search
+      .split(/\s+/)
+      .map((w) => (/^[+\d][\d\s\-().]*$/.test(w) ? w.replace(/\D/g, "").slice(-10) : w.replace(/[%_]/g, "")))
+      .filter(Boolean);
+    for (const w of words) q = q.ilike("search_blob", `%${w}%`);
+  }
 
   const { data, count, error } = await q
     .order(sort, { ascending: asc, nullsFirst: false })
