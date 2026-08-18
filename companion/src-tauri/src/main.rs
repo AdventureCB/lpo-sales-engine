@@ -54,6 +54,20 @@ fn app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// Open a URL in the default browser — restricted to our own GitHub releases
+/// (used by the Settings "update companion" link).
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    if !url.starts_with("https://github.com/AdventureCB/lpo-sales-engine") {
+        return Err("url not allowed".into());
+    }
+    std::process::Command::new("open")
+        .arg(&url)
+        .spawn()
+        .map_err(|e| format!("open failed: {e}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 fn open_tel(url: String) -> Result<(), String> {
     if !url.starts_with("tel:") {
@@ -214,6 +228,7 @@ fn main() {
             open_tel,
             open_url_window,
             app_version,
+            open_external,
             end_call
         ])
         .run(tauri::generate_context!())
