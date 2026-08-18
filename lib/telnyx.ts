@@ -344,6 +344,34 @@ export async function ensureInboundApp(db: SupabaseClient): Promise<{ inboundApp
   return { inboundAppId: appId, moved };
 }
 
+/** Put numbers BACK on their rep credential connections (the known-good
+ * direct-ring path) — used to restore inbound while the Call Control
+ * transfer flow is debugged. */
+export async function revertInboundNumbers(db: SupabaseClient): Promise<{ moved: string[] }> {
+  const moved: string[] = [];
+  const { data: reps } = await db
+    .from("reps")
+    .select("telnyx_number, telnyx_connection_id")
+    .not("telnyx_number", "is", null);
+  for (const r of reps ?? []) {
+    if (!r.telnyx_number || !r.telnyx_connection_id) continue;
+    try {
+      const found = await tx(`/phone_numbers?filter[phone_number]=${encodeURIComponent(r.telnyx_number)}`);
+      const rec = (found.data ?? [])[0];
+      if (rec && String(rec.connection_id) !== String(r.telnyx_connection_id)) {
+        await tx(`/phone_numbers/${rec.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ connection_id: r.telnyx_connection_id }),
+        });
+        moved.push(r.telnyx_number);
+      }
+    } catch (e) {
+      console.error(`revert failed for ${r.telnyx_number}`, e);
+    }
+  }
+  return { moved };
+}
+
 /** SIP username of the shared token credential ("lpo-dialer") — where
  * token-authenticated clients (sessions without a per-rep SIP login, e.g.
  * the kyle@ admin account) register. Cached in crm_sync_state.telnyx. */

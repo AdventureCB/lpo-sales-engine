@@ -441,9 +441,22 @@ export async function POST(req: NextRequest) {
           .select("answered_at, completed_at, status")
           .eq("quo_call_id", sessionKey)
           .maybeSingle();
-        if (!cur || cur.answered_at || cur.completed_at || cur.status === "hangup") return;
+        if (!cur || cur.answered_at || cur.completed_at || cur.status === "hangup") {
+          await db.from("telnyx_event_log").insert({ event_type: "vm.timer.skip", session_id: sessionKey, payload: { cur } });
+          return;
+        }
         const { answerCall } = await import("@/lib/telnyx");
-        await answerCall(ccid, "vm");
+        try {
+          await answerCall(ccid, "vm");
+          await db.from("telnyx_event_log").insert({ event_type: "vm.answer.ok", session_id: sessionKey, payload: { ccid } });
+        } catch (e) {
+          await db.from("telnyx_event_log").insert({
+            event_type: "vm.answer.err",
+            session_id: sessionKey,
+            payload: { ccid, error: e instanceof Error ? e.message : String(e) },
+          });
+          throw e;
+        }
       } catch (e) {
         // Expected for twin legs / raced hangups — log-only.
         console.error("vm takeover skipped:", e instanceof Error ? e.message : e);
