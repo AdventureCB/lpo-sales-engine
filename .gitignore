@@ -15,3 +15,6 @@ companion/node_modules/
 companion/src-tauri/target/
 companion/src-tauri/gen/
 companion/dist/
+
+# Claude Code session artifacts
+.claude/scheduled_tasks.lock
