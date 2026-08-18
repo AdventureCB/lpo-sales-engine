@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
   const db = supabaseAdmin();
   const { data: rows, error } = await db
     .from("sms_messages")
-    .select("id, rep_id, direction, status, our_number, body, sent_at")
+    .select("id, rep_id, direction, status, our_number, body, media, sent_at")
     .eq("peer_phone", phone)
     .order("sent_at", { ascending: false })
     .limit(300);
@@ -31,6 +31,7 @@ export async function GET(req: NextRequest) {
       direction: m.direction,
       status: m.status,
       body: m.body,
+      media: (m as any).media ?? null,
       at: m.sent_at,
       rep: m.rep_id ? repName.get(m.rep_id) ?? null : null,
       ourNumber: m.our_number,

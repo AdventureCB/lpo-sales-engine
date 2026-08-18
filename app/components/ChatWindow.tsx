@@ -8,10 +8,17 @@ interface Msg {
   direction: "incoming" | "outgoing" | null;
   status: string | null;
   body: string | null;
+  media?: string[] | null;
   at: string;
   rep: string | null;
   ourNumber: string | null;
 }
+
+const EMOJI = [
+  "👍", "🙏", "🎉", "😀", "😂", "😅", "🤝", "👋", "💪", "🔥",
+  "❤️", "⭐", "✅", "📞", "📅", "🚙", "🏔", "🏕", "⛺", "🌲",
+  "🛻", "🗺", "☀️", "❄️", "🌊", "🐕", "👀", "🤔", "😎", "🫡",
+];
 
 interface Macro {
   id: string;
@@ -55,7 +62,12 @@ export function ChatWindow({
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [macros, setMacros] = useState<Macro[]>([]);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [attached, setAttached] = useState<{ url: string; preview: string }[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [optedOutPrompt, setOptedOutPrompt] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(
     () =>
@@ -107,25 +119,67 @@ export function ChatWindow({
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages?.length, hidden]);
 
-  const send = async () => {
+  const send = async (opts?: { force?: boolean; optInRequest?: boolean }) => {
     const body = compose.trim();
-    if (!body || sending) return;
+    if ((!body && attached.length === 0 && !opts?.optInRequest) || sending) return;
     setSending(true);
     setErr(null);
     try {
       const r = await fetch("/api/texts/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to: phone, body, crmDealId: dealId ?? undefined }),
+        body: JSON.stringify({
+          to: phone,
+          body: opts?.optInRequest ? "" : body,
+          crmDealId: dealId ?? undefined,
+          mediaUrls: opts?.optInRequest ? undefined : attached.map((a) => a.url),
+          force: opts?.force || undefined,
+          optInRequest: opts?.optInRequest || undefined,
+        }),
       });
       const d = await r.json().catch(() => ({}));
+      if (r.status === 409 && d.optedOut) {
+        // This contact texted STOP — the rep chooses: opt-in request, force, cancel.
+        setOptedOutPrompt(true);
+        return;
+      }
       if (!r.ok || d.error) throw new Error(d.error ?? `HTTP ${r.status}`);
-      setCompose("");
+      setOptedOutPrompt(false);
+      if (!opts?.optInRequest) {
+        setCompose("");
+        setAttached([]);
+      }
       setMessages((prev) => [...(prev ?? []), d.message]);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setSending(false);
+    }
+  };
+
+  const attachImage = async (file: File) => {
+    if (!file.type.startsWith("image/")) return;
+    setUploading(true);
+    setErr(null);
+    try {
+      const dataBase64 = await new Promise<string>((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result).split(",")[1] ?? "");
+        fr.onerror = () => reject(new Error("read failed"));
+        fr.readAsDataURL(file);
+      });
+      const r = await fetch("/api/texts/upload-media", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mimeType: file.type, dataBase64 }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || d.error) throw new Error(d.error ?? `HTTP ${r.status}`);
+      setAttached((prev) => [...prev, { url: d.url, preview: URL.createObjectURL(file) }]);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -166,7 +220,15 @@ export function ChatWindow({
               padding: "6px 10px",
             }}
           >
-            <div style={{ fontSize: 13.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.body ?? "(no text)"}</div>
+            {(m.media ?? []).map((u, i) => (
+              <a key={i} href={u} target="_blank" rel="noreferrer">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={u} alt="attachment" style={{ maxWidth: "100%", borderRadius: 8, marginBottom: m.body ? 4 : 0, display: "block" }} />
+              </a>
+            ))}
+            {(m.body || !(m.media ?? []).length) && (
+              <div style={{ fontSize: 13.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.body ?? "(no text)"}</div>
+            )}
             <div style={{ fontSize: 10.5, color: "var(--text-3)", marginTop: 2, textAlign: m.direction === "outgoing" ? "right" : "left" }}>
               {m.direction === "outgoing" && m.rep ? `${m.rep} · ` : ""}
               {fmtWhen(m.at)}
@@ -175,8 +237,55 @@ export function ChatWindow({
           </div>
         ))}
       </div>
-      <div style={{ padding: 8, borderTop: "1px solid var(--border-soft)" }}>
+      <div style={{ padding: 8, borderTop: "1px solid var(--border-soft)", position: "relative" }}>
+        {optedOutPrompt && (
+          <div style={{ background: "var(--surface-2)", border: "1px solid var(--border-soft)", borderRadius: 10, padding: "10px 12px", marginBottom: 8 }}>
+            <div style={{ fontSize: 12.5, color: "var(--crit)", fontWeight: 700, marginBottom: 6 }}>
+              🛑 This contact opted out of texts
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <button className="btn" style={{ fontSize: 12.5, justifyContent: "flex-start" }} disabled={sending} onClick={() => void send({ optInRequest: true })} title="Sends the standard opt-in invitation — your message stays in the box for after they opt back in">
+                📨 Send opt-in request
+              </button>
+              <button className="btn" style={{ fontSize: 12.5, justifyContent: "flex-start" }} disabled={sending} onClick={() => void send({ force: true })} title="Send anyway — for an active existing conversation">
+                ⚠️ Force send (existing conversation)
+              </button>
+              <button className="btn ghost" style={{ fontSize: 12.5, justifyContent: "flex-start" }} onClick={() => setOptedOutPrompt(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
         {err && <div style={{ color: "var(--crit)", fontSize: 12.5, marginBottom: 5 }}>{err}</div>}
+        {attached.length > 0 && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+            {attached.map((a, i) => (
+              <span key={i} style={{ position: "relative", display: "inline-block" }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={a.preview} alt="" style={{ width: 46, height: 46, objectFit: "cover", borderRadius: 8, border: "1px solid var(--border-soft)" }} />
+                <button
+                  onClick={() => setAttached((prev) => prev.filter((_, j) => j !== i))}
+                  style={{ position: "absolute", top: -6, right: -6, width: 17, height: 17, borderRadius: "50%", border: "none", background: "var(--crit)", color: "#fff", fontSize: 10, lineHeight: 1, cursor: "pointer" }}
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        {emojiOpen && (
+          <div style={{ position: "absolute", bottom: "100%", left: 8, right: 8, background: "var(--surface-1)", border: "1px solid var(--border-soft)", borderRadius: 10, padding: 8, display: "grid", gridTemplateColumns: "repeat(10, 1fr)", gap: 2, boxShadow: "0 -4px 18px rgba(0,0,0,0.3)", zIndex: 5 }}>
+            {EMOJI.map((e) => (
+              <button
+                key={e}
+                onClick={() => { setCompose((c) => c + e); setEmojiOpen(false); }}
+                style={{ border: "none", background: "none", fontSize: 17, cursor: "pointer", padding: 2, borderRadius: 6 }}
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+        )}
         <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
           {macros.length > 0 && (
             <select
@@ -192,6 +301,34 @@ export function ChatWindow({
               ))}
             </select>
           )}
+          <button
+            className="btn ghost"
+            style={{ padding: "7px 7px", fontSize: 14, flexShrink: 0 }}
+            title="Emoji"
+            onClick={() => setEmojiOpen((v) => !v)}
+          >
+            😀
+          </button>
+          <button
+            className="btn ghost"
+            style={{ padding: "7px 7px", fontSize: 14, flexShrink: 0 }}
+            title="Attach a photo (MMS)"
+            disabled={uploading}
+            onClick={() => fileRef.current?.click()}
+          >
+            {uploading ? "…" : "🖼"}
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void attachImage(f);
+              e.target.value = "";
+            }}
+          />
           <textarea
             className="vmsel"
             style={{ flex: 1, resize: "none", minHeight: 36, maxHeight: 110, fontFamily: "inherit", fontSize: 13.5 }}
@@ -206,7 +343,12 @@ export function ChatWindow({
               }
             }}
           />
-          <button className="btn primary" style={{ padding: "8px 13px", fontSize: 13.5 }} disabled={!compose.trim() || sending} onClick={send}>
+          <button
+            className="btn primary"
+            style={{ padding: "8px 13px", fontSize: 13.5 }}
+            disabled={(!compose.trim() && attached.length === 0) || sending || uploading}
+            onClick={() => void send()}
+          >
             {sending ? "…" : "➤"}
           </button>
         </div>

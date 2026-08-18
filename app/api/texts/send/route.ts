@@ -20,19 +20,47 @@ export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  let body: { to?: string; body?: string; from?: string; crmDealId?: string; contactId?: string };
+  let body: {
+    to?: string;
+    body?: string;
+    from?: string;
+    crmDealId?: string;
+    contactId?: string;
+    mediaUrls?: string[];
+    force?: boolean; // rep confirmed sending to an opted-out contact
+    optInRequest?: boolean; // send the standard re-opt-in invitation instead
+  };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
   const to = normalizePhone(body.to ?? null);
-  const content = body.body?.trim();
-  if (!to || !content) {
-    return NextResponse.json({ error: "to and body required" }, { status: 400 });
+  let content = body.body?.trim() ?? "";
+  const mediaUrls = (body.mediaUrls ?? []).filter((u) => typeof u === "string" && u.startsWith("https://")).slice(0, 5);
+  if (!to || (!content && mediaUrls.length === 0)) {
+    return NextResponse.json({ error: "to and body (or an image) required" }, { status: 400 });
   }
 
   const db = supabaseAdmin();
+
+  // ── Consent gate: texting someone who opted out needs an explicit choice —
+  // send the standard opt-in request, force (existing conversation), or stop.
+  const { data: consentMatch } = await db.rpc("contacts_by_phones", { p_phones: [to] });
+  const contactMatchId = consentMatch?.[0]?.contact_id ?? null;
+  if (contactMatchId) {
+    const { data: c } = await db.from("crm_contacts").select("sms_consent").eq("id", contactMatchId).maybeSingle();
+    if (c?.sms_consent === "opted_out" && !body.force && !body.optInRequest) {
+      return NextResponse.json(
+        { error: "opted_out", optedOut: true },
+        { status: 409 }
+      );
+    }
+  }
+  if (body.optInRequest) {
+    const rep = user.repName ?? user.email.split("@")[0];
+    content = `Lone Peak Overland: ${rep} wants to send you a message. Reply START to receive texts. Msg & data rates may apply. Reply STOP to opt out.`;
+  }
 
   // Provider follows the rep's assigned number: a rep with a telnyx_number
   // texts via Telnyx (10DLC), otherwise Quo. Reps get Telnyx numbers as their
@@ -52,7 +80,7 @@ export async function POST(req: NextRequest) {
   let row: Record<string, unknown>;
   if (telnyxNumber && telnyxConfigured()) {
     try {
-      const sent = await sendSms({ from: telnyxNumber, to, text: content });
+      const sent = await sendSms({ from: telnyxNumber, to, text: content, mediaUrls: mediaUrls.length ? mediaUrls : undefined });
       row = {
         provider: "telnyx",
         provider_message_id: sent.id ?? `local-${to}-${Date.now()}`,
@@ -62,13 +90,17 @@ export async function POST(req: NextRequest) {
         phone_number_id: null,
         our_number: sent.from,
         peer_phone: to,
-        body: content,
+        body: content || null,
+        media: mediaUrls.length ? mediaUrls : null,
         sent_at: sent.sentAt,
       };
     } catch (e) {
       return NextResponse.json({ error: `Telnyx send failed: ${e instanceof Error ? e.message : String(e)}` }, { status: 502 });
     }
   } else {
+    if (mediaUrls.length > 0) {
+      return NextResponse.json({ error: "Images require a Telnyx line (assigned after your number ports)" }, { status: 400 });
+    }
     const from = quoLine ?? FALLBACK_LINE;
     const res = await fetch("https://api.quo.com/v1/messages", {
       method: "POST",
@@ -111,7 +143,7 @@ export async function POST(req: NextRequest) {
       contact_id: body.contactId ?? null,
       type: "sms",
       subject: "💬 Text sent",
-      body: content.slice(0, 500),
+      body: (content || "📷 photo").slice(0, 500),
       actor: user.email,
       occurred_at: new Date().toISOString(),
     });
@@ -123,7 +155,8 @@ export async function POST(req: NextRequest) {
       id: row.provider_message_id,
       direction: "outgoing",
       status: row.status,
-      body: content,
+      body: content || null,
+      media: mediaUrls.length ? mediaUrls : null,
       at: row.sent_at,
       rep: user.repName ?? null,
       ourNumber: row.our_number,

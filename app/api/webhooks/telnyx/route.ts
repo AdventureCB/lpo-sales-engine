@@ -81,6 +81,9 @@ export async function POST(req: NextRequest) {
         our_number: ourNumber,
         peer_phone: peerPhone,
         body: p.text ?? null,
+        media: Array.isArray(p.media) && p.media.length
+          ? p.media.map((m: any) => m.url).filter(Boolean)
+          : null,
         sent_at: p.received_at ?? p.sent_at ?? p.completed_at ?? new Date().toISOString(),
       },
       { onConflict: "provider,provider_message_id", ignoreDuplicates: false }
