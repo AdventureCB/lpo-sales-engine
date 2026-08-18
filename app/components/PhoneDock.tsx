@@ -7,7 +7,7 @@ import {
   endIncoming,
   ensurePhone,
   getPhoneState,
-  phoneWanted,
+  phoneRequired,
   subscribePhone,
 } from "./phoneClient";
 
@@ -31,9 +31,11 @@ export function PhoneDock() {
 
   useEffect(() => {
     const unsub = subscribePhone(rerender);
-    if (phoneWanted()) {
-      void ensurePhone().catch(() => {});
-    }
+    // Connect when browser-calling is the chosen method OR this rep receives
+    // inbound on a Telnyx number (inbound must ring regardless of preference).
+    void phoneRequired().then((w) => {
+      if (w) void ensurePhone().catch(() => {});
+    });
     return unsub;
   }, []);
 

@@ -104,6 +104,34 @@ export function phoneWanted(): boolean {
   }
 }
 
+/**
+ * The phone must ALSO stay registered when this rep receives inbound on a
+ * Telnyx number — even if their outbound preference is Quo. Otherwise the
+ * inbound transfer leg gets rejected as unreachable (user_busy) and callers
+ * fall straight to voicemail. Cached 30 min per tab.
+ */
+export async function phoneRequired(): Promise<boolean> {
+  if (phoneWanted()) return true;
+  try {
+    const cached = sessionStorage.getItem("telnyxInbound");
+    if (cached) {
+      const { v, at } = JSON.parse(cached);
+      if (Date.now() - at < 30 * 60_000) return Boolean(v);
+    }
+  } catch {}
+  try {
+    const r = await fetch("/api/me/phone");
+    if (!r.ok) return false;
+    const d = await r.json();
+    try {
+      sessionStorage.setItem("telnyxInbound", JSON.stringify({ v: Boolean(d.telnyxInbound), at: Date.now() }));
+    } catch {}
+    return Boolean(d.telnyxInbound);
+  } catch {
+    return false;
+  }
+}
+
 export async function ensurePhone(): Promise<any> {
   if (readyPromise) return readyPromise;
   state.conn = "connecting…";
@@ -132,7 +160,7 @@ export async function ensurePhone(): Promise<any> {
       client = null;
       emit();
       setTimeout(() => {
-        if (phoneWanted()) void ensurePhone().catch(() => {});
+        void phoneRequired().then((w) => w && ensurePhone().catch(() => {}));
       }, 5000);
     });
     c.on("telnyx.notification", (n: any) => {
