@@ -166,17 +166,35 @@ export async function POST(req: NextRequest) {
   // completed_at) and kills the voicemail timer. Track it only in the log —
   // EXCEPT a fast failure (unregistered target → user_busy), which triggers one
   // fallback ring at the SHARED identity (token clients, e.g. kyle@ sessions).
-  if (typeof p.to === "string" && p.to.startsWith("sip:")) {
-    if (type === "call.hangup" && p.hangup_cause && p.hangup_cause !== "normal_clearing") {
+  if (typeof p.to === "string" && !p.to.startsWith("+")) {
+    // Internal legs (sip: URIs + bare SIP usernames Telnyx spawns while
+    // bridging). Track the transfer leg's ccid so VM can kill the pending
+    // ring; never let these legs touch the lifecycle row.
+    const sessionKey = `tx:${p.call_session_id}`;
+    if (type === "call.initiated" && p.to.startsWith("sip:") && p.call_control_id) {
       try {
-        const sessionKey = `tx:${p.call_session_id}`;
+        const { data: cur } = await db.from("call_events").select("id, raw").eq("quo_call_id", sessionKey).maybeSingle();
+        if (cur) {
+          await db
+            .from("call_events")
+            .update({ raw: { ...((cur.raw as any) ?? {}), b_ccid: p.call_control_id } })
+            .eq("id", cur.id);
+        }
+      } catch (e) {
+        console.error("b_ccid stash failed", e);
+      }
+    }
+    // Fast failure (unregistered/busy client) → ONE fallback ring at the
+    // shared identity. Never after a VM takeover, never on ring timeouts.
+    if (type === "call.hangup" && p.hangup_cause === "user_busy" && p.to.startsWith("sip:")) {
+      try {
         const { data: cur } = await db
           .from("call_events")
           .select("id, answered_at, completed_at, raw")
           .eq("quo_call_id", sessionKey)
           .maybeSingle();
         const craw = ((cur?.raw as any) ?? {}) as Record<string, unknown>;
-        if (cur && !cur.answered_at && !cur.completed_at && craw.a_ccid && !craw.ring2) {
+        if (cur && !cur.answered_at && !cur.completed_at && !craw.vm && craw.a_ccid && !craw.ring2) {
           await db.from("call_events").update({ raw: { ...craw, ring2: true } }).eq("id", cur.id);
           const { transferCall, getSharedSipUsername } = await import("@/lib/telnyx");
           const shared = await getSharedSipUsername(db);
@@ -188,7 +206,7 @@ export async function POST(req: NextRequest) {
         console.error("shared-ring fallback failed", e);
       }
     }
-    return NextResponse.json({ ok: true, ignored: "sip-leg" });
+    return NextResponse.json({ ok: true, ignored: "internal-leg" });
   }
 
   // Voicemail legs are marked via client_state — they skip the normal
@@ -438,12 +456,20 @@ export async function POST(req: NextRequest) {
         await new Promise((r) => setTimeout(r, delay * 1000));
         const { data: cur } = await db
           .from("call_events")
-          .select("answered_at, completed_at, status")
+          .select("answered_at, completed_at, status, raw")
           .eq("quo_call_id", sessionKey)
           .maybeSingle();
         if (!cur || cur.answered_at || cur.completed_at || cur.status === "hangup") {
           await db.from("telnyx_event_log").insert({ event_type: "vm.timer.skip", session_id: sessionKey, payload: { cur } });
           return;
+        }
+        // Kill the still-ringing rep leg first — a live transfer leg delays
+        // the greeting until its timeout and can drag the caller back into
+        // ringing mid-voicemail.
+        const bCcid = ((cur as any).raw as any)?.b_ccid as string | undefined;
+        if (bCcid) {
+          const { hangupCall } = await import("@/lib/telnyx");
+          await hangupCall(bCcid).catch(() => {});
         }
         const { answerCall } = await import("@/lib/telnyx");
         try {

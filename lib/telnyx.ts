@@ -417,6 +417,11 @@ export async function getSharedSipUsername(db: SupabaseClient): Promise<string |
   }
 }
 
+/** Hang up a specific leg (used to kill the pending rep-ring when VM takes over). */
+export async function hangupCall(callControlId: string): Promise<void> {
+  await tx(`/calls/${callControlId}/actions/hangup`, { method: "POST", body: JSON.stringify({}) });
+}
+
 /** Play an audio file into the call (recorded voicemail greeting). */
 export async function playbackCall(callControlId: string, audioUrl: string, clientState: string): Promise<void> {
   await tx(`/calls/${callControlId}/actions/playback_start`, {
