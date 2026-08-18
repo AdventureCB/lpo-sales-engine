@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { VersionStamp } from "./VersionStamp";
 
 /** Admin configuration: rep calling numbers + daily goals. */
 
@@ -90,6 +91,7 @@ export function SettingsView() {
         <Link href="/settings/profile" className="btn ghost" style={{ padding: "4px 12px", fontSize: 13 }}>
           👤 My profile →
         </Link>
+        <VersionStamp />
         {msg && <span style={{ color: "var(--text-2)" }}>{msg}</span>}
       </div>
 

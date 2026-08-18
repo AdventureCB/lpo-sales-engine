@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { VmPanel, type VmDrop } from "./VmPanel";
+import { VersionStamp } from "./VersionStamp";
 
 /**
  * Per-rep personal settings. The chosen voicemail drop is remembered on this
@@ -50,6 +51,7 @@ export function ProfileView({ isAdmin }: { isAdmin: boolean }) {
       <h2 className="viewtitle">My profile</h2>
       <div className="viewsub" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         Personal settings — saved on this machine.
+        <VersionStamp />
         {isAdmin && (
           <Link href="/settings" className="btn ghost" style={{ padding: "4px 12px", fontSize: 13 }}>
             ⚙ Team config →

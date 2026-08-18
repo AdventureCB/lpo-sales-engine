@@ -31,6 +31,13 @@ export async function GET() {
   const kid = process.env.KLAVIYO_OAUTH_CLIENT_ID ?? "";
   return NextResponse.json({
     ok: true,
+    version: {
+      sha: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
+      message: (process.env.VERCEL_GIT_COMMIT_MESSAGE ?? "").split("\n")[0] || null,
+      // Deploy id changes per deployment; created-at isn't exposed, so the
+      // stamp shows the commit as the meaningful identity.
+      deployedAt: null,
+    },
     env: envStatus,
     googleClientIdPrefix: cid.slice(0, 20),
     googleClientIdLength: cid.length,

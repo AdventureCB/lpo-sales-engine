@@ -33,12 +33,25 @@ fn open_url_window(app: tauri::AppHandle, url: String, label: String) -> Result<
         let _ = w.set_focus();
         return Ok(());
     }
-    tauri::WebviewWindowBuilder::new(&app, &safe, tauri::WebviewUrl::External(parsed))
-        .title("LPO Text")
-        .inner_size(430.0, 680.0)
-        .build()
-        .map_err(|e| format!("window: {e}"))?;
+    // macOS requires window creation on the main thread.
+    let app2 = app.clone();
+    app.run_on_main_thread(move || {
+        if let Err(e) = tauri::WebviewWindowBuilder::new(&app2, &safe, tauri::WebviewUrl::External(parsed))
+            .title("LPO Text")
+            .inner_size(430.0, 680.0)
+            .build()
+        {
+            eprintln!("open_url_window build failed: {e}");
+        }
+    })
+    .map_err(|e| format!("main thread: {e}"))?;
     Ok(())
+}
+
+/// Companion version — surfaced on the web app's Settings page.
+#[tauri::command]
+fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
 }
 
 #[tauri::command]
@@ -200,6 +213,7 @@ fn main() {
             audio_status,
             open_tel,
             open_url_window,
+            app_version,
             end_call
         ])
         .run(tauri::generate_context!())
