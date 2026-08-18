@@ -9,6 +9,7 @@ interface Thread {
   lastBody: string | null;
   lastDirection: string | null;
   awaitingReply: boolean;
+  unread: boolean;
   count: number;
   contactName: string | null;
   crmDealId: string | null;
@@ -46,8 +47,12 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
     return () => clearInterval(iv);
   }, []);
 
-  const openThread = (t: Thread) =>
+  const openThread = (t: Thread) => {
     openChat({ phone: t.phone, name: t.contactName, dealId: t.crmDealId });
+    // Optimistic: the ChatWindow marks it read server-side within a second;
+    // clear the dot immediately so it doesn't linger until the next poll.
+    setThreads((prev) => prev?.map((x) => (x.phone === t.phone ? { ...x, unread: false } : x)) ?? prev);
+  };
 
   const startNew = () => {
     const digits = newNum.replace(/[^\d]/g, "").replace(/^1/, "");
@@ -139,7 +144,7 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
                 <b style={{ fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {t.awaitingReply && <span style={{ color: "var(--accent)" }}>● </span>}
+                  {t.unread && <span style={{ color: "var(--accent)" }}>● </span>}
                   {t.contactName ?? t.phone}
                 </b>
                 <span style={{ color: "var(--text-3)", fontSize: 12.5, whiteSpace: "nowrap" }}>{fmtWhen(t.lastAt)}</span>

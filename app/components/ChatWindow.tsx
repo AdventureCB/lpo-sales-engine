@@ -82,6 +82,18 @@ export function ChatWindow({
     if (messages !== null) onNewIncoming?.(incomingCount);
   }, [incomingCount, messages, onNewIncoming]);
 
+  // Viewing the conversation marks it read (clears the Texts-page dot) —
+  // on load, on each new inbound while visible, and when un-minimized.
+  const loaded = messages !== null;
+  useEffect(() => {
+    if (hidden || !loaded) return;
+    fetch("/api/texts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone }),
+    }).catch(() => {});
+  }, [hidden, loaded, incomingCount, phone]);
+
   // Texting macros (channel sms/any) — compact picker.
   useEffect(() => {
     fetch("/api/crm/comm-library")
