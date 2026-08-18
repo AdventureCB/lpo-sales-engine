@@ -319,6 +319,28 @@ export async function ensureInboundApp(db: SupabaseClient): Promise<{ inboundApp
     console.error("inbound app OVP attach failed", e);
   }
 
+  // SIP-URI dial-in to credential connections is DISABLED by default — the
+  // transfer leg (app → sip:username@sip.telnyx.com) gets rejected as busy in
+  // ~0.3s even with a live registration. "internal" permits calls that
+  // originate from our own connections (the Call Control app).
+  try {
+    const connIds = new Set<string>();
+    const { data: repConns } = await db
+      .from("reps")
+      .select("telnyx_connection_id")
+      .not("telnyx_connection_id", "is", null);
+    for (const r of repConns ?? []) if (r.telnyx_connection_id) connIds.add(r.telnyx_connection_id);
+    if (state.connectionId) connIds.add(state.connectionId as string);
+    for (const id of connIds) {
+      await tx(`/credential_connections/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ sip_uri_calling_preference: "internal" }),
+      }).catch((e) => console.error(`sip_uri_calling_preference patch failed for ${id}`, e));
+    }
+  } catch (e) {
+    console.error("sip-uri preference patching failed", e);
+  }
+
   // Point every assigned number (reps + the account default) at the app.
   const targets = new Set<string>();
   const { data: reps } = await db.from("reps").select("telnyx_number").not("telnyx_number", "is", null);
