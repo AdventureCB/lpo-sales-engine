@@ -187,13 +187,22 @@ export async function provisionRepCalling(
     credentialId = cred.id;
   }
 
-  // Point the number at the rep's connection so inbound rings their browser.
+  // Numbers route inbound through the CALL CONTROL app (voicemail-capable);
+  // the webhook transfers to this rep's SIP client. Fall back to the rep's
+  // connection only if the app can't be ensured.
+  let inboundTarget = connectionId;
+  try {
+    const { inboundAppId } = await ensureInboundApp(db);
+    inboundTarget = inboundAppId;
+  } catch (e) {
+    console.error("ensureInboundApp failed — number stays on rep connection", e);
+  }
   const nums = await tx(`/phone_numbers?filter[phone_number]=${encodeURIComponent(phoneNumber)}`);
   const num = (nums.data ?? [])[0];
-  if (num && num.connection_id !== connectionId) {
+  if (num && String(num.connection_id) !== String(inboundTarget)) {
     await tx(`/phone_numbers/${num.id}`, {
       method: "PATCH",
-      body: JSON.stringify({ connection_id: connectionId }),
+      body: JSON.stringify({ connection_id: inboundTarget }),
     });
   }
 
@@ -240,6 +249,80 @@ export async function speakCall(callControlId: string, text: string, clientState
       client_state: Buffer.from(clientState).toString("base64"),
     }),
   });
+}
+
+/** Ring a SIP client (the rep's browser) by transferring the unanswered
+ * inbound leg — Telnyx dials the target and bridges on answer. timeout_secs
+ * is set LONGER than the voicemail window so our timer wins the race. */
+export async function transferCall(
+  callControlId: string,
+  to: string,
+  opts: { timeoutSecs: number; clientState: string }
+): Promise<void> {
+  await tx(`/calls/${callControlId}/actions/transfer`, {
+    method: "POST",
+    body: JSON.stringify({
+      to,
+      timeout_secs: opts.timeoutSecs,
+      client_state: Buffer.from(opts.clientState).toString("base64"),
+    }),
+  });
+}
+
+/**
+ * Inbound numbers must live on a CALL CONTROL application — credential
+ * connections ring the browser directly but refuse API answer/speak/record,
+ * which voicemail needs. Find-or-create the app (cached in crm_sync_state
+ * "telnyx" as inboundAppId) and point every rep-assigned number at it; the
+ * webhook then transfers inbound calls to the owning rep's SIP client.
+ */
+export async function ensureInboundApp(db: SupabaseClient): Promise<{ inboundAppId: string; moved: string[] }> {
+  const { data: cached } = await db.from("crm_sync_state").select("value").eq("key", "telnyx").maybeSingle();
+  const state = ((cached?.value as any) ?? {}) as Record<string, unknown>;
+
+  let appId = state.inboundAppId as string | undefined;
+  if (!appId) {
+    const apps = await tx("/call_control_applications?filter[application_name][contains]=lpo-inbound");
+    let app = (apps.data ?? [])[0];
+    if (!app) {
+      const created = await tx("/call_control_applications", {
+        method: "POST",
+        body: JSON.stringify({
+          application_name: "lpo-inbound",
+          webhook_event_url: "https://lpo-sales-engine.vercel.app/api/webhooks/telnyx",
+        }),
+      });
+      app = created.data;
+    }
+    appId = app.id as string;
+    await db
+      .from("crm_sync_state")
+      .upsert({ key: "telnyx", value: { ...state, inboundAppId: appId } }, { onConflict: "key" });
+  }
+
+  // Point every assigned number (reps + the account default) at the app.
+  const targets = new Set<string>();
+  const { data: reps } = await db.from("reps").select("telnyx_number").not("telnyx_number", "is", null);
+  for (const r of reps ?? []) if (r.telnyx_number) targets.add(r.telnyx_number);
+  if (state.callerNumber) targets.add(state.callerNumber as string);
+
+  const moved: string[] = [];
+  for (const num of targets) {
+    try {
+      const found = await tx(`/phone_numbers?filter[phone_number]=${encodeURIComponent(num)}`);
+      const rec = (found.data ?? [])[0];
+      if (rec && String(rec.connection_id) !== String(appId)) {
+        await tx(`/phone_numbers/${rec.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ connection_id: appId }),
+        });
+        moved.push(num);
+      }
+    } catch (e) {
+      console.error(`inbound-app number move failed for ${num}`, e);
+    }
+  }
+  return { inboundAppId: appId, moved };
 }
 
 /** Play an audio file into the call (recorded voicemail greeting). */

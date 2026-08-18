@@ -26,6 +26,61 @@ let readyPromise: Promise<any> | null = null;
 let outboundHandler: ((call: any, callState: string) => void) | null = null;
 const subs = new Set<() => void>();
 
+// ── Audible ring for inbound calls (classic US dual-tone, 2s on / 4s off).
+// AudioContext unlocks on the first user gesture; if the rep has never
+// clicked (fresh tab), the browser blocks audio and we ring silently.
+let ringCtx: AudioContext | null = null;
+let ring: { osc1: OscillatorNode; osc2: OscillatorNode; gain: GainNode; iv: ReturnType<typeof setInterval> } | null = null;
+
+function primeAudio() {
+  try {
+    ringCtx = ringCtx ?? new AudioContext();
+    if (ringCtx.state === "suspended") void ringCtx.resume().catch(() => {});
+  } catch {}
+}
+if (typeof window !== "undefined") {
+  window.addEventListener("pointerdown", primeAudio, { once: true });
+}
+
+function startRinging() {
+  if (ring) return;
+  try {
+    primeAudio();
+    if (!ringCtx) return;
+    const gain = ringCtx.createGain();
+    gain.gain.value = 0;
+    gain.connect(ringCtx.destination);
+    const osc1 = ringCtx.createOscillator();
+    osc1.frequency.value = 440;
+    const osc2 = ringCtx.createOscillator();
+    osc2.frequency.value = 480;
+    osc1.connect(gain);
+    osc2.connect(gain);
+    osc1.start();
+    osc2.start();
+    const burst = () => {
+      if (!ringCtx) return;
+      const t = ringCtx.currentTime;
+      gain.gain.cancelScheduledValues(t);
+      gain.gain.setValueAtTime(0.15, t);
+      gain.gain.setValueAtTime(0, t + 2);
+    };
+    ring = { osc1, osc2, gain, iv: setInterval(burst, 6000) };
+    burst();
+  } catch {}
+}
+
+function stopRinging() {
+  if (!ring) return;
+  clearInterval(ring.iv);
+  try {
+    ring.osc1.stop();
+    ring.osc2.stop();
+    ring.gain.disconnect();
+  } catch {}
+  ring = null;
+}
+
 const emit = () => subs.forEach((f) => f());
 
 export function subscribePhone(cb: () => void): () => void {
@@ -87,12 +142,15 @@ export async function ensurePhone(): Promise<any> {
       if (call.direction === "inbound") {
         if (s === "ringing") {
           state.incoming = { call, from: call.options?.remoteCallerNumber ?? "unknown caller", active: false };
+          startRinging();
         } else if (s === "active") {
           if (state.incoming) state.incoming = { ...state.incoming, call, active: true };
           state.callPhase = "talking"; // answered inbound = engaged
+          stopRinging();
         } else if (s === "hangup" || s === "destroy") {
           state.incoming = null;
           state.callPhase = "none";
+          stopRinging();
         }
         emit();
         return;

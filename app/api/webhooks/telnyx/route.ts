@@ -345,6 +345,38 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "db error" }, { status: 500 });
   }
 
+  // ── Ring the rep: numbers live on the Call Control app (so voicemail can
+  // API-answer), which does NOT ring browsers by itself — transfer the leg to
+  // the owning rep's SIP client. timeout 55s > VM window, so the VM timer
+  // always wins the race and Telnyx never plays its own failure message.
+  const inboundAppId = (txState?.value as any)?.inboundAppId ?? null;
+  if (
+    isIncoming &&
+    type === "call.initiated" &&
+    p.call_control_id &&
+    inboundAppId &&
+    String(p.connection_id) === String(inboundAppId)
+  ) {
+    try {
+      let sipLogin: string | null = null;
+      if (toN) {
+        const { data: rep } = await db.from("reps").select("id").eq("telnyx_number", toN).maybeSingle();
+        if (rep) {
+          const { data: sip } = await db.from("crm_sync_state").select("value").eq("key", `telnyx_sip:${rep.id}`).maybeSingle();
+          sipLogin = ((sip?.value as any)?.login as string) ?? null;
+        }
+      }
+      if (sipLogin) {
+        const { transferCall } = await import("@/lib/telnyx");
+        await transferCall(p.call_control_id, `sip:${sipLogin}@sip.telnyx.com`, { timeoutSecs: 55, clientState: "ring" });
+      } else {
+        console.error(`no SIP client for inbound number ${toN} — call goes straight to voicemail timer`);
+      }
+    } catch (e) {
+      console.error("inbound transfer failed", e);
+    }
+  }
+
   // ── Voicemail takeover: if nobody answers within the ring window, answer
   // the inbound leg ourselves (greeting → beep → record). Runs after the
   // webhook response (after()); the wait is idle time, not active CPU. The
