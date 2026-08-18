@@ -7,6 +7,7 @@ import { INTERESTS } from "./interests";
 import { combineDue } from "@/lib/allday";
 import { fillPlaceholders } from "@/lib/placeholders";
 import { linkifyPlain } from "@/lib/richtext";
+import { openChat } from "./chatDockStore";
 
 interface DealData {
   deal: any;
@@ -2422,13 +2423,14 @@ function CommBar({
           </button>
         ))}
         <button
-          className={`btn ${channel === "sms" ? "primary" : ""}`}
+          className="btn"
           style={btnStyle}
           disabled={!phone}
           title={phone ?? "No phone on contact"}
           onClick={() => {
-            setErr(null);
-            setChannel((c) => (c === "sms" ? null : "sms"));
+            // Messenger-style: open the conversation in the chat dock (history
+            // included) instead of a blind one-shot composer.
+            if (phone) openChat({ phone, name: contact?.name ?? null, dealId });
           }}
         >
           💬 Text
