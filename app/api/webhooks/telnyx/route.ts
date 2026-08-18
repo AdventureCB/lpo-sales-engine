@@ -1,9 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import crypto from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 import { envOptional } from "@/lib/env";
 
 export const runtime = "nodejs";
+export const maxDuration = 60; // voicemail takeover waits out the ring window
+
+const VM_DEFAULTS = {
+  enabled: true,
+  delay_s: 25,
+  greeting:
+    "Hi, you've reached Lone Peak Overland. We can't take your call right now — please leave your name, number, and a quick message after the tone, and we'll get right back to you.",
+};
 
 /**
  * Telnyx call lifecycle → call_events (id-prefixed "tx:" so Quo rows never
@@ -139,45 +148,94 @@ export async function POST(req: NextRequest) {
 
   const db = supabaseAdmin();
 
+  // Voicemail legs are marked via client_state — they skip the normal
+  // auto-record (greeting first, then a beeped recording).
+  const { decodeClientState } = await import("@/lib/telnyx");
+  const vmState = decodeClientState(p.client_state) === "vm";
+
   // Auto-record every answered call — the recording.saved event then feeds
   // the AI transcript. Never fail the webhook over recording problems.
   if (type === "call.answered" && p.call_control_id) {
-    const { startRecording } = await import("@/lib/telnyx");
-    startRecording(p.call_control_id).catch((e) => console.error("record_start", e));
+    if (vmState) {
+      // VM takeover answered: play the greeting; recording starts at speak end.
+      const { data: cfgRow } = await db.from("crm_sync_state").select("value").eq("key", "telnyx_vm").maybeSingle();
+      const greeting = ((cfgRow?.value as any)?.greeting as string) || VM_DEFAULTS.greeting;
+      const { speakCall } = await import("@/lib/telnyx");
+      speakCall(p.call_control_id, greeting, "vm").catch((e) => console.error("vm speak", e));
+    } else {
+      const { startRecording } = await import("@/lib/telnyx");
+      startRecording(p.call_control_id).catch((e) => console.error("record_start", e));
+    }
+  }
+
+  // Greeting finished → beep + record the message.
+  if (type === "call.speak.ended") {
+    if (vmState && p.call_control_id) {
+      const { startRecording } = await import("@/lib/telnyx");
+      startRecording(p.call_control_id, { beep: true, clientState: "vm" }).catch((e) => console.error("vm record", e));
+    }
+    return NextResponse.json({ ok: true }); // speak events aren't call lifecycle
   }
 
   // Recording saved → transcribe → attach to the call row + classify.
+  // Voicemail recordings additionally get the mp3 mirrored into our bucket
+  // (Telnyx recording URLs expire) so the timeline can play them forever.
   if (type === "call.recording.saved") {
     const mp3 = p.recording_urls?.mp3 ?? p.public_recording_urls?.mp3;
     if (mp3) {
       try {
+        const { data: existing } = await db
+          .from("call_events")
+          .select("id, raw, duration_s, classification")
+          .eq("quo_call_id", `tx:${p.call_session_id}`)
+          .maybeSingle();
+        const isVm = vmState || Boolean((existing?.raw as any)?.vm);
+        let vmMp3: string | null = null;
+        if (isVm) {
+          try {
+            const res = await fetch(mp3);
+            if (res.ok) {
+              const buf = Buffer.from(await res.arrayBuffer());
+              if (buf.length > 0 && buf.length <= 20 * 1024 * 1024) {
+                const path = `vm/${crypto.randomUUID()}.mp3`;
+                const { error } = await db.storage.from("comm-media").upload(path, buf, { contentType: "audio/mpeg" });
+                if (!error) {
+                  const { data: signed } = await db.storage.from("comm-media").createSignedUrl(path, 10 * 365 * 24 * 3600);
+                  vmMp3 = signed?.signedUrl ?? null;
+                }
+              }
+            }
+          } catch (e) {
+            console.error("vm mirror failed", e);
+          }
+        }
         const { transcribeRecording } = await import("@/lib/telnyx");
-        const result = await transcribeRecording(mp3);
-        if (result?.text?.trim()) {
-          const { data: existing } = await db
-            .from("call_events")
-            .select("id, raw, duration_s, classification")
-            .eq("quo_call_id", `tx:${p.call_session_id}`)
-            .maybeSingle();
-          if (existing) {
+        const result = await transcribeRecording(mp3).catch(() => null);
+        if (existing && (isVm || result?.text?.trim())) {
+          let classification = existing.classification;
+          if (isVm) {
+            classification = "voicemail";
+          } else if (!classification && result?.utterances) {
             // Speaker-attributed transcript (Deepgram) → the same turn-based
             // classifier the Quo path uses; plain text → talk-length heuristic.
-            let classification = existing.classification;
-            if (!classification && result.utterances) {
-              const { classifyTranscript } = await import("@/lib/classify");
-              classification = classifyTranscript(result.utterances);
-            }
-            if (!classification) {
-              classification = (existing.duration_s ?? 0) >= 40 ? "conversation" : "screening";
-            }
-            await db
-              .from("call_events")
-              .update({
-                raw: { ...(existing.raw ?? {}), transcript: result.text.trim() },
-                classification,
-              })
-              .eq("id", existing.id);
+            const { classifyTranscript } = await import("@/lib/classify");
+            classification = classifyTranscript(result.utterances);
           }
+          if (!classification) {
+            classification = (existing.duration_s ?? 0) >= 40 ? "conversation" : "screening";
+          }
+          await db
+            .from("call_events")
+            .update({
+              raw: {
+                ...(existing.raw ?? {}),
+                ...(result?.text?.trim() ? { transcript: result.text.trim() } : {}),
+                ...(isVm ? { vm: true } : {}),
+                ...(vmMp3 ? { vm_mp3: vmMp3 } : {}),
+              },
+              classification,
+            })
+            .eq("id", existing.id);
         }
       } catch (e) {
         console.error("transcription failed", e);
@@ -235,7 +293,7 @@ export async function POST(req: NextRequest) {
   // Inbound answer state is exact (the call.answered event); the duration
   // heuristic is for outbound only — ring time would fake-answer missed calls.
   const answeredAt = isIncoming
-    ? type === "call.answered"
+    ? type === "call.answered" && !vmState
       ? p.start_time ?? event?.data?.occurred_at ?? new Date().toISOString()
       : prior?.answered_at ?? null
     : answered;
@@ -250,6 +308,7 @@ export async function POST(req: NextRequest) {
     duration_s: durationS,
     raw: {
       ...((prior?.raw as any) ?? {}),
+      ...(vmState ? { vm: true } : {}),
       telnyx: true,
       data: { object: { participants: [p.from, p.to].filter(Boolean) } },
       event,
@@ -263,6 +322,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "db error" }, { status: 500 });
   }
 
+  // ── Voicemail takeover: if nobody answers within the ring window, answer
+  // the inbound leg ourselves (greeting → beep → record). Runs after the
+  // webhook response (after()); the wait is idle time, not active CPU. The
+  // answer command 422s harmlessly if the call already ended or was the
+  // client-facing twin leg.
+  if (isIncoming && type === "call.initiated" && p.call_control_id) {
+    const ccid = p.call_control_id as string;
+    const sessionKey = `tx:${p.call_session_id}`;
+    after(async () => {
+      try {
+        const { data: cfgRow } = await db.from("crm_sync_state").select("value").eq("key", "telnyx_vm").maybeSingle();
+        const cfg = { ...VM_DEFAULTS, ...((cfgRow?.value as any) ?? {}) };
+        if (!cfg.enabled) return;
+        const delay = Math.min(Math.max(Number(cfg.delay_s) || VM_DEFAULTS.delay_s, 5), 45);
+        await new Promise((r) => setTimeout(r, delay * 1000));
+        const { data: cur } = await db
+          .from("call_events")
+          .select("answered_at, completed_at, status")
+          .eq("quo_call_id", sessionKey)
+          .maybeSingle();
+        if (!cur || cur.answered_at || cur.completed_at || cur.status === "hangup") return;
+        const { answerCall } = await import("@/lib/telnyx");
+        await answerCall(ccid, "vm");
+      } catch (e) {
+        // Expected for twin legs / raced hangups — log-only.
+        console.error("vm takeover skipped:", e instanceof Error ? e.message : e);
+      }
+    });
+  }
+
   // Inbound hangup: link the call to the caller's contact/deal + the rep
   // whose number was called; unanswered calls are classified missed.
   if (isIncoming && type === "call.hangup") {
@@ -270,7 +359,8 @@ export async function POST(req: NextRequest) {
       const { normalizePhone } = await import("@/lib/identity");
       const peer = normalizePhone(p.from);
       const update: Record<string, unknown> = {};
-      if (!answeredAt) update.classification = "no_answer";
+      const wasVm = vmState || Boolean((prior?.raw as any)?.vm);
+      if (!answeredAt) update.classification = wasVm ? "voicemail" : "no_answer";
       if (p.to) {
         const { data: rep } = await db
           .from("reps")

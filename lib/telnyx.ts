@@ -204,11 +204,52 @@ export async function provisionRepCalling(
 }
 
 /** Start dual-channel recording on a live call (fired from call.answered). */
-export async function startRecording(callControlId: string): Promise<void> {
+export async function startRecording(
+  callControlId: string,
+  opts?: { beep?: boolean; clientState?: string }
+): Promise<void> {
   await tx(`/calls/${callControlId}/actions/record_start`, {
     method: "POST",
-    body: JSON.stringify({ format: "mp3", channels: "dual" }),
+    body: JSON.stringify({
+      format: "mp3",
+      channels: "dual",
+      ...(opts?.beep ? { play_beep: true } : {}),
+      ...(opts?.clientState ? { client_state: Buffer.from(opts.clientState).toString("base64") } : {}),
+    }),
   });
+}
+
+// ── Voicemail (Call Control on the inbound PSTN leg) ────────────────────────
+
+/** Answer an unanswered inbound leg (takes the call over from the ringing client). */
+export async function answerCall(callControlId: string, clientState: string): Promise<void> {
+  await tx(`/calls/${callControlId}/actions/answer`, {
+    method: "POST",
+    body: JSON.stringify({ client_state: Buffer.from(clientState).toString("base64") }),
+  });
+}
+
+/** Speak text into the call (TTS) — used for the voicemail greeting. */
+export async function speakCall(callControlId: string, text: string, clientState: string): Promise<void> {
+  await tx(`/calls/${callControlId}/actions/speak`, {
+    method: "POST",
+    body: JSON.stringify({
+      payload: text,
+      voice: "female",
+      language: "en-US",
+      client_state: Buffer.from(clientState).toString("base64"),
+    }),
+  });
+}
+
+/** Decode the client_state a webhook event echoes back (base64 → string). */
+export function decodeClientState(cs: unknown): string | null {
+  if (typeof cs !== "string" || !cs) return null;
+  try {
+    return Buffer.from(cs, "base64").toString("utf8");
+  } catch {
+    return null;
+  }
 }
 
 export interface TranscriptResult {

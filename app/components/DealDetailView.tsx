@@ -11,7 +11,7 @@ import { openChat } from "./chatDockStore";
 
 interface DealData {
   deal: any;
-  timeline: { id?: string; kind: string; at: string | null; title: string; body: string | null; media?: string[] | null; actor: string | null; done: boolean; due: string | null }[];
+  timeline: { id?: string; kind: string; at: string | null; title: string; body: string | null; media?: string[] | null; audio?: string | null; actor: string | null; done: boolean; due: string | null }[];
   callStats: { dials: number; answered: number; talkS: number; inbound: number } | null;
   adInfo?: { source: string | null; campaign: string | null; channel: string | null; leadCostCents: number | null } | null;
   adJourney?: {
@@ -1165,6 +1165,10 @@ export function DealDetailView({
                         <div style={{ fontSize: 13.5, color: "var(--text-2)", whiteSpace: "pre-wrap", wordBreak: "break-word", marginTop: 4 }}>
                           {t.body}
                         </div>
+                      )}
+                      {isOpen && t.audio && (
+                        // eslint-disable-next-line jsx-a11y/media-has-caption
+                        <audio controls preload="none" src={t.audio} style={{ width: "100%", maxWidth: 340, marginTop: 6, height: 36 }} />
                       )}
                       {isOpen && (t.media ?? []).length > 0 && (
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>

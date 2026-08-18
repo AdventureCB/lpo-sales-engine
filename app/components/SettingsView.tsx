@@ -196,6 +196,7 @@ export function SettingsView() {
         <span style={{ color: "var(--text-3)" }}>→</span>
       </Link>
 
+      <VoicemailAdmin />
       <AIProfilerAdmin />
       <CommLibraryAdmin />
       <DealSourcesAdmin />
@@ -1119,6 +1120,77 @@ function PipelineAdmin() {
         >
           Add pipeline
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Telnyx voicemail: greeting, ring window, on/off ─────────────────────────
+
+function VoicemailAdmin() {
+  const [cfg, setCfg] = useState<{ enabled: boolean; delay_s: number; greeting: string } | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/admin/voicemail")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d?.config && setCfg(d.config))
+      .catch(() => {});
+  }, []);
+
+  const save = async (patch: Record<string, unknown>) => {
+    const r = await fetch("/api/admin/voicemail", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }).catch(() => null);
+    if (r?.ok) {
+      const d = await r.json();
+      setCfg(d.config);
+      setMsg("Saved ✓");
+      setTimeout(() => setMsg(null), 2500);
+    } else {
+      setMsg("Save failed");
+    }
+  };
+
+  if (!cfg) return null;
+  return (
+    <div className="card" style={{ marginTop: 18 }}>
+      <h3 style={{ margin: "0 0 4px" }}>📼 Voicemail (Telnyx)</h3>
+      <p className="viewsub" style={{ marginTop: 0 }}>
+        Unanswered inbound calls get a spoken greeting, a beep, and a recorded message — transcribed and
+        surfaced on the deal timeline + notifications. Applies to Telnyx numbers only (Quo keeps its own VM until port).
+        {msg && <span style={{ marginLeft: 10, color: "var(--good)" }}>{msg}</span>}
+      </p>
+      <div style={{ display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <button
+          className={`btn ${cfg.enabled ? "primary" : "ghost"}`}
+          style={{ padding: "6px 14px", fontSize: 13 }}
+          onClick={() => save({ enabled: !cfg.enabled })}
+        >
+          {cfg.enabled ? "Enabled" : "Disabled"}
+        </button>
+        <label style={{ fontSize: 12.5, color: "var(--text-3)" }} title="Seconds of ringing before voicemail answers (5–45)">
+          Ring window (s)
+          <input
+            className="vmsel"
+            type="number"
+            style={{ width: 80, display: "block", marginTop: 3 }}
+            defaultValue={cfg.delay_s}
+            onBlur={(e) => Number(e.target.value) !== cfg.delay_s && save({ delay_s: Number(e.target.value) })}
+          />
+        </label>
+        <label style={{ fontSize: 12.5, color: "var(--text-3)", flex: 1, minWidth: 320 }}>
+          Greeting (spoken by text-to-speech)
+          <textarea
+            className="vmsel"
+            rows={2}
+            style={{ display: "block", marginTop: 3, width: "100%", resize: "vertical" }}
+            defaultValue={cfg.greeting}
+            onBlur={(e) => e.target.value.trim() !== cfg.greeting && save({ greeting: e.target.value.trim() })}
+          />
+        </label>
       </div>
     </div>
   );

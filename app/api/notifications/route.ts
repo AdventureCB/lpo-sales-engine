@@ -51,7 +51,7 @@ export async function GET() {
 
   let callQ = db
     .from("call_events")
-    .select("id, started_at, rep_id, raw")
+    .select("id, started_at, rep_id, raw, classification, transcript:raw->>transcript")
     .eq("direction", "incoming")
     .is("answered_at", null)
     .gte("started_at", since)
@@ -138,14 +138,16 @@ export async function GET() {
       href: "/whatsapp",
       isNew: m.sent_at > seenAt,
     })),
-    ...(missed ?? []).map((c): Notif => {
+    ...(missed ?? []).map((c: any): Notif => {
       const peer = missedPeer(c.raw);
+      const who = peer ? nameByPhone.get(peer) ?? peer : "unknown";
+      const isVm = c.classification === "voicemail";
       return {
         key: `missed:${c.id}`,
         kind: "missed_call",
         group: "comms",
-        title: `📵 Missed call — ${peer ? nameByPhone.get(peer) ?? peer : "unknown"}`,
-        sub: null,
+        title: isVm ? `📼 Voicemail — ${who}` : `📵 Missed call — ${who}`,
+        sub: isVm ? (c.transcript ? String(c.transcript).slice(0, 90) : "New voicemail") : null,
         at: c.started_at,
         href: "/call-log",
         isNew: c.started_at > seenAt,

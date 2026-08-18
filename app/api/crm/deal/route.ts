@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
     deal.pipedrive_deal_id
       ? db
           .from("call_events")
-          .select("quo_call_id, direction, started_at, duration_s, classification, disposition, transcript:raw->>transcript, quality:raw->client_quality")
+          .select("quo_call_id, direction, started_at, duration_s, classification, disposition, transcript:raw->>transcript, quality:raw->client_quality, vm_mp3:raw->>vm_mp3")
           .eq("deal_id", deal.pipedrive_deal_id)
           .order("started_at", { ascending: false })
           .limit(25)
@@ -96,9 +96,11 @@ export async function GET(req: NextRequest) {
       kind: "call",
       at: c.started_at,
       title:
-        c.direction === "incoming" && c.classification === "no_answer"
-          ? "📵 Missed call"
-          : `${c.direction === "incoming" ? "Inbound" : "Outbound"} call · ${c.classification ?? "—"}${c.disposition ? ` · ${c.disposition}` : ""}`,
+        c.classification === "voicemail"
+          ? "📼 Voicemail"
+          : c.direction === "incoming" && c.classification === "no_answer"
+            ? "📵 Missed call"
+            : `${c.direction === "incoming" ? "Inbound" : "Outbound"} call · ${c.classification ?? "—"}${c.disposition ? ` · ${c.disposition}` : ""}`,
       body: [
         c.duration_s ? `${Math.round(c.duration_s / 60)}m ${c.duration_s % 60}s` : null,
         c.quality
@@ -108,6 +110,7 @@ export async function GET(req: NextRequest) {
       ]
         .filter(Boolean)
         .join(" — "),
+      audio: c.vm_mp3 ?? null,
       actor: null,
       done: true,
       due: null,
