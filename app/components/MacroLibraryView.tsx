@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { PLACEHOLDERS } from "@/lib/placeholders";
+import { isHtml, htmlToPlain } from "@/lib/richtext";
+import RichTextEditor from "./RichTextEditor";
+
+/** List previews show HTML macro bodies as readable text, not tag soup. */
+const previewText = (body: string) => (isHtml(body) ? htmlToPlain(body) : body);
 
 /**
  * Macro library. The shared TEMPLATE catalog anyone can add to; each rep
@@ -44,9 +49,10 @@ async function post(payload: any): Promise<{ ok: boolean; id?: string }> {
   return { ok: true, id: d.id };
 }
 
-/** Textarea with a one-click placeholder dropdown that inserts at the cursor. */
-function BodyField({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+/** Body editor: rich text for email macros, plain textarea (with placeholder dropdown) otherwise. */
+function BodyField({ value, onChange, placeholder, rich }: { value: string; onChange: (v: string) => void; placeholder?: string; rich?: boolean }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  if (rich) return <RichTextEditor value={value} onChange={onChange} placeholder={placeholder} showPlaceholders />;
   const insert = (token: string) => {
     const el = ref.current;
     const start = el?.selectionStart ?? value.length;
@@ -115,7 +121,17 @@ function MacroForm({
   return (
     <div className="card" style={{ marginBottom: 10, display: "grid", gap: 8 }}>
       <div style={{ display: "flex", gap: 8 }}>
-        <select className="vmsel" style={{ width: "auto" }} value={m.channel} onChange={(e) => set({ channel: e.target.value })}>
+        <select
+          className="vmsel"
+          style={{ width: "auto" }}
+          value={m.channel}
+          onChange={(e) => {
+            const ch = e.target.value;
+            // Leaving the email (HTML) editor for a plain channel → flatten the draft.
+            const body = ch !== "email" && m.body && isHtml(m.body) ? htmlToPlain(m.body) : m.body;
+            set({ channel: ch, body });
+          }}
+        >
           {CHANNELS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
         <input className="vmsel" style={{ flex: 1 }} placeholder="Macro name" value={m.name ?? ""} onChange={(e) => set({ name: e.target.value })} />
@@ -131,7 +147,7 @@ function MacroForm({
       {m.channel === "email" && (
         <input className="vmsel" placeholder="Subject (email)" value={m.subject ?? ""} onChange={(e) => set({ subject: e.target.value })} />
       )}
-      <BodyField value={m.body ?? ""} onChange={(v) => set({ body: v })} placeholder="Message body… use the placeholder dropdown for merge fields" />
+      <BodyField rich={m.channel === "email"} value={m.body ?? ""} onChange={(v) => set({ body: v })} placeholder="Message body… use the placeholder dropdown for merge fields" />
       {assets.length > 0 && (
         <div>
           <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-3)", marginBottom: 4 }}>
@@ -326,7 +342,7 @@ export function MacroLibraryView({ isAdmin }: { isAdmin: boolean }) {
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontWeight: 600, fontSize: 13.5 }}>{m.name} {m.template_id && <span className="chip stage" style={{ fontSize: 10.5 }}>from template</span>}</div>
                           {m.subject && <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Subject: {m.subject}</div>}
-                          <div style={{ fontSize: 12.5, color: "var(--text-2)", whiteSpace: "pre-wrap", marginTop: 2 }}>{m.body}</div>
+                          <div style={{ fontSize: 12.5, color: "var(--text-2)", whiteSpace: "pre-wrap", marginTop: 2 }}>{previewText(m.body)}</div>
                         </div>
                         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                           <button className="btn ghost" style={{ fontSize: 12, padding: "3px 9px" }} onClick={() => setEditId(m.id)}>Edit</button>
@@ -364,7 +380,7 @@ export function MacroLibraryView({ isAdmin }: { isAdmin: boolean }) {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 600, fontSize: 13.5 }}>{m.name}</div>
                         {m.subject && <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Subject: {m.subject}</div>}
-                        <div style={{ fontSize: 12.5, color: "var(--text-2)", whiteSpace: "pre-wrap", marginTop: 2 }}>{m.body}</div>
+                        <div style={{ fontSize: 12.5, color: "var(--text-2)", whiteSpace: "pre-wrap", marginTop: 2 }}>{previewText(m.body)}</div>
                       </div>
                       {(isAdmin || m.owner_email === data.viewEmail) && (
                         <button className="btn ghost" style={{ fontSize: 12, padding: "3px 9px", color: "var(--crit)" }} onClick={async () => { await post({ op: "template_delete", id: m.id }); load(); }}>Delete</button>
@@ -395,7 +411,7 @@ export function MacroLibraryView({ isAdmin }: { isAdmin: boolean }) {
                   {f.items.map((m) => (
                     <div key={m.id} className="card" style={{ marginBottom: 6 }}>
                       <div style={{ fontWeight: 600, fontSize: 13.5 }}>{m.name}</div>
-                      <div style={{ fontSize: 12.5, color: "var(--text-2)", whiteSpace: "pre-wrap" }}>{m.body}</div>
+                      <div style={{ fontSize: 12.5, color: "var(--text-2)", whiteSpace: "pre-wrap" }}>{previewText(m.body)}</div>
                     </div>
                   ))}
                 </div>

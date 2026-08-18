@@ -22,7 +22,9 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
-  const sig = (body.signature ?? "").slice(0, 2000);
+  // HTML signatures (formatting + a signed image URL) run much longer than the
+  // old plain-text 2000 cap.
+  const sig = (body.signature ?? "").slice(0, 12000);
   const { error } = await supabaseAdmin()
     .from("app_users")
     .update({ email_signature: sig || null })

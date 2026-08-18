@@ -6,8 +6,9 @@ import { newOutboundCall, setOutboundHandler } from "./phoneClient";
 import { INTERESTS } from "./interests";
 import { combineDue } from "@/lib/allday";
 import { fillPlaceholders } from "@/lib/placeholders";
-import { linkifyPlain } from "@/lib/richtext";
+import { linkifyPlain, linkifyHtml, htmlToPlain, isHtml } from "@/lib/richtext";
 import { openChat } from "./chatDockStore";
+import RichTextEditor, { isEmptyHtml } from "./RichTextEditor";
 
 interface DealData {
   deal: any;
@@ -2243,12 +2244,20 @@ function CommBar({
   const applyMacro = (id: string) => {
     const m = macros.find((x) => x.id === id);
     if (!m) return;
-    let text = renderTemplate(m.body);
     // Pull in the macro's pre-assigned assets: URLs as links in the body,
     // media into the attachment tray. The rep can still add/remove their own.
     const linked = (m.asset_ids ?? []).map((aid) => assets.find((a) => a.id === aid)).filter(Boolean) as Asset[];
-    for (const a of linked.filter((a) => a.kind === "url")) text += `\n[${a.name}](${a.url})`;
-    setBody(text);
+    const urlAssets = linked.filter((a) => a.kind === "url");
+    if (channel === "email") {
+      // Email body is HTML — upconvert plain macros, append links as anchors.
+      let html = isHtml(m.body) ? renderTemplate(m.body) : linkifyHtml(renderTemplate(m.body));
+      for (const a of urlAssets) html += `<br><a href="${a.url}">${a.name}</a>`;
+      setBody(html);
+    } else {
+      let text = isHtml(m.body) ? htmlToPlain(renderTemplate(m.body)) : renderTemplate(m.body);
+      for (const a of urlAssets) text += `\n[${a.name}](${a.url})`;
+      setBody(text);
+    }
     if (m.subject && channel === "email") setSubject(renderTemplate(m.subject));
     const media = linked.filter((a) => a.kind === "media");
     if (media.length && channel === "email") setAttachIds((prev) => [...new Set([...prev, ...media.map((a) => a.id)])]);
@@ -2258,9 +2267,21 @@ function CommBar({
     const a = assets.find((x) => x.id === id);
     if (!a) return;
     // URL assets insert as a labeled link: recipients see the name, click →
-    // the URL. Email renders a real hyperlink; SMS/WA flatten to "name: url".
-    const token = a.kind === "url" ? `[${a.name}](${a.url})` : a.url;
-    setBody((b) => (b ? `${b.trimEnd()} ${token}` : token));
+    // the URL. Email gets a real anchor; SMS/WA flatten to "name: url".
+    if (channel === "email") {
+      const token = a.kind === "url" ? `<a href="${a.url}">${a.name}</a>` : `<a href="${a.url}">${a.url}</a>`;
+      setBody((b) => (b ? `${b}&nbsp;${token}` : token));
+    } else {
+      const token = a.kind === "url" ? `[${a.name}](${a.url})` : a.url;
+      setBody((b) => (b ? `${b.trimEnd()} ${token}` : token));
+    }
+  };
+
+  /** Toggle composers; an email-HTML draft flattens when a plain channel opens. */
+  const switchChannel = (c: CommChannel) => {
+    setErr(null);
+    if (c !== "email" && channel !== c && body && isHtml(body)) setBody(htmlToPlain(body));
+    setChannel((prev) => (prev === c ? null : c));
   };
 
   const [showNumPicker, setShowNumPicker] = useState(false);
@@ -2364,13 +2385,15 @@ function CommBar({
 
   const send = async () => {
     const text = body.trim();
-    if (!text || sending) return;
+    // Email body is editor HTML — "empty" means no visible content, not "".
+    if (channel === "email" ? isEmptyHtml(text) : !text) return;
+    if (sending) return;
     setSending(true);
     setErr(null);
     try {
       let r: Response | null = null;
       // Plain-text channels can't render hyperlinks — flatten [label](url) to
-      // "label: url". Email keeps the markdown; the server renders HTML.
+      // "label: url". Email sends HTML; the server builds the plain alternative.
       const plain = linkifyPlain(text);
       if (channel === "sms") {
         r = await fetch("/api/texts/send", {
@@ -2456,10 +2479,7 @@ function CommBar({
           style={btnStyle}
           disabled={!email}
           title={email ?? "Needs an email to find the Klaviyo profile"}
-          onClick={() => {
-            setErr(null);
-            setChannel((c) => (c === "whatsapp" ? null : "whatsapp"));
-          }}
+          onClick={() => switchChannel("whatsapp")}
         >
           🟢 WhatsApp
         </button>
@@ -2468,10 +2488,7 @@ function CommBar({
           style={btnStyle}
           disabled={!email}
           title={email ?? "No email on contact"}
-          onClick={() => {
-            setErr(null);
-            setChannel((c) => (c === "email" ? null : "email"));
-          }}
+          onClick={() => switchChannel("email")}
         >
           ✉️ Email
         </button>
@@ -2479,10 +2496,7 @@ function CommBar({
           className={`btn ${channel === "note" ? "primary" : ""}`}
           style={btnStyle}
           title="Add a note to the deal"
-          onClick={() => {
-            setErr(null);
-            setChannel((c) => (c === "note" ? null : "note"));
-          }}
+          onClick={() => switchChannel("note")}
         >
           📝 Note
         </button>
@@ -2624,22 +2638,24 @@ function CommBar({
               onChange={(e) => setSubject(e.target.value)}
             />
           )}
-          <textarea
-            className="vmsel"
-            rows={4}
-            style={{ resize: "vertical" }}
-            placeholder={
-              channel === "sms"
-                ? `Text ${phone}…`
-                : channel === "whatsapp"
-                  ? "WhatsApp message…"
-                  : channel === "note"
-                    ? "Note… (saves to the deal timeline)"
-                    : `Email ${email}…`
-            }
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-          />
+          {channel === "email" ? (
+            <RichTextEditor value={body} onChange={setBody} placeholder={`Email ${email}…`} minHeight={110} />
+          ) : (
+            <textarea
+              className="vmsel"
+              rows={4}
+              style={{ resize: "vertical" }}
+              placeholder={
+                channel === "sms"
+                  ? `Text ${phone}…`
+                  : channel === "whatsapp"
+                    ? "WhatsApp message…"
+                    : "Note… (saves to the deal timeline)"
+              }
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+            />
+          )}
           {channel === "whatsapp" && waProfileId === "missing" && (
             <div style={{ color: "var(--warn)", fontSize: 13 }}>
               No Klaviyo profile found for {email} — WhatsApp needs one.
@@ -2647,7 +2663,7 @@ function CommBar({
           )}
           {err && <div style={{ color: "var(--crit)", fontSize: 13 }}>{err}</div>}
           <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn primary" disabled={!body.trim() || sending} onClick={send}>
+            <button className="btn primary" disabled={(channel === "email" ? isEmptyHtml(body) : !body.trim()) || sending} onClick={send}>
               {channel === "note"
                 ? sending ? "Saving…" : "Save note"
                 : sending ? "Sending…" : `Send ${channel === "sms" ? "text" : channel === "whatsapp" ? "WhatsApp" : "email"}`}

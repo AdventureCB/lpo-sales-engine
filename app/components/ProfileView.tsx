@@ -5,6 +5,7 @@ import Link from "next/link";
 import { VmPanel, type VmDrop } from "./VmPanel";
 import { RingtonePicker } from "./RingtonePicker";
 import { VersionStamp } from "./VersionStamp";
+import RichTextEditor from "./RichTextEditor";
 
 /**
  * Per-rep personal settings. The chosen voicemail drop is remembered on this
@@ -80,16 +81,9 @@ export function ProfileView({ isAdmin }: { isAdmin: boolean }) {
       <div className="card" style={{ maxWidth: 560, marginTop: 18 }}>
         <div className="panel-h">✍️ Email signature</div>
         <div style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 8 }}>
-          Appended to every email you send. Links written as <code>{"[label](https://…)"}</code> become clickable.
+          Appended to every email you send — formatting, links, and images carry through.
         </div>
-        <textarea
-          className="vmsel"
-          rows={5}
-          style={{ resize: "vertical", width: "100%" }}
-          placeholder={"— \nJane Rep\nLone Peak Overland\n[Book a demo](https://…)"}
-          value={sig}
-          onChange={(e) => setSig(e.target.value)}
-        />
+        <RichTextEditor value={sig} onChange={setSig} placeholder={"—\nJane Rep\nLone Peak Overland"} minHeight={110} />
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
           <button className="btn primary" onClick={saveSig} disabled={sigSaving}>{sigSaving ? "Saving…" : "Save signature"}</button>
           {sigMsg && <span style={{ fontSize: 13, color: sigMsg.startsWith("✓") ? "var(--good)" : "var(--bad)" }}>{sigMsg}</span>}

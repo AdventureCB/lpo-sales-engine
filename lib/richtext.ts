@@ -37,3 +37,61 @@ export function hasRichLinks(text: string): boolean {
   MD_LINK.lastIndex = 0;
   return MD_LINK.test(text);
 }
+
+/**
+ * Rich (HTML) bodies. The email composer, email macros, and signatures store
+ * HTML from the rich-text editor; plain-text-era values (markdown links +
+ * newlines) still flow through linkifyHtml. isHtml() is how every consumer
+ * tells the two apart.
+ */
+
+const HTML_TAG = /<\/?(p|div|br|b|strong|i|em|u|s|a|img|ul|ol|li|span|h[1-6]|blockquote|font)\b/i;
+
+/** True if the value is editor-produced HTML rather than legacy plain text. */
+export function isHtml(s: string): boolean {
+  return HTML_TAG.test(s);
+}
+
+/**
+ * Allowlist-lite sanitizer for outbound email HTML. The author is the rep
+ * themselves, so this guards against pasted junk (scripts, event handlers,
+ * javascript: URLs), not a hostile author.
+ */
+export function sanitizeEmailHtml(html: string): string {
+  let s = html.replace(/<(script|style|iframe|object|embed|form|link|meta)[\s\S]*?<\/\1>/gi, "");
+  s = s.replace(/<\/?(script|iframe|object|embed|form|link|meta)[^>]*>/gi, "");
+  s = s.replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
+  s = s.replace(/\s(href|src)\s*=\s*(["']?)\s*javascript:[^"'>\s]*\2/gi, "");
+  return s;
+}
+
+/** Flatten editor HTML to readable plain text (multipart alternative, timeline snippets, SMS fallback). */
+export function htmlToPlain(html: string): string {
+  let s = html.replace(/<(script|style)[\s\S]*?<\/\1>/gi, "");
+  s = s.replace(/<a\s[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_m, href, inner) => {
+    const label = inner.replace(/<[^>]+>/g, "").trim();
+    return label && label !== href ? `${label}: ${href}` : href;
+  });
+  s = s.replace(/<img[^>]*\salt="([^"]+)"[^>]*>/gi, "[$1]").replace(/<img[^>]*>/gi, "[image]");
+  s = s.replace(/<li[^>]*>/gi, "\n• ");
+  s = s.replace(/<(br|\/p|\/div|\/li|\/h[1-6]|\/blockquote|\/tr)[^>]*>/gi, "\n");
+  s = s.replace(/<[^>]+>/g, "");
+  s = s
+    .replace(/&nbsp;/g, " ")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+  return s.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** Render any stored body (HTML or legacy plain) to sendable email HTML. */
+export function toEmailHtml(s: string): string {
+  return isHtml(s) ? sanitizeEmailHtml(s) : linkifyHtml(s);
+}
+
+/** Render any stored body (HTML or legacy plain) to plain text. */
+export function toPlainText(s: string): string {
+  return isHtml(s) ? htmlToPlain(s) : linkifyPlain(s);
+}

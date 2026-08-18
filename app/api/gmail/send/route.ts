@@ -3,7 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
 import { sendGmail } from "@/lib/gmail";
 import { normalizeEmail } from "@/lib/identity";
-import { linkifyHtml, linkifyPlain, hasRichLinks } from "@/lib/richtext";
+import { hasRichLinks, isHtml, toEmailHtml, toPlainText } from "@/lib/richtext";
 
 export const runtime = "nodejs";
 
@@ -54,21 +54,24 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Append the sender's saved signature to every email.
+  // Append the sender's saved signature to every email. Body and signature may
+  // each be editor HTML or legacy plain text — compose both a plain-text
+  // alternative and an HTML part from whichever they are.
   const { data: me } = await db.from("app_users").select("email_signature").eq("id", user.authUserId).maybeSingle();
   const sig = me?.email_signature?.trim();
-  const fullText = sig ? `${text}\n\n${sig}` : text;
+  const bodyPlain = toPlainText(text);
+  const fullPlain = sig ? `${bodyPlain}\n\n${toPlainText(sig)}` : bodyPlain;
+  const fullHtml = toEmailHtml(text) + (sig ? `<br><br>${toEmailHtml(sig)}` : "");
 
   let messageId: string;
   try {
-    // Render asset markdown links to a real HTML hyperlink; keep a plain-text
-    // alternative for clients that don't render HTML.
-    const rich = hasRichLinks(fullText);
+    const rich =
+      isHtml(text) || hasRichLinks(text) || (!!sig && (isHtml(sig) || hasRichLinks(sig))) || attachments.length > 0;
     messageId = await sendGmail(db, account, {
       to,
       subject,
-      body: linkifyPlain(fullText),
-      html: rich || attachments.length ? linkifyHtml(fullText) : undefined,
+      body: fullPlain,
+      html: rich ? fullHtml : undefined,
       attachments: attachments.length ? attachments : undefined,
     });
   } catch (e) {
@@ -86,7 +89,7 @@ export async function POST(req: NextRequest) {
     contact_id: body.contactId ?? null,
     type: "email",
     subject: `📤 ${subject}`,
-    body: text.slice(0, 500),
+    body: bodyPlain.slice(0, 500),
     actor: user.email,
     occurred_at: new Date().toISOString(),
     meta: { gmail: true, direction: "outbound" },
