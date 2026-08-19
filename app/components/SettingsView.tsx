@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { VersionStamp } from "./VersionStamp";
-import { UsersAdmin } from "./UsersAdmin";
 
 /** Admin configuration: rep calling numbers + daily goals. */
 
@@ -18,7 +17,8 @@ interface Rep {
   bonus_dial_goal: number | null;
 }
 
-export function SettingsView() {
+/** Rep calling numbers (Telnyx assignment) + daily dial/talk goals. */
+export function PhoneGoalsAdmin() {
   const [reps, setReps] = useState<Rep[]>([]);
   const [numbers, setNumbers] = useState<string[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
@@ -86,12 +86,8 @@ export function SettingsView() {
 
   return (
     <>
-      <h2 className="viewtitle">Settings</h2>
       <div className="viewsub" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-        Team configuration
-        <Link href="/settings/profile" className="btn ghost" style={{ padding: "4px 12px", fontSize: 13 }}>
-          👤 My profile →
-        </Link>
+        Numbers &amp; daily goals
         <VersionStamp />
         {msg && <span style={{ color: "var(--text-2)" }}>{msg}</span>}
       </div>
@@ -188,24 +184,6 @@ export function SettingsView() {
           ))}
       </div>
 
-      <Link href="/settings/archetypes" className="card" style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 18, textDecoration: "none", color: "inherit" }}>
-        <span style={{ fontSize: 22 }}>🧠</span>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 700 }}>Archetype Mapping</div>
-          <div className="viewsub" style={{ margin: 0 }}>Personas + universal attributes the AI deal-profiler classifies against.</div>
-        </div>
-        <span style={{ color: "var(--text-3)" }}>→</span>
-      </Link>
-
-      <VoicemailAdmin />
-      <UsersAdmin />
-      <AIProfilerAdmin />
-      <CommLibraryAdmin />
-      <DealSourcesAdmin />
-      <PipelineAdmin />
-      <SprintListConfigAdmin />
-      <ReassignAdmin />
-      <IntakeAdmin />
     </>
   );
 }
@@ -218,7 +196,7 @@ const MODEL_TIERS = [
   ["opus", "Opus (max)"],
 ] as const;
 
-function AIProfilerAdmin() {
+export function AIProfilerAdmin() {
   const [cfg, setCfg] = useState<any>(null);
   const [pipelines, setPipelines] = useState<string[]>([]);
   const [spend, setSpend] = useState<number>(0);
@@ -346,7 +324,7 @@ function AIProfilerAdmin() {
 
 // ── Auto-reassignment: quiet deals flow back to the reprospecting pool ─────
 
-function ReassignAdmin() {
+export function ReassignAdmin() {
   const [cfg, setCfg] = useState<any>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -461,7 +439,7 @@ function ReassignAdmin() {
 
 // ── Intake Engine: Zapier-replacement funnels, fully config-driven ─────────
 
-function IntakeAdmin() {
+export function IntakeAdmin() {
   const [data, setData] = useState<{ sources: any[]; reps: { name: string; pipedrive_user_id: number }[]; counts: Record<string, Record<string, number>>; stages?: { id: string; name: string; pipedriveStageId: number | null; pipeline: string }[]; dealSources?: string[] } | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -660,7 +638,7 @@ function IntakeAdmin() {
 
 // ── Sprint List tuning: caps, tier windows, clock, hot-signal regex ────────
 
-function SprintListConfigAdmin() {
+export function SprintListConfigAdmin() {
   const [cfg, setCfg] = useState<any>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -777,7 +755,7 @@ const CHANNELS = [
   ["email", "✉️ Email"],
 ] as const;
 
-function CommLibraryAdmin() {
+export function CommLibraryAdmin() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -910,7 +888,7 @@ interface DealSource {
   pipedrive_channel_id: number | null;
 }
 
-function DealSourcesAdmin() {
+export function DealSourcesAdmin() {
   const [sources, setSources] = useState<DealSource[]>([]);
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [newName, setNewName] = useState("");
@@ -1013,7 +991,7 @@ interface PLPipeline {
   stages: PLStage[];
 }
 
-function PipelineAdmin() {
+export function PipelineAdmin() {
   const [pipelines, setPipelines] = useState<PLPipeline[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [newPipeline, setNewPipeline] = useState("");
@@ -1171,7 +1149,7 @@ function audioBufferToWav(buffer: AudioBuffer): Blob {
   return new Blob([out.buffer], { type: "audio/wav" });
 }
 
-function VoicemailAdmin() {
+export function VoicemailAdmin() {
   const [cfg, setCfg] = useState<{ enabled: boolean; delay_s: number; greeting: string; greeting_mode: "tts" | "audio"; greeting_audio_path: string | null } | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);

@@ -1,17 +1,11 @@
 import { redirect } from "next/navigation";
-import { AppShell } from "../components/AppShell";
-import { SettingsView } from "../components/SettingsView";
 import { getSessionUser } from "@/lib/auth";
 
 export const metadata = { title: "Settings · LPO Sales Engine" };
 
+/** Settings is a menu now — land admins on CRM config, reps on their profile. */
 export default async function SettingsPage() {
   const user = await getSessionUser();
   if (!user) redirect("/login");
-  if (user.role !== "admin") redirect("/settings/profile");
-  return (
-    <AppShell active="/settings" user={{ name: user.repName ?? user.email, role: user.role }}>
-      <SettingsView />
-    </AppShell>
-  );
+  redirect(user.role === "admin" ? "/settings/crm" : "/settings/profile");
 }

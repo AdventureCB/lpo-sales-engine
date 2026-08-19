@@ -10,7 +10,7 @@ export default async function ArchetypesPage() {
   if (!user) redirect("/login");
   if (user.role !== "admin") redirect("/settings");
   return (
-    <AppShell active="/settings" user={{ name: user.repName ?? user.email, role: user.role }}>
+    <AppShell active="/settings/profiler" user={{ name: user.repName ?? user.email, role: user.role }}>
       <ArchetypeMappingView />
     </AppShell>
   );

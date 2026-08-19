@@ -9,7 +9,7 @@ export default async function ProfilePage() {
   const user = await getSessionUser();
   if (!user) redirect("/login");
   return (
-    <AppShell active="/settings" user={{ name: user.repName ?? user.email, role: user.role }}>
+    <AppShell active="/settings/profile" user={{ name: user.repName ?? user.email, role: user.role }}>
       <ProfileView isAdmin={user.role === "admin"} />
     </AppShell>
   );

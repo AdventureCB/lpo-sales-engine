@@ -45,9 +45,17 @@ const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[]
     ],
   },
   {
-    // Everyone: admins land on team config, reps on their profile page.
-    header: null,
-    items: [{ label: "⚙ Settings", href: "/settings" }],
+    header: "⚙ Settings",
+    collapsible: true,
+    items: [
+      { label: "👤 My Profile", href: "/settings/profile" },
+      { label: "👥 Users", href: "/settings/users", adminOnly: true },
+      { label: "📞 Phone & Goals", href: "/settings/phone", adminOnly: true },
+      { label: "📇 CRM", href: "/settings/crm", adminOnly: true },
+      { label: "🔀 Intake", href: "/settings/intake", adminOnly: true },
+      { label: "🧠 AI Profiler", href: "/settings/profiler", adminOnly: true },
+      { label: "✉️ Comms", href: "/settings/comms", adminOnly: true },
+    ],
   },
 ];
 
