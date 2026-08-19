@@ -885,7 +885,9 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
         )}
       </div>
 
-      <div className="card" style={{ padding: "6px 12px", overflowX: "auto" }}>
+      {/* crm-wide uncaps main's 1220px (window width = list width); crm-scroll
+          scrolls the table independently so the horizontal bar stays on-screen. */}
+      <div className="card crm-wide crm-scroll" style={{ padding: "6px 12px" }}>
         <table className="data">
           <thead>
             <tr>

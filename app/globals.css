@@ -333,6 +333,20 @@ table.data tr:hover td { background: var(--surface-2); }
 table.data th.sticky-col, table.data td.sticky-col { position: sticky; background: #1e1b17; z-index: 2; }
 table.data th.sticky-col { z-index: 3; }
 table.data tr:hover td.sticky-col { background: #26221d; }
+/* CRM list: a page containing .crm-wide drops main's width cap so widening
+   the window widens the table. .crm-scroll scrolls the table region on its
+   own (vertical + horizontal) so the horizontal scrollbar is always on
+   screen; headers stick inside it and scrollbars are always drawn (macOS
+   overlay bars hide otherwise). */
+main:has(.crm-wide) { max-width: none; }
+.crm-scroll { overflow: auto; max-height: max(340px, calc(100vh - 245px)); }
+.crm-scroll::-webkit-scrollbar { height: 11px; width: 11px; }
+.crm-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+.crm-scroll::-webkit-scrollbar-thumb:hover { background: var(--text-3); background-clip: padding-box; }
+.crm-scroll::-webkit-scrollbar-track { background: transparent; }
+.crm-scroll::-webkit-scrollbar-corner { background: transparent; }
+.crm-scroll table.data thead th { position: sticky; top: 0; background: #1e1b17; z-index: 3; }
+.crm-scroll table.data thead th.sticky-col { z-index: 4; }
 .btn {
   display: inline-flex; align-items: center; gap: 8px;
   border: none; cursor: pointer;
@@ -396,6 +410,7 @@ html[data-theme="light"] .range-toggle button.active { box-shadow: 0 1px 4px rgb
 html[data-theme="light"] table.data th.sticky-col,
 html[data-theme="light"] table.data td.sticky-col { background: #f4eee5; }
 html[data-theme="light"] table.data tr:hover td.sticky-col { background: #ebe3d5; }
+html[data-theme="light"] .crm-scroll table.data thead th { background: #f4eee5; }
 html[data-theme="light"] ::selection { background: rgba(207, 82, 39, 0.20); }
 
 /* Theme toggle button (sidebar footer) */
