@@ -42,11 +42,61 @@ const CHANNEL_LABEL: Record<string, string> = {
 const usd = (cents: number | null | undefined, digits = 0) =>
   cents == null ? "—" : `$${(cents / 100).toLocaleString(undefined, { maximumFractionDigits: digits })}`;
 
+interface FlowPoint { key: string; new: number; won: number; lost: number }
 interface NewDealsReport {
-  total: number;
   bucket: string;
-  buckets: { key: string; count: number }[];
+  source: string | null;
+  sources: string[];
+  series: FlowPoint[];
+  totals: { new: number; won: number; lost: number; openNow: number };
   bySource: { source: string; count: number }[];
+}
+
+const FLOW_LINES: { k: keyof Pick<FlowPoint, "new" | "won" | "lost">; label: string; color: string }[] = [
+  { k: "new", label: "New", color: "var(--accent)" },
+  { k: "won", label: "Won", color: "var(--good)" },
+  { k: "lost", label: "Lost", color: "var(--crit)" },
+];
+
+/** Inline SVG line chart: new/won/lost per bucket. */
+function FlowChart({ series, bucket }: { series: FlowPoint[]; bucket: string }) {
+  const W = 760;
+  const H = 210;
+  const PAD = { l: 36, r: 12, t: 10, b: 24 };
+  const max = Math.max(...series.flatMap((p) => [p.new, p.won, p.lost]), 1);
+  const x = (i: number) => PAD.l + (series.length < 2 ? (W - PAD.l - PAD.r) / 2 : (i * (W - PAD.l - PAD.r)) / (series.length - 1));
+  const y = (v: number) => H - PAD.b - (v / max) * (H - PAD.t - PAD.b);
+  const path = (get: (p: FlowPoint) => number) => series.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(get(p)).toFixed(1)}`).join(" ");
+  // At most ~8 x labels so day-granularity long ranges stay readable.
+  const stepX = Math.max(1, Math.ceil(series.length / 8));
+  const gridVals = [0, Math.round(max / 2), max];
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }} role="img">
+      {gridVals.map((v) => (
+        <g key={v}>
+          <line x1={PAD.l} x2={W - PAD.r} y1={y(v)} y2={y(v)} stroke="var(--border-soft)" strokeWidth={1} />
+          <text x={PAD.l - 6} y={y(v) + 4} textAnchor="end" fontSize={10.5} fill="var(--text-3)">{v}</text>
+        </g>
+      ))}
+      {series.map((p, i) =>
+        i % stepX === 0 || i === series.length - 1 ? (
+          <text key={p.key} x={x(i)} y={H - 6} textAnchor="middle" fontSize={10.5} fill="var(--text-3)">
+            {bucketLabel(p.key, bucket).replace(/^Wk of /, "").replace(/^\w{3}, /, "")}
+          </text>
+        ) : null
+      )}
+      {FLOW_LINES.map(({ k, color }) => (
+        <path key={k} d={path((p) => p[k])} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" />
+      ))}
+      {FLOW_LINES.map(({ k, label, color }) =>
+        series.map((p, i) => (
+          <circle key={`${k}${p.key}`} cx={x(i)} cy={y(p[k])} r={3} fill={color}>
+            <title>{`${bucketLabel(p.key, bucket)} — ${label}: ${p[k]}`}</title>
+          </circle>
+        ))
+      )}
+    </svg>
+  );
 }
 
 const localDate = (d: Date) =>
@@ -70,6 +120,7 @@ export function AdRoiView() {
   const [ndBucket, setNdBucket] = useState<"day" | "week" | "month">("day");
   const [ndStart, setNdStart] = useState("2026-08-01");
   const [ndEnd, setNdEnd] = useState(() => localDate(new Date()));
+  const [ndSource, setNdSource] = useState("");
   const [nd, setNd] = useState<NewDealsReport | null>(null);
   const [ndErr, setNdErr] = useState<string | null>(null);
 
@@ -84,11 +135,11 @@ export function AdRoiView() {
   useEffect(() => {
     if (!ndStart || !ndEnd || ndStart > ndEnd) return;
     setNdErr(null);
-    fetch(`/api/admin/new-deals?start=${ndStart}&end=${ndEnd}&bucket=${ndBucket}`)
+    fetch(`/api/admin/new-deals?start=${ndStart}&end=${ndEnd}&bucket=${ndBucket}&source=${encodeURIComponent(ndSource)}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then(setNd)
       .catch((e) => setNdErr(String(e)));
-  }, [ndStart, ndEnd, ndBucket]);
+  }, [ndStart, ndEnd, ndBucket, ndSource]);
 
   const ndPreset = (which: "7d" | "30d" | "month" | "aug") => {
     const now = new Date();
@@ -163,7 +214,7 @@ export function AdRoiView() {
 
       <div className="card" style={{ marginTop: 14, padding: "14px 18px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <b style={{ fontSize: 15 }}>🆕 New deals{nd ? ` — ${nd.total.toLocaleString()}` : ""}</b>
+          <b style={{ fontSize: 15 }}>📈 Deal flow</b>
           <div className="range-toggle" style={{ marginBottom: 0 }}>
             {(["day", "week", "month"] as const).map((b) => (
               <button key={b} className={ndBucket === b ? "active" : ""} onClick={() => setNdBucket(b)}>
@@ -171,7 +222,18 @@ export function AdRoiView() {
               </button>
             ))}
           </div>
-          <span style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <select
+            className="vmsel"
+            style={{ width: "auto", fontSize: 12.5, padding: "4px 8px" }}
+            value={ndSource}
+            onChange={(e) => setNdSource(e.target.value)}
+          >
+            <option value="">All sources</option>
+            {(nd?.sources ?? []).map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+          <span style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginLeft: "auto" }}>
             {([["7d", "7d"], ["30d", "30d"], ["month", "This month"], ["aug", "Since Aug 1"]] as const).map(([k, l]) => (
               <button key={k} className="btn ghost" style={{ padding: "4px 10px", fontSize: 12.5 }} onClick={() => ndPreset(k)}>
                 {l}
@@ -183,54 +245,65 @@ export function AdRoiView() {
           </span>
         </div>
         {ndErr && <div style={{ color: "var(--crit)", fontSize: 13, marginTop: 8 }}>{ndErr}</div>}
-        {nd && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 20, marginTop: 14 }}>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-3)", marginBottom: 8 }}>
-                Per {nd.bucket}
+        {nd && (() => {
+          const tt = nd.totals;
+          const resolved = tt.won + tt.lost;
+          return (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginTop: 14 }}>
+                <div className="stat-tile"><div className="n">{tt.new.toLocaleString()}</div><div className="l">New deals</div></div>
+                <div className="stat-tile"><div className="n" style={{ color: "var(--good)" }}>{tt.won.toLocaleString()}</div><div className="l">Won</div></div>
+                <div className="stat-tile"><div className="n" style={{ color: "var(--crit)" }}>{tt.lost.toLocaleString()}</div><div className="l">Lost</div></div>
+                <div className="stat-tile"><div className="n">{tt.openNow.toLocaleString()}</div><div className="l">Open now</div><div className="d">current, not range-bound</div></div>
+                <div className="stat-tile"><div className="n">{resolved > 0 ? `${Math.round((tt.won / resolved) * 100)}%` : "—"}</div><div className="l">Conversion rate</div><div className="d">won ÷ resolved in range</div></div>
+                <div className="stat-tile"><div className="n">{resolved > 0 ? `${Math.round((tt.lost / resolved) * 100)}%` : "—"}</div><div className="l">Loss rate</div><div className="d">lost ÷ resolved in range</div></div>
               </div>
-              {nd.buckets.length === 0 && <div style={{ color: "var(--text-3)", fontSize: 13.5 }}>No deals in this range.</div>}
-              <div style={{ maxHeight: 340, overflowY: "auto", display: "grid", gap: 4 }}>
-                {(() => {
-                  const max = Math.max(...nd.buckets.map((b) => b.count), 1);
-                  return nd.buckets.map((b) => (
-                    <div key={b.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-                      <span style={{ width: 110, flexShrink: 0, color: "var(--text-2)" }}>{bucketLabel(b.key, nd.bucket)}</span>
-                      <div style={{ flex: 1, height: 14, background: "var(--surface-2)", borderRadius: 4, overflow: "hidden" }}>
-                        <div style={{ width: `${(b.count / max) * 100}%`, height: "100%", background: "var(--accent)", borderRadius: 4 }} />
-                      </div>
-                      <b style={{ width: 42, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{b.count}</b>
-                    </div>
-                  ));
-                })()}
+              <div style={{ display: "flex", gap: 16, alignItems: "center", margin: "14px 0 4px", fontSize: 12.5 }}>
+                {FLOW_LINES.map(({ k, label, color }) => (
+                  <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--text-2)" }}>
+                    <span style={{ width: 14, height: 3, background: color, borderRadius: 2, display: "inline-block" }} /> {label}
+                  </span>
+                ))}
+                {ndSource && <span style={{ color: "var(--text-3)" }}>· {ndSource} only</span>}
               </div>
-            </div>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-3)", marginBottom: 8 }}>
-                By source
-              </div>
-              <div style={{ maxHeight: 340, overflowY: "auto", display: "grid", gap: 4 }}>
-                {(() => {
-                  const max = Math.max(...nd.bySource.map((s) => s.count), 1);
-                  return nd.bySource.map((s) => (
-                    <div key={s.source} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-                      <span style={{ width: 150, flexShrink: 0, color: "var(--text-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.source}>
-                        {s.source}
-                      </span>
-                      <div style={{ flex: 1, height: 14, background: "var(--surface-2)", borderRadius: 4, overflow: "hidden" }}>
-                        <div style={{ width: `${(s.count / max) * 100}%`, height: "100%", background: "var(--accent-2)", borderRadius: 4 }} />
-                      </div>
-                      <b style={{ width: 42, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{s.count}</b>
-                      <span style={{ width: 44, textAlign: "right", fontSize: 12, color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
-                        {nd.total > 0 ? `${Math.round((s.count / nd.total) * 100)}%` : ""}
-                      </span>
-                    </div>
-                  ));
-                })()}
-              </div>
-            </div>
-          </div>
-        )}
+              {nd.series.length === 0 ? (
+                <div style={{ color: "var(--text-3)", fontSize: 13.5, padding: "18px 0" }}>No deal activity in this range.</div>
+              ) : (
+                <FlowChart series={nd.series} bucket={nd.bucket} />
+              )}
+              {!ndSource && nd.bySource.length > 0 && (
+                <div style={{ marginTop: 16 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-3)", marginBottom: 8 }}>
+                    New deals by source
+                  </div>
+                  <div style={{ maxHeight: 300, overflowY: "auto", display: "grid", gap: 4 }}>
+                    {(() => {
+                      const max = Math.max(...nd.bySource.map((s) => s.count), 1);
+                      return nd.bySource.map((s) => (
+                        <div key={s.source} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                          <span
+                            style={{ width: 170, flexShrink: 0, color: "var(--text-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }}
+                            title={`Filter to ${s.source}`}
+                            onClick={() => setNdSource(s.source)}
+                          >
+                            {s.source}
+                          </span>
+                          <div style={{ flex: 1, height: 14, background: "var(--surface-2)", borderRadius: 4, overflow: "hidden" }}>
+                            <div style={{ width: `${(s.count / max) * 100}%`, height: "100%", background: "var(--accent-2)", borderRadius: 4 }} />
+                          </div>
+                          <b style={{ width: 42, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{s.count}</b>
+                          <span style={{ width: 44, textAlign: "right", fontSize: 12, color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
+                            {tt.new > 0 ? `${Math.round((s.count / tt.new) * 100)}%` : ""}
+                          </span>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       {data && Object.keys(data.organicSources).length > 0 && (
