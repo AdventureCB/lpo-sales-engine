@@ -7,6 +7,7 @@ import {
   type AiProfilerConfig,
   type ModelTier,
 } from "./ai-profiler";
+import { INTERESTS } from "@/app/components/interests";
 
 /**
  * The AI deal-profiler engine. One combined call per deal produces the whole
@@ -51,6 +52,15 @@ async function buildTaxonomy(db: SupabaseClient): Promise<{ text: string; attrKe
     `## Universal attributes (fill what the evidence supports; importance 0-3 = how much it matters)`,
     attrLines.join("\n"),
     ``,
+    `## Primary interests (fixed catalog — output ONLY these exact labels)`,
+    INTERESTS.join(" | "),
+    `Interests already on the deal are REP-VERIFIED ground truth: weigh them heavily when scoring archetype fit and shaping next_action, and re-emit them. Add catalog interests the evidence supports; never guess. Interest-flavored specifics outside the catalog belong in tags instead.`,
+    ``,
+    `## Definitions (app-specific terms in the input)`,
+    `Call dispositions (rep-logged outcome per dial): connected = live conversation; vm_dropped = left a voicemail; no_answer = rang out / ignored / mailbox full; bad_number = number doesn't reach them (struck from lists); callback = the buyer asked to be called at a set time (positive signal); confirmation = post-sale confirmation call.`,
+    `Call classifications (system-detected): conversation = answered call; voicemail = our inbound VM system took a message; no_answer = missed.`,
+    `Engagement signals: checkout_started / builder_save (3D camper builder) / added_to_cart = strong BUY-INTENT; click/open = marketing email interaction; funnel-touch notes ("🔁 … — funnel touch") are automated intake events, not rep conversations.`,
+    ``,
     `## Rules`,
     `- ALWAYS fill EVERY field of the tool on EVERY run — archetypes, attributes, tags, summary, next_action (with questions_to_ask), data_sufficiency (with band), and overall_confidence. This is REQUIRED even when reconciling: re-emit unchanged values, never omit a field.`,
     `- EVERY attribute value and archetype fit MUST cite evidence, but keep evidence TERSE: at most 2-3 items, each a short phrase or brief quote (under ~12 words). No paragraphs. No evidence → don't assert it.`,
@@ -77,6 +87,8 @@ interface DealInputs {
   notes: string[];
   adText: string;
   signalText: string;
+  callText: string;
+  interestsOnFile: string[];
   latestActivityAt: string | null;
   transcriptCount: number;
 }
@@ -84,7 +96,7 @@ interface DealInputs {
 async function gatherDealInputs(db: SupabaseClient, dealId: string): Promise<DealInputs | null> {
   const { data: deal } = await db
     .from("crm_deals")
-    .select("id, title, value_cents, status, created_at, interests, custom, crm_stages(name, crm_pipelines(name)), crm_contacts(id, name, tz_offset, emails)")
+    .select("id, pipedrive_deal_id, title, value_cents, status, created_at, interests, custom, crm_stages(name, crm_pipelines(name)), crm_contacts(id, name, tz_offset, emails)")
     .eq("id", dealId)
     .maybeSingle();
   if (!deal) return null;
@@ -149,7 +161,41 @@ async function gatherDealInputs(db: SupabaseClient, dealId: string): Promise<Dea
       signalText = Object.entries(evCounts).map(([t, n]) => `${t}×${n}`).join(", ");
   }
 
-  return { header, transcripts, notes, adText, signalText, latestActivityAt, transcriptCount: transcripts.length };
+  // Call-outcome history (dispositions defined in the system prompt). Kept
+  // OUT of the input hash — a new dial shouldn't re-run extraction by itself,
+  // but the history rides along whenever a contentful run happens.
+  let callText = "No calls yet.";
+  const pdId = (deal as any).pipedrive_deal_id;
+  if (pdId != null) {
+    const { data: calls } = await db
+      .from("call_events")
+      .select("disposition, classification, duration_s, started_at")
+      .eq("deal_id", pdId)
+      .order("started_at", { ascending: false })
+      .limit(100);
+    if (calls?.length) {
+      const counts: Record<string, number> = {};
+      let talkS = 0;
+      for (const cl of calls) {
+        const k = cl.disposition ?? cl.classification ?? "unknown";
+        counts[k] = (counts[k] ?? 0) + 1;
+        talkS += cl.duration_s ?? 0;
+      }
+      callText = `${calls.length} dials — ${Object.entries(counts).map(([k, n]) => `${k}×${n}`).join(", ")}; total talk ${Math.round(talkS / 60)}m; last ${(calls[0].started_at ?? "").slice(0, 10)}`;
+    }
+  }
+
+  return {
+    header,
+    transcripts,
+    notes,
+    adText,
+    signalText,
+    callText,
+    interestsOnFile: ((deal as any).interests ?? []) as string[],
+    latestActivityAt,
+    transcriptCount: transcripts.length,
+  };
 }
 
 // ── Structured-output tool ─────────────────────────────────────────────────
@@ -191,6 +237,11 @@ const PROFILE_TOOL = {
       tags: {
         type: "array",
         description: "Specific concrete details the person mentioned that don't fit the fixed attributes (e.g. 'surfing', 'has two dogs', 'tows a boat', 'lives in Bend'). Short lowercase noun-phrases, deduplicated. Merge with prior tags on reconcile.",
+        items: { type: "string" },
+      },
+      interests: {
+        type: "array",
+        description: "Primary interests from the FIXED catalog only (exact labels). Re-emit the rep-verified ones already on file plus any new ones the evidence supports.",
         items: { type: "string" },
       },
       summary: { type: "string", description: "2-4 sentence rep-facing read of who this buyer is." },
@@ -330,6 +381,7 @@ export async function extractProfile(
     `# DEAL\n${inputs.header}`,
     `\n# AD INTERACTIONS (source / medium / campaign / content / ad-id)\n${inputs.adText}`,
     `\n# ENGAGEMENT SIGNALS\n${inputs.signalText}`,
+    `\n# CALL HISTORY (outcome counts — see Definitions)\n${inputs.callText}`,
     inputs.notes.length ? `\n# NOTES\n${inputs.notes.slice(0, 12).join("\n")}` : "",
     transcriptsToSend.length
       ? `\n# CALL TRANSCRIPTS (${prior && newTranscripts.length ? "NEW since last profile" : "all"})\n` +
@@ -391,6 +443,14 @@ export async function extractProfile(
   };
   const { error } = await db.from("deal_profiles").upsert(row, { onConflict: "deal_id" });
   if (error) return { ran: false, reason: `save failed: ${error.message}` };
+
+  // Write interests back to the deal: UNION of what's on file (rep-verified —
+  // never removed) and the model's catalog-validated picks.
+  const validPicks = ((out.interests ?? []) as string[]).filter((i) => (INTERESTS as readonly string[]).includes(i));
+  const merged = [...new Set([...inputs.interestsOnFile, ...validPicks])];
+  if (merged.length > inputs.interestsOnFile.length) {
+    await db.from("crm_deals").update({ interests: merged, updated_at: new Date().toISOString() }).eq("id", dealId);
+  }
 
   return { ran: true, profile: row, costCents: call.costCents };
 }
