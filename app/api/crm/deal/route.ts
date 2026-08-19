@@ -190,7 +190,16 @@ export async function GET(req: NextRequest) {
         (deal.last_activity_at != null &&
           deal.last_activity_at >= new Date(Date.now() - cfg.active_days * 86_400_000).toISOString());
       const processedAt = (aiProfile?.watermark as any)?.processed_at ?? null;
-      const hasNew = !aiProfile || (deal.last_activity_at != null && deal.last_activity_at > processedAt);
+      // "New" = content the model actually reads (transcripts + note/email
+      // bodies on THIS deal) — mirrors the engine's input hash so call stubs
+      // and scheduled follow-ups don't flag the profile stale.
+      const latestContentAt = ((activities.data ?? []) as any[]).reduce<string | null>((best, a) => {
+        if (a.deal_id !== deal.id || !a.occurred_at) return best;
+        const bodyLen = (a.body ?? "").trim().length;
+        const contentful = (a.type === "call" && bodyLen > 120) || ((a.type === "note" || a.type === "email") && bodyLen > 0);
+        return contentful && (!best || a.occurred_at > best) ? a.occurred_at : best;
+      }, null);
+      const hasNew = !aiProfile || (latestContentAt != null && (!processedAt || latestContentAt > processedAt));
       aiProfileStale = scopeOk && valueOk && activeOk && hasNew;
     }
   } catch {}

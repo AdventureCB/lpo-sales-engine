@@ -110,12 +110,20 @@ async function gatherDealInputs(db: SupabaseClient, dealId: string): Promise<Dea
     .order("occurred_at", { ascending: true });
   const transcripts: { at: string; text: string }[] = [];
   const notes: string[] = [];
+  // latestActivityAt tracks CONTENT the model actually reads (transcripts +
+  // note/email bodies) — NOT every timeline write. Call stubs, scheduled
+  // follow-ups, and system rows used to bump it, changing the input hash and
+  // re-running a full extraction with nothing new to say.
   let latestActivityAt: string | null = null;
   for (const a of acts ?? []) {
-    if (a.occurred_at && (!latestActivityAt || a.occurred_at > latestActivityAt)) latestActivityAt = a.occurred_at;
     const body = (a.body ?? "").trim();
-    if (a.type === "call" && body.length > 120) transcripts.push({ at: a.occurred_at, text: body.slice(0, 4000) });
-    else if ((a.type === "note" || a.type === "email") && body) notes.push(`[${(a.occurred_at ?? "").slice(0, 10)} ${a.subject ?? a.type}] ${body.slice(0, 500)}`);
+    const isTranscript = a.type === "call" && body.length > 120;
+    const isNote = (a.type === "note" || a.type === "email") && !!body;
+    if (isTranscript) transcripts.push({ at: a.occurred_at, text: body.slice(0, 4000) });
+    else if (isNote) notes.push(`[${(a.occurred_at ?? "").slice(0, 10)} ${a.subject ?? a.type}] ${body.slice(0, 500)}`);
+    if ((isTranscript || isNote) && a.occurred_at && (!latestActivityAt || a.occurred_at > latestActivityAt)) {
+      latestActivityAt = a.occurred_at;
+    }
   }
 
   // Ad interactions (with campaign/ad IDs) + engagement signals, keyed by email.
