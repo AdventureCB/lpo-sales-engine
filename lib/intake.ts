@@ -175,8 +175,8 @@ async function createDealNative(
     })
     .select("id")
     .single();
-  if (deal && source.config.source_name) {
-    await setDealSourceByName(db, deal.id, source.config.source_name).catch(() => {});
+  if (deal) {
+    await setDealSourceByName(db, deal.id, source.config.source_name ?? source.label).catch(() => {});
   }
   return { crmDealId: deal?.id ?? null };
 }

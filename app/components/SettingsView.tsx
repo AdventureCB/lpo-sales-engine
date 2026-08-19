@@ -460,7 +460,7 @@ function ReassignAdmin() {
 // ── Intake Engine: Zapier-replacement funnels, fully config-driven ─────────
 
 function IntakeAdmin() {
-  const [data, setData] = useState<{ sources: any[]; reps: { name: string; pipedrive_user_id: number }[]; counts: Record<string, Record<string, number>>; stages?: { id: string; name: string; pipedriveStageId: number | null; pipeline: string }[] } | null>(null);
+  const [data, setData] = useState<{ sources: any[]; reps: { name: string; pipedrive_user_id: number }[]; counts: Record<string, Record<string, number>>; stages?: { id: string; name: string; pipedriveStageId: number | null; pipeline: string }[]; dealSources?: string[] } | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
   const load = useCallback(() => {
@@ -556,6 +556,23 @@ function IntakeAdmin() {
                   </label>
                 </>
               )}
+              <label style={{ fontSize: 12.5, color: "var(--text-3)" }} title="Deal source stamped on every deal this engine creates. Blank = the engine's label.">
+                Source
+                <select
+                  className="vmsel"
+                  style={{ display: "block", marginTop: 3, maxWidth: 200 }}
+                  value={cfg.source_name ?? ""}
+                  onChange={(e) => setCfg("source_name", e.target.value || undefined)}
+                >
+                  <option value="">— engine label ({s.label}) —</option>
+                  {cfg.source_name && !(data.dealSources ?? []).includes(cfg.source_name) && (
+                    <option value={cfg.source_name}>{cfg.source_name} (custom)</option>
+                  )}
+                  {(data.dealSources ?? []).map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </label>
               <label style={{ fontSize: 12.5, color: "var(--text-3)" }} title="Pipeline + stage new deals from this engine land in. Native stages (no Pipedrive id) are supported.">
                 Default stage
                 <select

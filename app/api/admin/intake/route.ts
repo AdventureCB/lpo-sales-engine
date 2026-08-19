@@ -10,7 +10,7 @@ export async function GET() {
   const user = await getSessionUser();
   if (!user || user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
   const db = supabaseAdmin();
-  const [{ data: sources }, { data: reps }, { data: recent }, { data: stageRows }] = await Promise.all([
+  const [{ data: sources }, { data: reps }, { data: recent }, { data: stageRows }, { data: dealSources }] = await Promise.all([
     db.from("intake_sources").select("*").order("created_at"),
     db.from("reps").select("name, pipedrive_user_id").eq("active", true).not("pipedrive_user_id", "is", null),
     db
@@ -23,6 +23,8 @@ export async function GET() {
       .from("crm_stages")
       .select("id, name, pipedrive_stage_id, sort_order, crm_pipelines ( name, sort_order, pipedrive_pipeline_id )")
       .order("sort_order"),
+    // Deal-source catalog for the per-engine source picker.
+    db.from("deal_sources").select("name").order("sort_order").order("name"),
   ]);
   // 7-day action counts per source for the panel header.
   const counts: Record<string, Record<string, number>> = {};
@@ -39,7 +41,13 @@ export async function GET() {
       pipelineSort: s.crm_pipelines?.sort_order ?? 99,
     }))
     .sort((a, b) => a.pipelineSort - b.pipelineSort);
-  return NextResponse.json({ sources: sources ?? [], reps: reps ?? [], counts, stages });
+  return NextResponse.json({
+    sources: sources ?? [],
+    reps: reps ?? [],
+    counts,
+    stages,
+    dealSources: (dealSources ?? []).map((s: any) => s.name),
+  });
 }
 
 export async function POST(req: NextRequest) {
