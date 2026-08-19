@@ -81,6 +81,7 @@ export async function POST(req: NextRequest) {
     if (!text) return;
     const deal = await resolveCrmDeal();
     if (deal) {
+      const { extractMentions, withMentions } = await import("@/lib/mentions");
       await db.from("crm_activities").insert({
         deal_id: deal.id,
         contact_id: deal.contact_id,
@@ -89,6 +90,7 @@ export async function POST(req: NextRequest) {
         body: text,
         actor: user.email,
         occurred_at: new Date().toISOString(),
+        meta: withMentions(null, await extractMentions(db, text)) ?? null,
       });
     }
     if (dealId) {

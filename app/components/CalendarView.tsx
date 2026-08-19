@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { isAllDayIso, activityDayKey, splitDue, combineDue } from "@/lib/allday";
+import { useRoster } from "./useRoster";
 
 interface CalActivity {
   id: string;
@@ -23,12 +24,8 @@ const TYPE_ICON: Record<string, string> = {
   call: "📞", task: "📋", meeting: "📅", email: "✉️", sms: "💬", note: "📝",
 };
 
-const OWNERS: { id: number; label: string }[] = [
-  { id: 24081760, label: "Parker" },
-  { id: 24391245, label: "Jackson" },
-  { id: 24723797, label: "Cainen" },
-  { id: 23851101, label: "Gabi" },
-];
+// Rep filter options come from the live roster (see useRoster) — no
+// hardcoded ids, so user management changes flow through automatically.
 
 const DAY_MS = 86_400_000;
 
@@ -48,6 +45,7 @@ function fmtTime(iso: string) {
 
 export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
   const router = useRouter();
+  const roster = useRoster();
   const [view, setView] = useState<CalView>("week");
   const [anchor, setAnchor] = useState(() => new Date());
   const [activities, setActivities] = useState<CalActivity[]>([]);
@@ -298,8 +296,8 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
             onChange={(e) => setRepFilter(e.target.value)}
           >
             <option value="all">Whole team</option>
-            {OWNERS.map((o) => (
-              <option key={o.id} value={String(o.id)}>{o.label}</option>
+            {roster.active.map((o) => (
+              <option key={o.id} value={String(o.id)}>{o.name}</option>
             ))}
           </select>
         )}

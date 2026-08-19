@@ -4,6 +4,7 @@ import { getSessionUser } from "@/lib/auth";
 import { envOptional } from "@/lib/env";
 import { updateDealStage, addDealNote, createActivity, updateActivity } from "@/lib/pipedrive";
 import { enqueuePdSync } from "@/lib/pd-sync";
+import { extractMentions, withMentions } from "@/lib/mentions";
 import { resolveReprospect } from "@/lib/reprospect";
 
 export const runtime = "nodejs";
@@ -278,6 +279,7 @@ export async function POST(req: NextRequest) {
         actor: user.email,
         occurred_at: at,
         done_at: at, // it already happened
+        meta: withMentions(null, await extractMentions(db, note)) ?? null,
       })
       .select("id")
       .single();
@@ -434,7 +436,7 @@ export async function POST(req: NextRequest) {
     const e = body.editActivity;
     const { data: act } = await db
       .from("crm_activities")
-      .select("id, pipedrive_activity_id")
+      .select("id, pipedrive_activity_id, meta")
       .eq("id", e.activityId)
       .maybeSingle();
     if (!act) return NextResponse.json({ error: "activity not found" }, { status: 404 });
@@ -442,7 +444,12 @@ export async function POST(req: NextRequest) {
     if (e.subject?.trim()) patch.subject = e.subject.trim();
     if (e.type && ["call", "sms", "email", "task", "note", "meeting"].includes(e.type)) patch.type = e.type;
     if (e.dueAt !== undefined) patch.due_at = e.dueAt;
-    if (e.body !== undefined) patch.body = e.body?.trim() || null;
+    if (e.body !== undefined) {
+      patch.body = e.body?.trim() || null;
+      // Re-extract mentions so edits can add (or remove) tags.
+      const mentions = await extractMentions(db, e.body);
+      patch.meta = { ...((act.meta as Record<string, unknown>) ?? {}), mentions };
+    }
     if (Object.keys(patch).length === 0) return NextResponse.json({ error: "nothing to change" }, { status: 400 });
     const { error } = await db.from("crm_activities").update(patch).eq("id", act.id);
     if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
@@ -511,6 +518,7 @@ export async function POST(req: NextRequest) {
       subject: title ? `📝 ${title}` : null,
       body: body.note.trim(),
       actor: user.email,
+      meta: withMentions(null, await extractMentions(db, body.note)) ?? null,
     });
     if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
     if (canWriteThrough) {

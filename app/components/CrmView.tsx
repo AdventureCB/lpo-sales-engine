@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { INTERESTS } from "./interests";
+import { useRoster } from "./useRoster";
 
 const SORT_OPTIONS: { label: string; sort: string; dir: "asc" | "desc" }[] = [
   { label: "Recently updated", sort: "updated", dir: "desc" },
@@ -51,14 +52,11 @@ interface Meta {
   };
 }
 
-const OWNERS: { id: string; label: string }[] = [
-  { id: "", label: "Any owner" },
-  { id: "24081760", label: "Parker" },
-  { id: "24391245", label: "Jackson" },
-  { id: "24723797", label: "Cainen" },
-];
-
-const OWNER_NAMES: Record<number, string> = {
+// Owner id → name. Seeded with the founding roster for instant first paint,
+// replaced by the live roster (useRoster) once it loads — new/removed users
+// flow through with no code change. Module-level because column defs render
+// outside the component.
+let OWNER_NAMES: Record<string, string> = {
   24081760: "Parker",
   24391245: "Jackson",
   24723797: "Cainen",
@@ -104,6 +102,7 @@ interface ColDef {
 /** Manual deal entry — name + phone and/or email, optional value/source.
  * Reps own their own; admins can assign. New deals land in Intake. */
 function NewDealModal({ isAdmin, onClose, onCreated }: { isAdmin: boolean; onClose: () => void; onCreated: () => void }) {
+  const roster = useRoster();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
@@ -164,7 +163,7 @@ function NewDealModal({ isAdmin, onClose, onCreated }: { isAdmin: boolean; onClo
         {isAdmin && (
           <select className="vmsel" value={ownerId} onChange={(e) => setOwnerId(e.target.value)}>
             <option value="">Owner: unassigned</option>
-            {OWNERS.filter((o) => o.id).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+            {roster.active.map((o) => <option key={o.id} value={String(o.id)}>{o.name}</option>)}
           </select>
         )}
         {err && <div style={{ color: "var(--crit)", fontSize: 13 }}>{err}</div>}
@@ -309,6 +308,10 @@ function loadColConfig(): { key: string; visible: boolean }[] {
 }
 
 export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOwner: string }) {
+  const roster = useRoster();
+  // Live roster replaces the seeded owner-name map (module-level so column
+  // renderers see it too).
+  if (Object.keys(roster.names).length > 0) OWNER_NAMES = roster.names;
   // Restore the list view (filters/page/search/sort) when the rep returns from
   // a deal page — Next remounts this on back, so we stash it in sessionStorage.
   const saved: Record<string, any> = (() => {
@@ -669,8 +672,9 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
           <option value="">Any status</option>
         </select>
         <select className="vmsel" style={{ width: "auto" }} value={owner} onChange={(e) => { setOwner(e.target.value); setPage(0); }}>
-          {OWNERS.map((o) => (
-            <option key={o.id} value={o.id}>{o.label}</option>
+          <option value="">Any owner</option>
+          {roster.active.map((o) => (
+            <option key={o.id} value={String(o.id)}>{o.name}</option>
           ))}
         </select>
         <select className="vmsel" style={{ width: "auto" }} value={srcFilter} onChange={(e) => { setSrcFilter(e.target.value); setPage(0); }}>
@@ -815,9 +819,9 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
           <span style={{ color: "var(--text-3)", fontSize: 13 }}>or</span>
           <select className="vmsel" style={{ width: "auto" }} value={assignOwner} onChange={(e) => setAssignOwner(e.target.value)}>
             <option value="">Assign owner…</option>
-            <option value="24081760">→ Parker</option>
-            <option value="24391245">→ Jackson</option>
-            <option value="24723797">→ Cainen</option>
+            {roster.active.map((o) => (
+              <option key={o.id} value={String(o.id)}>→ {o.name}</option>
+            ))}
           </select>
           <button className="btn ghost" style={{ padding: "8px 14px", fontSize: 14 }} onClick={bulkAssign} disabled={!assignOwner}>
             Assign {selected.size}

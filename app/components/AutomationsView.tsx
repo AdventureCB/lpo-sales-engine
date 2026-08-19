@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRoster } from "./useRoster";
 
 interface Automation {
   id: string;
@@ -43,7 +44,9 @@ const ACTION_TYPES: [string, string][] = [
   ["webhook", "Call a webhook (any API)"],
 ];
 
-const REPS: [number, string][] = [
+// Seeded fallback; refreshed from the live roster (module-level because
+// nested form components render outside the main view's scope).
+let REPS: [number, string][] = [
   [24081760, "Parker"],
   [24391245, "Jackson"],
   [24723797, "Cainen"],
@@ -98,6 +101,8 @@ function isListMetric(name: string | undefined): boolean {
 }
 
 export function AutomationsView() {
+  const roster = useRoster();
+  if (roster.active.length > 0) REPS = roster.active.map((o) => [o.id, o.name]);
   const [autos, setAutos] = useState<Automation[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
   const [error, setError] = useState<string | null>(null);

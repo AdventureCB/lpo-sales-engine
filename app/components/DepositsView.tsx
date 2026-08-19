@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRoster } from "./useRoster";
 
 /**
  * Open Deposits — deposits that haven't confirmed yet. Age since deposit,
@@ -22,7 +23,8 @@ interface DepositRow {
   overdueActivity: boolean;
 }
 
-const OWNER_NAMES: Record<number, string> = { 24081760: "Parker", 24391245: "Jackson", 24723797: "Cainen", 23851101: "Gabi" };
+// Seeded fallback; replaced by the live roster once it loads.
+let OWNER_NAMES: Record<string, string> = { 24081760: "Parker", 24391245: "Jackson", 24723797: "Cainen", 23851101: "Gabi" };
 
 const fmtDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric" }) : "—";
@@ -37,6 +39,8 @@ function ageColor(days: number | null): string {
 }
 
 export function DepositsView() {
+  const roster = useRoster();
+  if (Object.keys(roster.names).length > 0) OWNER_NAMES = roster.names;
   const [all, setAll] = useState<DepositRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [repFilter, setRepFilter] = useState<number | null>(null);

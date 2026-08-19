@@ -11,7 +11,7 @@ const OVERDUE_WINDOW_MS = 14 * 86_400_000; // don't resurface ancient tasks
 type NotifGroup = "deals" | "notes" | "comms" | "tasks";
 interface Notif {
   key: string; // stable id for dismissal
-  kind: "sms" | "whatsapp" | "missed_call" | "overdue" | "intake";
+  kind: "sms" | "whatsapp" | "missed_call" | "overdue" | "intake" | "mention";
   group: NotifGroup;
   title: string;
   sub: string | null;
@@ -59,7 +59,8 @@ export async function GET() {
     .limit(15);
   if (!isAdmin && user.repId) callQ = callQ.eq("rep_id", user.repId);
 
-  const [{ data: sms }, { data: wa }, { data: missed }, { data: due }, { data: intake }] = await Promise.all([
+  const mentionSince = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const [{ data: sms }, { data: wa }, { data: missed }, { data: due }, { data: intake }, { data: mentions }] = await Promise.all([
     smsQ,
     db
       .from("whatsapp_messages")
@@ -86,6 +87,15 @@ export async function GET() {
       .gte("created_at", since)
       .order("created_at", { ascending: false })
       .limit(30),
+    // Notes that @mention this user (meta.mentions written at save time).
+    db
+      .from("crm_activities")
+      .select("id, subject, body, actor, occurred_at, crm_deals ( id, title )")
+      .contains("meta", { mentions: [user.email] })
+      .neq("actor", user.email)
+      .gte("occurred_at", mentionSince)
+      .order("occurred_at", { ascending: false })
+      .limit(20),
   ]);
 
   const intakeItems = (intake ?? []).filter((e: any) => {
@@ -162,6 +172,16 @@ export async function GET() {
       at: e.created_at,
       href: e.crm_deals?.id ? `/crm/deal/${e.crm_deals.id}` : "/crm",
       isNew: e.created_at > seenAt,
+    })),
+    ...(mentions ?? []).map((a: any): Notif => ({
+      key: `mention:${a.id}`,
+      kind: "mention",
+      group: "notes",
+      title: `🏷 ${(a.actor ?? "someone").split("@")[0]} mentioned you`,
+      sub: (a.body ?? a.subject ?? "").slice(0, 90) || null,
+      at: a.occurred_at,
+      href: a.crm_deals?.id ? `/crm/deal/${a.crm_deals.id}` : "/crm",
+      isNew: a.occurred_at > seenAt,
     })),
     ...overdue.map((a: any): Notif => ({
       key: `overdue:${a.id}`,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRoster } from "./useRoster";
 
 interface FoundPhone {
   source: string;
@@ -30,6 +31,7 @@ function fmtWhen(iso: string) {
 }
 
 export function LookupView() {
+  const roster = useRoster();
   const [email, setEmail] = useState("");
   const [result, setResult] = useState<LookupResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -141,9 +143,9 @@ export function LookupView() {
             <div className="panel-h" style={{ marginTop: 18 }}>Make it a deal</div>
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
               <select className="vmsel" style={{ width: "auto" }} value={dealOwner} onChange={(e) => setDealOwner(e.target.value)}>
-                <option value="24081760">Owner: Parker</option>
-                <option value="24391245">Owner: Jackson</option>
-                <option value="24723797">Owner: Cainen</option>
+                {roster.active.map((o) => (
+                  <option key={o.id} value={String(o.id)}>Owner: {o.name}</option>
+                ))}
               </select>
               <button className="btn primary" style={{ padding: "8px 14px", fontSize: 14 }} onClick={createDeal} disabled={creatingDeal}>
                 {creatingDeal ? "Creating…" : "＋ Create deal"}

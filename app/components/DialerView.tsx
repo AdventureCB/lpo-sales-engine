@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ensurePhone, getPhoneState, newOutboundCall, setOutboundHandler, subscribePhone } from "./phoneClient";
 import type { VmDrop } from "./VmPanel";
 import { DealDetailView, prefetchDeal, fmtWhen, BAND_COLOR, humanize, type AiProfile, type DialerDeal } from "./DealDetailView";
+import MentionInput from "./MentionInput";
 
 declare global {
   interface Window {
@@ -1413,13 +1414,14 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                       </button>
                     </div>
                   )}
-                  <input
-                    className="vmsel"
-                    style={{ width: "100%", marginBottom: 8 }}
-                    placeholder="Add a note about this call… (optional, saves to the deal)"
-                    value={dispoNote}
-                    onChange={(e) => setDispoNote(e.target.value)}
-                  />
+                  <div style={{ marginBottom: 8 }}>
+                    <MentionInput
+                      rows={1}
+                      placeholder="Add a note about this call… (@name to tag, optional)"
+                      value={dispoNote}
+                      onChange={setDispoNote}
+                    />
+                  </div>
                   <div className="dispo-row" style={{ display: "flex", alignItems: "center", flexWrap: "wrap" }}>
                     <span style={{ fontSize: 13.5, color: "var(--text-2)" }}>Next step?</span>
                     <select className="vmsel" style={{ width: "auto", padding: "6px 8px", fontSize: 13.5 }} value={nextType} onChange={(e) => setNextType(e.target.value)}>

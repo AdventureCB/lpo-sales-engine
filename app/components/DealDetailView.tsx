@@ -9,6 +9,8 @@ import { fillPlaceholders } from "@/lib/placeholders";
 import { linkifyPlain, linkifyHtml, htmlToPlain, isHtml } from "@/lib/richtext";
 import { openChat } from "./chatDockStore";
 import RichTextEditor, { isEmptyHtml } from "./RichTextEditor";
+import MentionInput from "./MentionInput";
+import { useRoster, ownerName } from "./useRoster";
 
 interface DealData {
   deal: any;
@@ -138,6 +140,7 @@ export function DealDetailView({
   // advanced-to deal paints instantly; load() still revalidates in background.
   const [data, setData] = useState<DealData | null>(() => getCachedDeal(dealId, pdDealId));
   const [error, setError] = useState<string | null>(null);
+  const roster = useRoster();
   const [note, setNote] = useState("");
   const [noteTitle, setNoteTitle] = useState("");
   // Editing an existing timeline note (✏️ on an expanded note row).
@@ -346,10 +349,13 @@ export function DealDetailView({
                   disabled={saving}
                 >
                   <option value="" disabled>Owner…</option>
-                  <option value="24081760">Parker</option>
-                  <option value="24391245">Jackson</option>
-                  <option value="24723797">Cainen</option>
-                  <option value="23851101">Gabi</option>
+                  {d.owner_pipedrive_id != null &&
+                    !roster.active.some((o) => String(o.id) === String(d.owner_pipedrive_id)) && (
+                      <option value={d.owner_pipedrive_id}>{ownerName(roster, d.owner_pipedrive_id)} (inactive)</option>
+                    )}
+                  {roster.active.map((o) => (
+                    <option key={o.id} value={String(o.id)}>{o.name}</option>
+                  ))}
                 </select>
               </div>
               <div className="field">
@@ -704,14 +710,12 @@ export function DealDetailView({
                 onChange={(e) => setNoteTitle(e.target.value)}
                 style={{ marginBottom: 8 }}
               />
-              <textarea
-                className="vmsel"
+              <MentionInput
                 rows={4}
-                style={{ resize: "vertical" }}
-                placeholder="Note… (saves here + Pipedrive)"
+                placeholder="Note… (@name to tag a teammate)"
                 value={note}
                 autoFocus
-                onChange={(e) => setNote(e.target.value)}
+                onChange={setNote}
               />
               <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                 <button
@@ -1234,13 +1238,11 @@ export function DealDetailView({
               onChange={(e) => setNoteEdit((n) => (n ? { ...n, title: e.target.value } : n))}
               style={{ marginBottom: 8 }}
             />
-            <textarea
-              className="vmsel"
+            <MentionInput
               rows={6}
-              style={{ resize: "vertical" }}
               value={noteEdit.body}
               autoFocus
-              onChange={(e) => setNoteEdit((n) => (n ? { ...n, body: e.target.value } : n))}
+              onChange={(v) => setNoteEdit((n) => (n ? { ...n, body: v } : n))}
             />
             <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center" }}>
               <button
@@ -2735,18 +2737,14 @@ function CommBar({
           )}
           {channel === "email" ? (
             <RichTextEditor value={body} onChange={setBody} placeholder={`Email ${email}…`} minHeight={110} />
+          ) : channel === "note" ? (
+            <MentionInput rows={4} placeholder="Note… (@name to tag a teammate)" value={body} onChange={setBody} />
           ) : (
             <textarea
               className="vmsel"
               rows={4}
               style={{ resize: "vertical" }}
-              placeholder={
-                channel === "sms"
-                  ? `Text ${phone}…`
-                  : channel === "whatsapp"
-                    ? "WhatsApp message…"
-                    : "Note… (saves to the deal timeline)"
-              }
+              placeholder={channel === "sms" ? `Text ${phone}…` : "WhatsApp message…"}
               value={body}
               onChange={(e) => setBody(e.target.value)}
             />

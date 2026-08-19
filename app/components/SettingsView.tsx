@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { VersionStamp } from "./VersionStamp";
+import { UsersAdmin } from "./UsersAdmin";
 
 /** Admin configuration: rep calling numbers + daily goals. */
 
@@ -197,6 +198,7 @@ export function SettingsView() {
       </Link>
 
       <VoicemailAdmin />
+      <UsersAdmin />
       <AIProfilerAdmin />
       <CommLibraryAdmin />
       <DealSourcesAdmin />
