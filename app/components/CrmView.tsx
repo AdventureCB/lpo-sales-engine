@@ -33,6 +33,7 @@ interface Deal {
   interests: string[] | null;
   crm_stages: { name: string; pipeline_id: string; crm_pipelines: { name: string } | null } | null;
   crm_contacts: { name: string; phones: { value: string; e164?: string }[]; tz_offset: number | null } | null;
+  deal_profiles?: { overall_confidence: number | null } | { overall_confidence: number | null }[] | null;
   // Enrichments computed per page by the API.
   next_activity_at?: string | null;
   dials?: number;
