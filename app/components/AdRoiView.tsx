@@ -42,10 +42,36 @@ const CHANNEL_LABEL: Record<string, string> = {
 const usd = (cents: number | null | undefined, digits = 0) =>
   cents == null ? "—" : `$${(cents / 100).toLocaleString(undefined, { maximumFractionDigits: digits })}`;
 
+interface NewDealsReport {
+  total: number;
+  bucket: string;
+  buckets: { key: string; count: number }[];
+  bySource: { source: string; count: number }[];
+}
+
+const localDate = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/** "2026-08-11" → label per bucket granularity. */
+const bucketLabel = (key: string, bucket: string) => {
+  const [y, m, d] = key.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  if (bucket === "month") return dt.toLocaleDateString([], { month: "short", year: "numeric" });
+  if (bucket === "week") return `Wk of ${dt.toLocaleDateString([], { month: "short", day: "numeric" })}`;
+  return dt.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+};
+
 export function AdRoiView() {
   const [days, setDays] = useState(30);
   const [data, setData] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // New-deal counters — independent range so history back-loads to Aug 1.
+  const [ndBucket, setNdBucket] = useState<"day" | "week" | "month">("day");
+  const [ndStart, setNdStart] = useState("2026-08-01");
+  const [ndEnd, setNdEnd] = useState(() => localDate(new Date()));
+  const [nd, setNd] = useState<NewDealsReport | null>(null);
+  const [ndErr, setNdErr] = useState<string | null>(null);
 
   useEffect(() => {
     setError(null);
@@ -54,6 +80,23 @@ export function AdRoiView() {
       .then(setData)
       .catch((e) => setError(String(e)));
   }, [days]);
+
+  useEffect(() => {
+    if (!ndStart || !ndEnd || ndStart > ndEnd) return;
+    setNdErr(null);
+    fetch(`/api/admin/new-deals?start=${ndStart}&end=${ndEnd}&bucket=${ndBucket}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then(setNd)
+      .catch((e) => setNdErr(String(e)));
+  }, [ndStart, ndEnd, ndBucket]);
+
+  const ndPreset = (which: "7d" | "30d" | "month" | "aug") => {
+    const now = new Date();
+    if (which === "month") setNdStart(localDate(new Date(now.getFullYear(), now.getMonth(), 1)));
+    else if (which === "aug") setNdStart("2026-08-01");
+    else setNdStart(localDate(new Date(now.getTime() - (which === "7d" ? 6 : 29) * 86_400_000)));
+    setNdEnd(localDate(now));
+  };
 
   const t = data?.totals;
   const coverage = t && t.newDeals > 0 ? Math.round((t.attributedDeals / t.newDeals) * 100) : null;
@@ -117,6 +160,78 @@ export function AdRoiView() {
           </table>
         </div>
       )}
+
+      <div className="card" style={{ marginTop: 14, padding: "14px 18px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <b style={{ fontSize: 15 }}>🆕 New deals{nd ? ` — ${nd.total.toLocaleString()}` : ""}</b>
+          <div className="range-toggle" style={{ marginBottom: 0 }}>
+            {(["day", "week", "month"] as const).map((b) => (
+              <button key={b} className={ndBucket === b ? "active" : ""} onClick={() => setNdBucket(b)}>
+                {b[0].toUpperCase() + b.slice(1)}
+              </button>
+            ))}
+          </div>
+          <span style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            {([["7d", "7d"], ["30d", "30d"], ["month", "This month"], ["aug", "Since Aug 1"]] as const).map(([k, l]) => (
+              <button key={k} className="btn ghost" style={{ padding: "4px 10px", fontSize: 12.5 }} onClick={() => ndPreset(k)}>
+                {l}
+              </button>
+            ))}
+            <input type="date" className="vmsel" style={{ width: "auto", fontSize: 12.5, padding: "4px 8px" }} value={ndStart} onChange={(e) => setNdStart(e.target.value)} />
+            <span style={{ color: "var(--text-3)" }}>→</span>
+            <input type="date" className="vmsel" style={{ width: "auto", fontSize: 12.5, padding: "4px 8px" }} value={ndEnd} onChange={(e) => setNdEnd(e.target.value)} />
+          </span>
+        </div>
+        {ndErr && <div style={{ color: "var(--crit)", fontSize: 13, marginTop: 8 }}>{ndErr}</div>}
+        {nd && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 20, marginTop: 14 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-3)", marginBottom: 8 }}>
+                Per {nd.bucket}
+              </div>
+              {nd.buckets.length === 0 && <div style={{ color: "var(--text-3)", fontSize: 13.5 }}>No deals in this range.</div>}
+              <div style={{ maxHeight: 340, overflowY: "auto", display: "grid", gap: 4 }}>
+                {(() => {
+                  const max = Math.max(...nd.buckets.map((b) => b.count), 1);
+                  return nd.buckets.map((b) => (
+                    <div key={b.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                      <span style={{ width: 110, flexShrink: 0, color: "var(--text-2)" }}>{bucketLabel(b.key, nd.bucket)}</span>
+                      <div style={{ flex: 1, height: 14, background: "var(--surface-2)", borderRadius: 4, overflow: "hidden" }}>
+                        <div style={{ width: `${(b.count / max) * 100}%`, height: "100%", background: "var(--accent)", borderRadius: 4 }} />
+                      </div>
+                      <b style={{ width: 42, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{b.count}</b>
+                    </div>
+                  ));
+                })()}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-3)", marginBottom: 8 }}>
+                By source
+              </div>
+              <div style={{ maxHeight: 340, overflowY: "auto", display: "grid", gap: 4 }}>
+                {(() => {
+                  const max = Math.max(...nd.bySource.map((s) => s.count), 1);
+                  return nd.bySource.map((s) => (
+                    <div key={s.source} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                      <span style={{ width: 150, flexShrink: 0, color: "var(--text-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.source}>
+                        {s.source}
+                      </span>
+                      <div style={{ flex: 1, height: 14, background: "var(--surface-2)", borderRadius: 4, overflow: "hidden" }}>
+                        <div style={{ width: `${(s.count / max) * 100}%`, height: "100%", background: "var(--accent-2)", borderRadius: 4 }} />
+                      </div>
+                      <b style={{ width: 42, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{s.count}</b>
+                      <span style={{ width: 44, textAlign: "right", fontSize: 12, color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
+                        {nd.total > 0 ? `${Math.round((s.count / nd.total) * 100)}%` : ""}
+                      </span>
+                    </div>
+                  ));
+                })()}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
       {data && Object.keys(data.organicSources).length > 0 && (
         <div className="card" style={{ marginTop: 14, padding: "14px 18px" }}>
