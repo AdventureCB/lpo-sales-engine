@@ -57,6 +57,33 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
   const [modalAct, setModalAct] = useState<CalActivity | null>(null);
   const [edDate, setEdDate] = useState("");
   const [edTime, setEdTime] = useState("");
+  // Bulk select — while on, clicking a chip toggles selection instead of
+  // opening the modal.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [delArmed, setDelArmed] = useState(false);
+
+  const toggleSelect = (id: string) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const bulk = async (action: "done" | "delete") => {
+    if (selected.size === 0 || saving) return;
+    setSaving(true);
+    await fetch("/api/calendar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, ids: [...selected] }),
+    }).catch(() => {});
+    setSaving(false);
+    setSelected(new Set());
+    setDelArmed(false);
+    void load();
+  };
 
   const openModal = (a: CalActivity) => {
     const s = splitDue(a.dueAt);
@@ -162,7 +189,11 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
   const chip = (a: CalActivity, detailed: boolean) => (
     <div
       key={a.id}
-      onClick={() => openModal(a)}
+      onClick={(e) => {
+        e.stopPropagation(); // month cells navigate to day view on click
+        if (selectMode) toggleSelect(a.id);
+        else openModal(a);
+      }}
       title={`${a.subject ?? a.type}${a.dealTitle ? ` · ${a.dealTitle}` : ""}${a.actor ? ` · ${a.actor.split("@")[0]}` : ""}`}
       style={{
         display: "flex",
@@ -173,11 +204,16 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
         borderRadius: 7,
         marginBottom: 3,
         cursor: "pointer",
-        background: a.done ? "transparent" : isPast(a) ? "rgba(224,72,72,0.14)" : "var(--surface-2)",
-        opacity: a.done ? 0.45 : 1,
+        background: selected.has(a.id)
+          ? "var(--accent-soft)"
+          : a.done ? "transparent" : isPast(a) ? "rgba(224,72,72,0.14)" : "var(--surface-2)",
+        opacity: a.done && !selected.has(a.id) ? 0.45 : 1,
         overflow: "hidden",
+        outline: selected.has(a.id) ? "1.5px solid var(--accent)" : "none",
+        outlineOffset: -1.5,
       }}
     >
+      {selectMode && <span style={{ flexShrink: 0 }}>{selected.has(a.id) ? "☑" : "☐"}</span>}
       <span style={{ flexShrink: 0 }}>{TYPE_ICON[a.type] ?? "•"}</span>
       <span style={{ color: "var(--text-3)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
         {isAllDayIso(a.dueAt) ? "All day" : fmtTime(a.dueAt)}
@@ -243,6 +279,17 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
         <button className="btn ghost" style={{ padding: "7px 12px" }} onClick={() => setAnchor(new Date())}>Today</button>
         <button className="btn ghost" style={{ padding: "7px 12px" }} onClick={() => step(1)}>→</button>
         <b style={{ fontSize: 16 }}>{label}</b>
+        <button
+          className={`btn ${selectMode ? "primary" : "ghost"}`}
+          style={{ padding: "7px 12px", marginLeft: isAdmin ? 0 : "auto" }}
+          onClick={() => {
+            setSelectMode((v) => !v);
+            setSelected(new Set());
+            setDelArmed(false);
+          }}
+        >
+          {selectMode ? "✕ Done selecting" : "☑ Select"}
+        </button>
         {isAdmin && (
           <select
             className="vmsel"
@@ -257,6 +304,43 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
           </select>
         )}
       </div>
+
+      {selectMode && (
+        <div className="card" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "10px 14px", marginBottom: 14 }}>
+          <b style={{ fontSize: 14 }}>{selected.size} selected</b>
+          <button
+            className="btn ghost"
+            style={{ padding: "4px 10px", fontSize: 12.5 }}
+            onClick={() => setSelected(new Set(shown.map((a) => a.id)))}
+          >
+            Select all shown
+          </button>
+          <button
+            className="btn ghost"
+            style={{ padding: "4px 10px", fontSize: 12.5 }}
+            disabled={selected.size === 0}
+            onClick={() => { setSelected(new Set()); setDelArmed(false); }}
+          >
+            Clear
+          </button>
+          <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            <button className="btn" disabled={selected.size === 0 || saving} onClick={() => bulk("done")}>
+              ✓ Mark done
+            </button>
+            <button
+              className="btn"
+              style={{ color: "var(--crit)" }}
+              disabled={selected.size === 0 || saving}
+              onClick={() => {
+                if (!delArmed) setDelArmed(true);
+                else void bulk("delete");
+              }}
+            >
+              {delArmed ? `🗑 Really delete ${selected.size}?` : "🗑 Delete"}
+            </button>
+          </span>
+        </div>
+      )}
 
       {view === "month" && (
         <div className="card" style={{ padding: 10 }}>

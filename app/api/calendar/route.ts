@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
+import { enqueuePdSync } from "@/lib/pd-sync";
+import { envOptional } from "@/lib/env";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,4 +58,59 @@ export async function GET(req: NextRequest) {
     })),
     truncated: rows.length >= 1000,
   });
+}
+
+/**
+ * Bulk actions on scheduled activities: mark done or delete. Same visibility
+ * rule as GET — reps act only on activities they created or on deals they
+ * own; admins on anything. Pipedrive-linked rows sync via the outbox.
+ */
+export async function POST(req: NextRequest) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  let body: { action?: string; ids?: string[] };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "invalid json" }, { status: 400 });
+  }
+  const action = body.action;
+  const ids = (body.ids ?? []).filter((x) => typeof x === "string").slice(0, 300);
+  if (!["done", "delete"].includes(action ?? "") || ids.length === 0) {
+    return NextResponse.json({ error: "action (done|delete) and ids required" }, { status: 400 });
+  }
+
+  const db = supabaseAdmin();
+  const { data: rows } = await db
+    .from("crm_activities")
+    .select("id, actor, pipedrive_activity_id, crm_deals ( owner_pipedrive_id )")
+    .in("id", ids);
+  const allowed = (rows ?? []).filter(
+    (a: any) =>
+      user.role === "admin" ||
+      a.actor === user.email ||
+      (user.pipedriveUserId && a.crm_deals?.owner_pipedrive_id === user.pipedriveUserId)
+  );
+  if (allowed.length === 0) return NextResponse.json({ error: "nothing you can modify" }, { status: 403 });
+  const allowedIds = allowed.map((a: any) => a.id);
+
+  const { error } =
+    action === "done"
+      ? await db.from("crm_activities").update({ done_at: new Date().toISOString() }).in("id", allowedIds)
+      : await db.from("crm_activities").delete().in("id", allowedIds);
+  if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+
+  if (envOptional("PIPEDRIVE_API_TOKEN")) {
+    for (const a of allowed as any[]) {
+      if (!a.pipedrive_activity_id) continue;
+      await enqueuePdSync(
+        db,
+        action === "done" ? "activity_done" : "activity_delete",
+        { pipedriveActivityId: a.pipedrive_activity_id }
+      );
+    }
+  }
+
+  return NextResponse.json({ ok: true, affected: allowedIds.length, skipped: ids.length - allowedIds.length });
 }
