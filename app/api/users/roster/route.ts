@@ -27,11 +27,17 @@ export async function GET() {
       .map((r) => ({ id: r.pipedrive_user_id, name: r.name, email: r.email }))
       .sort((a, b) => a.name.localeCompare(b.name)),
     names,
-    // Mentionable users = everyone with a login (admins included).
+    // Mentionable users = everyone with a login. Admins are ALWAYS mentionable
+    // even when their rep row is inactive (Kyle/Cainen aren't dialing reps);
+    // sales users drop out once deactivated.
     mentionable: (users ?? [])
       .map((u: any) => {
         const rep = Array.isArray(u.reps) ? u.reps[0] : u.reps;
-        return { email: u.email, name: rep?.name ?? u.email.split("@")[0], active: rep?.active !== false };
+        return {
+          email: u.email,
+          name: rep?.name ?? u.email.split("@")[0],
+          active: u.role === "admin" || rep?.active !== false,
+        };
       })
       .filter((u: any) => u.active)
       .sort((a: any, b: any) => a.name.localeCompare(b.name)),

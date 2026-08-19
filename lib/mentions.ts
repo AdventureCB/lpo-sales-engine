@@ -13,12 +13,12 @@ export interface TeamUser {
   name: string | null;
 }
 
-/** All provisioned users (app_users ∪ their rep names). */
+/** All provisioned users (app_users ∪ their rep names; email local-part fallback). */
 export async function listTeamUsers(db: SupabaseClient): Promise<TeamUser[]> {
   const { data } = await db.from("app_users").select("email, reps ( name )");
   return (data ?? []).map((u: any) => ({
     email: u.email,
-    name: (Array.isArray(u.reps) ? u.reps[0] : u.reps)?.name ?? null,
+    name: (Array.isArray(u.reps) ? u.reps[0] : u.reps)?.name ?? u.email.split("@")[0],
   }));
 }
 
