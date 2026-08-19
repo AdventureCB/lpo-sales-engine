@@ -25,11 +25,20 @@ export async function GET() {
   const user = await getSessionUser();
   if (!user || user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
   const db = supabaseAdmin();
-  const [{ data: users }, { data: reps }, { data: engines }] = await Promise.all([
+  const [{ data: users }, { data: reps }, { data: engines }, { data: authList }] = await Promise.all([
     db.from("app_users").select("id, email, role, rep_id, created_at"),
     db.from("reps").select("id, name, email, pipedrive_user_id, quo_user_id, telnyx_number, active"),
     db.from("intake_sources").select("id, label, config"),
+    db.auth.admin.listUsers({ perPage: 200 }),
   ]);
+  // "Deactivated" = the LOGIN is banned. reps.active is a separate dial:
+  // admins (Kyle/Cainen) have inactive rep rows just to stay off the
+  // scoreboard/owner pickers — their logins are fine.
+  const bannedByAuthId = new Map<string, boolean>();
+  for (const au of (authList as any)?.users ?? []) {
+    const b = (au as any).banned_until;
+    bannedByAuthId.set(au.id, Boolean(b && new Date(b).getTime() > Date.now()));
+  }
   const repById = new Map((reps ?? []).map((r) => [r.id, r]));
   // Which engine pools each rep (by pipedrive id) is enabled in.
   const poolsByPd = new Map<number, string[]>();
@@ -56,7 +65,8 @@ export async function GET() {
         name: rep?.name ?? null,
         pipedriveUserId: rep?.pipedrive_user_id ?? null,
         telnyxNumber: rep?.telnyx_number ?? null,
-        active: rep ? rep.active : true,
+        active: !bannedByAuthId.get(u.id), // login usable
+        repActive: rep ? rep.active : null, // on scoreboard/owner pickers
         pools: rep?.pipedrive_user_id ? poolsByPd.get(rep.pipedrive_user_id) ?? [] : [],
         openDeals: rep?.pipedrive_user_id ? openByOwner.get(rep.pipedrive_user_id) ?? 0 : 0,
         createdAt: u.created_at,
@@ -182,7 +192,9 @@ export async function POST(req: NextRequest) {
   }
 
   if (body.op === "reactivate") {
-    if (targetRep) await db.from("reps").update({ active: true }).eq("id", targetRep.id);
+    // Admins keep an inactive rep row (they stay off the scoreboard/pickers);
+    // sales reps come back fully.
+    if (targetRep && target.role === "sales") await db.from("reps").update({ active: true }).eq("id", targetRep.id);
     await db.auth.admin.updateUserById(target.id, { ban_duration: "none" });
     return NextResponse.json({ ok: true, note: "engine pools stay off — re-enable per engine" });
   }

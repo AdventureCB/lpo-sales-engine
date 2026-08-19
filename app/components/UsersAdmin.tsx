@@ -10,7 +10,8 @@ interface AdminUser {
   name: string | null;
   pipedriveUserId: number | null;
   telnyxNumber: string | null;
-  active: boolean;
+  active: boolean; // login usable (not banned)
+  repActive: boolean | null; // shows on scoreboard / owner pickers
   pools: string[];
   openDeals: number;
 }
@@ -143,6 +144,11 @@ export function UsersAdmin() {
             <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>{u.email}</span>
             <span className="chip stage" style={{ fontSize: 11.5 }}>{u.role}</span>
             {!u.active && <span className="chip stage" style={{ fontSize: 11.5, color: "var(--crit)" }}>deactivated</span>}
+            {u.active && u.repActive === false && (
+              <span className="chip stage" style={{ fontSize: 11.5, color: "var(--text-3)" }} title="Login works — just hidden from the scoreboard and owner pickers (admins aren't dialing reps)">
+                off scoreboard
+              </span>
+            )}
             {u.pipedriveUserId != null && (
               <span style={{ fontSize: 11.5, color: "var(--text-3)" }} title={u.pipedriveUserId >= 900_000_000 ? "Synthetic owner id (no Pipedrive account)" : "Pipedrive user id"}>
                 #{u.pipedriveUserId}{u.pipedriveUserId >= 900_000_000 ? " (native)" : ""}
