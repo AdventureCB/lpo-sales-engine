@@ -11,6 +11,7 @@ import { openChat } from "./chatDockStore";
 import RichTextEditor, { isEmptyHtml } from "./RichTextEditor";
 import MentionInput from "./MentionInput";
 import { useRoster, ownerName } from "./useRoster";
+import { ScriptsCard } from "./ScriptsCard";
 
 interface DealData {
   deal: any;
@@ -519,6 +520,15 @@ export function DealDetailView({
   ) : null;
   const adJourneyEl = data.adJourney ? <AdJourneySection journey={data.adJourney} /> : null;
   const profileEl = <DealProfileSection profile={data.aiProfile ?? null} stale={!!data.aiProfileStale} dealId={d.id} onRefreshed={load} />;
+  const scriptsEl = (
+    <ScriptsCard
+      dealId={d.id}
+      phone={goodPhones.find((p) => p.primary)?.e164 ?? goodPhones[0]?.e164 ?? goodPhones[0]?.value ?? null}
+      contactName={contact?.name ?? null}
+      hasEmail={!!(emails.find((e) => e.primary)?.value ?? emails[0]?.value)}
+      defaultOpen={embedded}
+    />
+  );
 
   return (
     <>
@@ -684,7 +694,7 @@ export function DealDetailView({
         />
       )}
 
-      {embedded && <div style={{ marginBottom: 18 }}>{commBarEl}</div>}
+      {embedded && <div style={{ marginBottom: 18 }}>{commBarEl}{scriptsEl}</div>}
 
       <div className="split" style={{ marginTop: 0, ...(embedded ? { gridTemplateColumns: "1fr" } : {}) }}>
         <div>
@@ -1351,6 +1361,7 @@ export function DealDetailView({
           {!embedded && klaviyoEl}
           {!embedded && adJourneyEl}
           {!embedded && profileEl}
+          {!embedded && scriptsEl}
         </div>
       </div>
     </>
@@ -2306,6 +2317,21 @@ function CommBar({
       if (!hideCall) setOutboundHandler(null);
     };
   }, []);
+
+  // "Use in email composer" from Scripts & drafts: open the email channel
+  // pre-filled (markdown links upconvert in the rich editor).
+  useEffect(() => {
+    const onCompose = (e: Event) => {
+      const d = (e as CustomEvent).detail as { dealId?: string; channel?: string; subject?: string; body?: string };
+      if (d?.dealId !== dealId || d.channel !== "email") return;
+      setErr(null);
+      setChannel("email");
+      setSubject(d.subject ?? "");
+      setBody(d.body ?? "");
+    };
+    window.addEventListener("lpo:compose", onCompose);
+    return () => window.removeEventListener("lpo:compose", onCompose);
+  }, [dealId]);
 
   // Resolve the Klaviyo profile once the WhatsApp composer opens.
   useEffect(() => {

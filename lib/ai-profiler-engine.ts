@@ -81,7 +81,7 @@ async function buildTaxonomy(db: SupabaseClient): Promise<{ text: string; attrKe
 }
 
 // ── Per-deal inputs ────────────────────────────────────────────────────────
-interface DealInputs {
+export interface DealInputs {
   header: string;
   transcripts: { at: string; text: string }[];
   notes: string[];
@@ -93,7 +93,7 @@ interface DealInputs {
   transcriptCount: number;
 }
 
-async function gatherDealInputs(db: SupabaseClient, dealId: string): Promise<DealInputs | null> {
+export async function gatherDealInputs(db: SupabaseClient, dealId: string): Promise<DealInputs | null> {
   const { data: deal } = await db
     .from("crm_deals")
     .select("id, pipedrive_deal_id, title, value_cents, status, created_at, interests, custom, crm_stages(name, crm_pipelines(name)), crm_contacts(id, name, tz_offset, emails)")

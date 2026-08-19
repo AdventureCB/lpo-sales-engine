@@ -847,6 +847,15 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     if (!next || (!next.crmDealId && !(next.dealId > 0))) return;
     const usePd = next.dealId > 0;
     void prefetchDeal({ dealId: usePd ? undefined : next.crmDealId, pdDealId: usePd ? next.dealId : undefined });
+    // Pre-build the StoryBrand call outline too — cache-first server-side, so
+    // an unchanged deal costs nothing and the card is ready before "Next".
+    if (next.crmDealId) {
+      void fetch("/api/ai/script", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dealId: next.crmDealId, kind: "call" }),
+      }).catch(() => {});
+    }
   }, [awaitingNext, leadIdx, leads]);
 
   const applyFilter = async () => {

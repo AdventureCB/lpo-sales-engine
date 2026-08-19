@@ -59,6 +59,16 @@ export function ChatWindow({
 }) {
   const [messages, setMessages] = useState<Msg[] | null>(null);
   const [compose, setCompose] = useState("");
+
+  // Pre-filled AI draft (openChat({draft}) — e.g. Scripts & drafts "Use in
+  // text chat"). Consumed once; never overwrites text the rep already typed.
+  useEffect(() => {
+    import("./chatDockStore").then(({ consumeDraft }) => {
+      const d = consumeDraft(phone);
+      if (d) setCompose((cur) => (cur ? cur : d));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phone, hidden]);
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [macros, setMacros] = useState<Macro[]>([]);

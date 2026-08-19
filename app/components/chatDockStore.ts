@@ -9,6 +9,7 @@ export interface ChatSession {
   dealId: string | null;
   minimized: boolean;
   unread: number; // inbound messages that arrived while minimized
+  draft?: string | null; // pre-filled compose text (AI draft) — consumed once by ChatWindow
 }
 
 const KEY = "chatDock";
@@ -47,7 +48,7 @@ export function subscribeChats(fn: () => void): () => void {
   };
 }
 
-export function openChat(opts: { phone: string; name?: string | null; dealId?: string | null }): void {
+export function openChat(opts: { phone: string; name?: string | null; dealId?: string | null; draft?: string | null }): void {
   hydrate();
   const existing = chats.find((c) => c.phone === opts.phone);
   if (existing) {
@@ -55,13 +56,25 @@ export function openChat(opts: { phone: string; name?: string | null; dealId?: s
     existing.unread = 0;
     if (opts.name) existing.name = opts.name;
     if (opts.dealId) existing.dealId = opts.dealId;
+    if (opts.draft) existing.draft = opts.draft;
   } else {
-    chats = [...chats, { phone: opts.phone, name: opts.name ?? null, dealId: opts.dealId ?? null, minimized: false, unread: 0 }];
+    chats = [...chats, { phone: opts.phone, name: opts.name ?? null, dealId: opts.dealId ?? null, minimized: false, unread: 0, draft: opts.draft ?? null }];
     // Keep the dock manageable — minimize the oldest once past the cap.
     const open = chats.filter((c) => !c.minimized);
     if (open.length > MAX_OPEN) open[0].minimized = true;
   }
   persist();
+}
+
+/** Read-and-clear a session's pre-filled draft (AI-suggested text). */
+export function consumeDraft(phone: string): string | null {
+  hydrate();
+  const c = chats.find((x) => x.phone === phone);
+  if (!c?.draft) return null;
+  const d = c.draft;
+  c.draft = null;
+  persist();
+  return d;
 }
 
 export function closeChat(phone: string): void {
