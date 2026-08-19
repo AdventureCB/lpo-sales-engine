@@ -32,7 +32,7 @@ const SUMMARIZE_TOOL = {
   },
 };
 
-async function summarizeAssetLinks(db: SupabaseClient): Promise<void> {
+export async function summarizeAssetLinks(db: SupabaseClient): Promise<void> {
   const { data: assets } = await db
     .from("comm_assets")
     .select("id, name, url, kind, link_summary, link_summary_src")
