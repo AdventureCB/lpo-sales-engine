@@ -447,7 +447,7 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
                           style={{ color: "var(--text-1)", cursor: "pointer", fontWeight: 600 }}
                           title="Quick look"
                         >
-                          {it.personName ?? it.title}
+                          {it.title || it.personName}
                         </span>
                         {it.flag && <div style={{ fontSize: 11.5, color: "#e8623a", marginTop: 2 }}>{it.flag}</div>}
                       </td>
