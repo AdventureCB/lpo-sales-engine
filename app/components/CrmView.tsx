@@ -673,6 +673,7 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
         </select>
         <select className="vmsel" style={{ width: "auto" }} value={owner} onChange={(e) => { setOwner(e.target.value); setPage(0); }}>
           <option value="">Any owner</option>
+          <option value="none">— Unassigned (pool) —</option>
           {roster.active.map((o) => (
             <option key={o.id} value={String(o.id)}>{o.name}</option>
           ))}

@@ -20,15 +20,19 @@ import { enqueuePdSync } from "./pd-sync";
 export type ReassignConfig = {
   enabled: boolean;
   inactive_days: number;
-  target_owner_pipedrive_id: number;
+  target_owner_pipedrive_id: number | null; // null = UNASSIGN (the pool has no owner)
   max_per_run: number;
   exempt_future_scheduled: boolean;
 };
 
+// Pipedrive requires every deal to have an owner — Cainen's PD account fronts
+// the ownerless pool there. The mirror translates him back to null on sync.
+export const PD_POOL_AVATAR = 24723797;
+
 export const DEFAULT_REASSIGN_CONFIG: ReassignConfig = {
   enabled: true,
   inactive_days: 91,
-  target_owner_pipedrive_id: 24723797, // Cainen — the reprospecting pool
+  target_owner_pipedrive_id: null, // reprospecting pool = unassigned
   max_per_run: 500,
   exempt_future_scheduled: true,
 };
@@ -104,15 +108,15 @@ export async function sweepInactiveDeals(
   const depositPdIds = new Set((journeys ?? []).map((j) => j.pipedrive_deal_id));
 
   // Candidate pool: open, rep-owned, older than the window.
-  const deals = (await fetchAll((f, t) =>
-    db
+  const deals = (await fetchAll((f, t) => {
+    let q = db
       .from("crm_deals")
       .select("id, pipedrive_deal_id, title, owner_pipedrive_id, contact_id, stage_id, created_at, pd_add_time, crm_contacts ( phones )")
       .eq("status", "open")
-      .not("owner_pipedrive_id", "is", null)
-      .neq("owner_pipedrive_id", target)
-      .range(f, t)
-  )) as any[];
+      .not("owner_pipedrive_id", "is", null);
+    if (target != null) q = q.neq("owner_pipedrive_id", target);
+    return q.range(f, t);
+  })) as any[];
   const pool = deals.filter((d) => {
     if (excludedStages.has(d.stage_id)) return false;
     if (d.pipedrive_deal_id != null && depositPdIds.has(d.pipedrive_deal_id)) return false;
@@ -236,7 +240,8 @@ export async function sweepInactiveDeals(
       body,
     });
     if (c.pipedriveDealId != null) {
-      await enqueuePdSync(db, "deal_update", { dealId: c.pipedriveDealId, fields: { owner_id: target } });
+      // PD can't hold an ownerless deal — Cainen's account fronts the pool there.
+      await enqueuePdSync(db, "deal_update", { dealId: c.pipedriveDealId, fields: { owner_id: target ?? PD_POOL_AVATAR } });
       await enqueuePdSync(db, "note", { dealId: c.pipedriveDealId, content: `♻️ ${body}` });
     }
     reassigned++;

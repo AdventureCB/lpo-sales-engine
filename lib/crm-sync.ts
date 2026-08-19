@@ -363,7 +363,11 @@ function dealRowFromPipedrive(
   sourceUuid?: string | null,
   truckModel?: string | null
 ) {
-  const ownerId = typeof d.user_id === "object" ? d.user_id?.id ?? null : d.user_id ?? d.owner_id ?? null;
+  const rawOwnerId = typeof d.user_id === "object" ? d.user_id?.id ?? null : d.user_id ?? d.owner_id ?? null;
+  // Cainen's PD account only fronts the ownerless pool (PD requires an owner);
+  // in the mirror those deals are UNASSIGNED. Without this, every PD webhook
+  // would resurrect him as owner.
+  const ownerId = rawOwnerId === 24723797 ? null : rawOwnerId;
   const valueCents =
     d.value !== undefined && d.value !== null ? Math.round(Number(d.value) * 100) : null;
   return {

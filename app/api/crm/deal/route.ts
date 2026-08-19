@@ -231,7 +231,7 @@ export async function POST(req: NextRequest) {
     lostReason?: string;
     note?: string;
     noteTitle?: string;
-    ownerPipedriveId?: number;
+    ownerPipedriveId?: number | null;
     activity?: { type: string; subject: string; dueAt?: string | null };
     logActivity?: { type: string; subject: string; body?: string; occurredAt?: string };
     sourceId?: string | null;
@@ -531,19 +531,24 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  if (body.ownerPipedriveId) {
+  if (body.ownerPipedriveId !== undefined) {
+    // null = unassign (back to the pool). Pipedrive can't hold an ownerless
+    // deal, so Cainen's PD account (24723797) fronts the pool there — the
+    // mirror translates him back to null on sync.
+    const newOwner = body.ownerPipedriveId ?? null;
     const { error } = await db
       .from("crm_deals")
-      .update({ owner_pipedrive_id: body.ownerPipedriveId, updated_at: new Date().toISOString() })
+      .update({ owner_pipedrive_id: newOwner, updated_at: new Date().toISOString() })
       .eq("id", deal.id);
     if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+    const pdOwner = newOwner ?? 24723797;
     if (canWriteThrough) {
       try {
-        await updateDealStage(deal.pipedrive_deal_id!, { owner_id: body.ownerPipedriveId });
+        await updateDealStage(deal.pipedrive_deal_id!, { owner_id: pdOwner });
       } catch {
         await enqueuePdSync(db, "deal_update", {
           dealId: deal.pipedrive_deal_id,
-          fields: { owner_id: body.ownerPipedriveId },
+          fields: { owner_id: pdOwner },
         });
         writeThroughError = "Pipedrive busy — queued, will sync automatically";
       }
@@ -551,7 +556,7 @@ export async function POST(req: NextRequest) {
     await db.from("crm_activities").insert({
       deal_id: deal.id,
       type: "system",
-      subject: "Owner reassigned",
+      subject: newOwner ? "Owner reassigned" : "Owner unassigned (pool)",
       actor: user.email,
     });
   }

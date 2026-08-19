@@ -55,7 +55,7 @@ export const DEFAULT_CONFIG: SprintListConfig = {
   // contacts open marketing mail). Clicks/views/forms/subscribes count.
   hot_1b_regex: "(click|viewed_product|active_on_site|form|subscrib|builder|3d|order)",
   clock: { list1: "09:00", list2: "12:00", list3: "13:00" },
-  cainen_owner_pipedrive_id: 24723797,
+  cainen_owner_pipedrive_id: null, // null = pool is UNASSIGNED deals (owner is null)
 };
 
 // ── Confirmation Pipeline exclusion ─────────────────────────────────────────
@@ -695,8 +695,10 @@ async function claimReprospect(
   cfg: SprintListConfig,
   remaining: number
 ): Promise<ListItem[]> {
-  const cainenId = cfg.cainen_owner_pipedrive_id;
-  if (!cainenId) return [];
+  // Pool = UNASSIGNED open deals (owner null). cainen_owner_pipedrive_id is a
+  // legacy tunable: when set, the pool is that owner's deals instead (the
+  // pre-8/19 model where Cainen fronted the pool because PD required an owner).
+  const poolOwnerId = cfg.cainen_owner_pipedrive_id;
 
   // Active checkouts across all reps (locked set) + this rep's own (re-include).
   const { data: active } = await db
@@ -711,18 +713,16 @@ async function claimReprospect(
     else lockedByOther.add(c.deal_id);
   }
 
-  // Load the whole open Cainen pool (paginated) with contacts + emails.
+  // Load the whole open pool (paginated) with contacts + emails.
   const confIdsPool = await confirmationStageIds(db);
-  const pool = (await fetchAll((f, t) =>
-    notConfirmation(
-      db
-        .from("crm_deals")
-        .select("id, pipedrive_deal_id, title, last_activity_at, contact_id, crm_contacts ( name, emails, phones, tz_offset )")
-        .eq("status", "open")
-        .eq("owner_pipedrive_id", cainenId),
-      confIdsPool
-    ).range(f, t)
-  )) as any[];
+  const pool = (await fetchAll((f, t) => {
+    let q = db
+      .from("crm_deals")
+      .select("id, pipedrive_deal_id, title, last_activity_at, contact_id, crm_contacts ( name, emails, phones, tz_offset )")
+      .eq("status", "open");
+    q = poolOwnerId ? q.eq("owner_pipedrive_id", poolOwnerId) : q.is("owner_pipedrive_id", null);
+    return notConfirmation(q, confIdsPool).range(f, t);
+  })) as any[];
 
   // Marketing recency per email (any age — "last marketing signal" wins).
   const mkt = await latestSignalByEmail(db);

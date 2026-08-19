@@ -345,10 +345,10 @@ export function DealDetailView({
                   className="vmsel"
                   style={{ width: "auto" }}
                   value={d.owner_pipedrive_id ?? ""}
-                  onChange={(e) => update({ ownerPipedriveId: e.target.value })}
+                  onChange={(e) => update({ ownerPipedriveId: e.target.value ? Number(e.target.value) : null })}
                   disabled={saving}
                 >
-                  <option value="" disabled>Owner…</option>
+                  <option value="">Unassigned (pool)</option>
                   {d.owner_pipedrive_id != null &&
                     !roster.active.some((o) => String(o.id) === String(d.owner_pipedrive_id)) && (
                       <option value={d.owner_pipedrive_id}>{ownerName(roster, d.owner_pipedrive_id)} (inactive)</option>

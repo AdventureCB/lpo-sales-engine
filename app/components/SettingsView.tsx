@@ -420,7 +420,7 @@ function ReassignAdmin() {
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 10 }}>
         {numField("Inactive after (days)", "inactive_days")}
         {numField("Max reassigned per night", "max_per_run")}
-        {numField("Pool owner (Pipedrive ID)", "target_owner_pipedrive_id")}
+        {numField("Pool owner (blank = unassigned)", "target_owner_pipedrive_id")}
       </div>
 
       <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginBottom: 12 }}>

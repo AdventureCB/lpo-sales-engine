@@ -43,7 +43,9 @@ export async function GET(req: NextRequest) {
 
   if (p.get("status")) q = q.eq("status", p.get("status"));
   if (p.get("stageId")) q = q.eq("stage_id", p.get("stageId"));
-  if (p.get("owner")) q = q.eq("owner_pipedrive_id", Number(p.get("owner")));
+  const ownerParam = p.get("owner");
+  if (ownerParam === "none") q = q.is("owner_pipedrive_id", null);
+  else if (ownerParam) q = q.eq("owner_pipedrive_id", Number(ownerParam));
   const source = p.get("source");
   if (source === "none") q = q.is("source_id", null);
   else if (source) q = q.eq("source_id", source);
