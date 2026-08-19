@@ -58,6 +58,30 @@ export const DEFAULT_CONFIG: SprintListConfig = {
   cainen_owner_pipedrive_id: 24723797,
 };
 
+// ── Confirmation Pipeline exclusion ─────────────────────────────────────────
+// Deals in the Confirmation Pipeline are post-sale confirmation work — they
+// must never appear on call lists. Stage uuids cached 10 min per process.
+let confStageCache: { ids: string[]; at: number } | null = null;
+
+async function confirmationStageIds(db: SupabaseClient): Promise<string[]> {
+  if (confStageCache && Date.now() - confStageCache.at < 600_000) return confStageCache.ids;
+  const { data: pipes } = await db.from("crm_pipelines").select("id").ilike("name", "%confirmation%");
+  const pids = (pipes ?? []).map((p) => p.id);
+  let ids: string[] = [];
+  if (pids.length) {
+    const { data: stages } = await db.from("crm_stages").select("id").in("pipeline_id", pids);
+    ids = (stages ?? []).map((s) => s.id);
+  }
+  confStageCache = { ids, at: Date.now() };
+  return ids;
+}
+
+/** Chainable filter: drop deals sitting in a Confirmation Pipeline stage. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function notConfirmation<T = any>(q: T, ids: string[]): T {
+  return ids.length ? (q as any).not("stage_id", "in", `(${ids.join(",")})`) : q;
+}
+
 export async function loadConfig(db: SupabaseClient): Promise<SprintListConfig> {
   const { data } = await db.from("sprint_list_config").select("config").eq("id", true).maybeSingle();
   const c = (data?.config ?? {}) as Partial<SprintListConfig>;
@@ -373,17 +397,20 @@ async function computeLadder(
 ): Promise<ListItem[]> {
   const { offsets, sub } = SLOT_TZ[slot];
   const todayLa = laDate(new Date());
+  const confIds = await confirmationStageIds(db);
 
   const deals = (await fetchAll((f, t) =>
-    db
-      .from("crm_deals")
-      .select(
-        "id, pipedrive_deal_id, title, created_at, pd_add_time, last_activity_at, contact_id, crm_contacts!inner ( id, name, emails, phones, tz_offset )"
-      )
-      .eq("status", "open")
-      .eq("owner_pipedrive_id", repPipedriveId)
-      .filter("crm_contacts.tz_offset", "in", `(${offsets.join(",")})`)
-      .range(f, t)
+    notConfirmation(
+      db
+        .from("crm_deals")
+        .select(
+          "id, pipedrive_deal_id, title, created_at, pd_add_time, last_activity_at, contact_id, crm_contacts!inner ( id, name, emails, phones, tz_offset )"
+        )
+        .eq("status", "open")
+        .eq("owner_pipedrive_id", repPipedriveId)
+        .filter("crm_contacts.tz_offset", "in", `(${offsets.join(",")})`),
+      confIds
+    ).range(f, t)
   )) as DealRow[];
 
   const facts = await enrich(db, deals, cfg, todayLa);
@@ -525,13 +552,16 @@ async function computeList3(
   // 2) Stale: rep's open deals whose last CUSTOMER engagement (answered call
   // OR inbound email reply) was 60-90d ago. Per Kyle's refinement — rep
   // outbound emails keep last_activity_at fresh, so they don't count here.
+  const confIds3 = await confirmationStageIds(db);
   const repDeals = (await fetchAll((f, t) =>
-    db
-      .from("crm_deals")
-      .select("id, pipedrive_deal_id, title, contact_id, crm_contacts ( name, phones, tz_offset )")
-      .eq("status", "open")
-      .eq("owner_pipedrive_id", args.repPipedriveId)
-      .range(f, t)
+    notConfirmation(
+      db
+        .from("crm_deals")
+        .select("id, pipedrive_deal_id, title, contact_id, crm_contacts ( name, phones, tz_offset )")
+        .eq("status", "open")
+        .eq("owner_pipedrive_id", args.repPipedriveId),
+      confIds3
+    ).range(f, t)
   )) as any[];
   const engAt = await customerEngagementRecency(db, repDeals, w.stale_max_days);
   const staleMaxT = daysAgoIso(w.stale_max_days);
@@ -568,15 +598,20 @@ async function computeList3(
 
 async function loadDealsById(db: SupabaseClient, ids: string[]): Promise<Map<string, DealRow>> {
   const map = new Map<string, DealRow>();
+  const confIds = await confirmationStageIds(db);
   for (let i = 0; i < ids.length; i += 500) {
     const chunk = ids.slice(i, i + 500);
-    // Open deals only — a deal marked Lost/Confirmed since the morning list
-    // must never carry into List 3.
-    const { data } = await db
-      .from("crm_deals")
-      .select("id, pipedrive_deal_id, title, created_at, pd_add_time, last_activity_at, contact_id, status, crm_contacts ( id, name, emails, phones, tz_offset )")
-      .in("id", chunk)
-      .eq("status", "open");
+    // Open, non-Confirmation deals only — a deal marked Lost/Confirmed or
+    // moved into the Confirmation Pipeline since the morning list must never
+    // carry into List 3.
+    const { data } = await notConfirmation(
+      db
+        .from("crm_deals")
+        .select("id, pipedrive_deal_id, title, created_at, pd_add_time, last_activity_at, contact_id, status, crm_contacts ( id, name, emails, phones, tz_offset )")
+        .in("id", chunk)
+        .eq("status", "open"),
+      confIds
+    );
     for (const d of (data ?? []) as any[]) map.set(d.id, d);
   }
   return map;
@@ -677,13 +712,16 @@ async function claimReprospect(
   }
 
   // Load the whole open Cainen pool (paginated) with contacts + emails.
+  const confIdsPool = await confirmationStageIds(db);
   const pool = (await fetchAll((f, t) =>
-    db
-      .from("crm_deals")
-      .select("id, pipedrive_deal_id, title, last_activity_at, contact_id, crm_contacts ( name, emails, phones, tz_offset )")
-      .eq("status", "open")
-      .eq("owner_pipedrive_id", cainenId)
-      .range(f, t)
+    notConfirmation(
+      db
+        .from("crm_deals")
+        .select("id, pipedrive_deal_id, title, last_activity_at, contact_id, crm_contacts ( name, emails, phones, tz_offset )")
+        .eq("status", "open")
+        .eq("owner_pipedrive_id", cainenId),
+      confIdsPool
+    ).range(f, t)
   )) as any[];
 
   // Marketing recency per email (any age — "last marketing signal" wins).
