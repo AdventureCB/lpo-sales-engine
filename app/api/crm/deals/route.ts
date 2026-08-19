@@ -13,6 +13,7 @@ const SORTS: Record<string, string> = {
   value: "value_cents",
   activity: "last_activity_at",
   stage_changed: "stage_changed_at",
+  ai_confidence: "deal_profiles(overall_confidence)", // to-one reverse embed (PK deal_id)
 };
 
 /** Deal browser over the mirrored CRM (all roles). */
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest) {
   let q = db
     .from("crm_deals")
     .select(
-      `id, title, status, value_cents, owner_pipedrive_id, contact_id, stage_changed_at, last_activity_at, updated_at, pd_add_time, pipedrive_deal_id, truck_model, interests, crm_stages ( name, pipeline_id, crm_pipelines ( name ) ), ${contactEmbed}, deal_sources ( name )`,
+      `id, title, status, value_cents, owner_pipedrive_id, contact_id, stage_changed_at, last_activity_at, updated_at, pd_add_time, pipedrive_deal_id, truck_model, interests, crm_stages ( name, pipeline_id, crm_pipelines ( name ) ), ${contactEmbed}, deal_sources ( name ), deal_profiles ( overall_confidence )`,
       { count: "exact" }
     );
 

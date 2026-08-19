@@ -15,6 +15,8 @@ const SORT_OPTIONS: { label: string; sort: string; dir: "asc" | "desc" }[] = [
   { label: "Lowest value", sort: "value", dir: "asc" },
   { label: "Deal name A→Z", sort: "title", dir: "asc" },
   { label: "Timezone West→East", sort: "timezone", dir: "asc" },
+  { label: "AI certainty high→low", sort: "ai_confidence", dir: "desc" },
+  { label: "AI certainty low→high", sort: "ai_confidence", dir: "asc" },
 ];
 
 interface Deal {
@@ -207,6 +209,19 @@ const ALL_COLUMNS: ColDef[] = [
   { key: "created", label: "Created", sortKey: "created", nowrap: true, render: (d) => <span style={{ color: "var(--text-3)" }}>{fmtDate(d.pd_add_time)}</span> },
   { key: "source", label: "Source", nowrap: true, render: (d) => <span style={{ color: "var(--text-2)" }}>{d.deal_sources?.name ?? "—"}</span> },
   { key: "owner", label: "Owner", nowrap: true, render: (d) => (d.owner_pipedrive_id ? OWNER_NAMES[d.owner_pipedrive_id] ?? d.owner_pipedrive_id : "—") },
+  {
+    key: "ai_conf",
+    label: "AI certainty",
+    sortKey: "ai_confidence",
+    nowrap: true,
+    render: (d) => {
+      const p = Array.isArray(d.deal_profiles) ? d.deal_profiles[0] : d.deal_profiles;
+      const c = p?.overall_confidence;
+      if (c == null) return <span style={{ color: "var(--text-3)" }}>—</span>;
+      const pct = Math.round(Number(c) * 100);
+      return <span style={{ color: pct >= 70 ? "var(--good)" : pct >= 40 ? "var(--text-2)" : "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>{pct}%</span>;
+    },
+  },
   { key: "truck", label: "Truck", nowrap: true, render: (d) => <span style={{ color: "var(--text-2)" }}>{d.truck_model ?? "—"}</span> },
   {
     key: "ad_source",
