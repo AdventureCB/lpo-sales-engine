@@ -317,3 +317,75 @@ export async function sweepGmailAccount(
     .eq("user_email", account.user_email);
   return { scanned: ids.length, matched };
 }
+
+/**
+ * One-time repair: rows synced before 8/18 only carry Gmail's ~200-char
+ * snippet. Re-fetch each message and store the full body. Progress is marked
+ * in meta.bodyfill (done | gone | noacct) so runs are resumable and never
+ * re-process a row.
+ */
+export async function backfillGmailBodies(
+  db: SupabaseClient,
+  budgetMs: number,
+  limit = 150
+): Promise<{ processed: number; updated: number; remaining: number }> {
+  const started = Date.now();
+  const { data: rows, count } = await db
+    .from("crm_activities")
+    .select("id, pd_key, meta", { count: "exact" })
+    .like("pd_key", "gmail:%")
+    .is("meta->bodyfill", null)
+    .order("occurred_at", { ascending: false })
+    .limit(limit);
+
+  const tokens = new Map<string, string | null>();
+  const tokenFor = async (mailbox: string): Promise<string | null> => {
+    if (tokens.has(mailbox)) return tokens.get(mailbox)!;
+    const { data: acct } = await db.from("gmail_accounts").select("*").eq("google_email", mailbox).limit(1).maybeSingle();
+    let token: string | null = null;
+    if (acct?.refresh_token) {
+      try {
+        token = await freshAccessToken(db, acct);
+      } catch {}
+    }
+    tokens.set(mailbox, token);
+    return token;
+  };
+
+  let processed = 0;
+  let updated = 0;
+  for (const row of rows ?? []) {
+    if (Date.now() - started >= budgetMs) break;
+    const [, mailbox, msgId] = (row.pd_key as string).split(":");
+    const mark = async (state: string, body?: string) =>
+      db
+        .from("crm_activities")
+        .update({ meta: { ...(row.meta ?? {}), bodyfill: state }, ...(body ? { body } : {}) })
+        .eq("id", row.id);
+    const token = mailbox && msgId ? await tokenFor(mailbox) : null;
+    if (!token) {
+      await mark("noacct");
+      processed++;
+      continue;
+    }
+    try {
+      const res = await fetch(`${API}/messages/${msgId}?format=full`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) {
+        if (res.status === 404 || res.status === 400) {
+          await mark("gone");
+          processed++;
+        }
+        // other statuses (429/5xx): leave unmarked, a later run retries
+        continue;
+      }
+      const full = await res.json();
+      const body = extractBody(full.payload)?.slice(0, 50_000) ?? null;
+      await mark(body ? "done" : "gone", body ?? undefined);
+      processed++;
+      if (body) updated++;
+    } catch {
+      // network hiccup — retry on a later run
+    }
+  }
+  return { processed, updated, remaining: (count ?? 0) - processed };
+}
