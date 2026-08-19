@@ -286,13 +286,22 @@ export async function extractProfile(
   const { data: prior } = await db.from("deal_profiles").select("*").eq("deal_id", dealId).maybeSingle();
   const inputHash = `${inputs.transcriptCount}:${inputs.latestActivityAt ?? ""}:${inputs.notes.length}`;
   const wm = (prior?.watermark ?? {}) as any;
-  // No new signals → skip (free). A manual click on an already-current profile
-  // is a genuine no-op; force re-runs anyway.
+  // No new signals → ALWAYS skip (free), regardless of how long ago the last
+  // run was. (This used to fall through once debounce_hours passed, silently
+  // re-running a full extraction on IDENTICAL inputs every deal open.)
   if (prior && wm.input_hash === inputHash && !opts.force) {
-    if (opts.manual) return { ran: false, reason: "already current — no new signals to add", profile: prior };
+    return {
+      ran: false,
+      reason: opts.manual ? "already current — no new signals to add" : "no new signals since last run",
+      profile: prior,
+    };
+  }
+  // New info + a very recent run → debounce the auto path (the 20-min
+  // background refresh folds it in once the window passes). Manual/force run now.
+  if (prior && !bypass) {
     const debounceMs = cfg.debounce_hours * 3_600_000;
     if (prior.last_run_at && Date.now() - Date.parse(prior.last_run_at) < debounceMs)
-      return { ran: false, reason: "no new signals since last run", profile: prior };
+      return { ran: false, reason: "debounced — new activity folds in on the next background refresh", profile: prior };
   }
 
   // Budget guard (manual respects it; only a raw force bypasses).
