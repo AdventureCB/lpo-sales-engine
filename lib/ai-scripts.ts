@@ -136,6 +136,12 @@ async function budgetOk(db: SupabaseClient, capCents: number): Promise<boolean> 
   return (await monthToDateSpendCents(db)) < capCents;
 }
 
+// The model occasionally returns a list field as a single string despite the
+// schema — a malformed cached script crashed the dialer once. Normalize at
+// write time so the cache only ever holds the declared shape.
+const asArr = (v: unknown): string[] =>
+  Array.isArray(v) ? v.map((x) => String(x)) : v == null || v === "" ? [] : String(v).split(/\n+/).map((s) => s.trim()).filter(Boolean);
+
 /** Merge one script kind into deal_profiles.scripts (creates the row if the profiler hasn't run yet). */
 async function saveScript(db: SupabaseClient, dealId: string, prior: any, kind: string, value: any, version: number) {
   const scripts = { ...((prior?.scripts as any) ?? {}), [kind]: value, [`${kind}_version`]: version, [`${kind}_at`]: new Date().toISOString() };
@@ -199,8 +205,14 @@ export async function generateCallScript(
     maxTokens: 800,
   });
   await logAiUsage(db, { dealId, task: "call_script", tier: cfg.models.call_script ?? "haiku", call });
-  await saveScript(db, dealId, ctx.profile, "call", call.input, version);
-  return { ok: true, script: call.input };
+  const script = {
+    ...call.input,
+    plan: asArr(call.input.plan),
+    discovery: asArr(call.input.discovery),
+    objections: Array.isArray(call.input.objections) ? call.input.objections.filter((o: any) => o && typeof o === "object") : [],
+  };
+  await saveScript(db, dealId, ctx.profile, "call", script, version);
+  return { ok: true, script };
 }
 
 // ── Email / text drafts ─────────────────────────────────────────────────────

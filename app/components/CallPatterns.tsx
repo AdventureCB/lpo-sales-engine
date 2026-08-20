@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { em } from "./CallReviewCard";
+import { em, asLines } from "./CallReviewCard";
 
 interface PatternRow {
   rep: string;
@@ -124,19 +124,19 @@ export function CallPatterns() {
                 <div>
                   <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: "0.09em", textTransform: "uppercase", color: "var(--good)", marginBottom: 4 }}>Strengths</div>
                   <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "var(--text-2)", display: "grid", gap: 3 }}>
-                    {(row.patterns.strengths ?? []).map((s, i) => (
+                    {asLines(row.patterns.strengths).map((s, i) => (
                       <li key={i}>{em(s)}</li>
                     ))}
-                    {(row.patterns.strengths ?? []).length === 0 && <li style={{ color: "var(--text-3)" }}>None recurring yet.</li>}
+                    {asLines(row.patterns.strengths).length === 0 && <li style={{ color: "var(--text-3)" }}>None recurring yet.</li>}
                   </ul>
                 </div>
                 <div>
                   <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: "0.09em", textTransform: "uppercase", color: "var(--crit)", marginBottom: 4 }}>Gaps</div>
                   <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "var(--text-2)", display: "grid", gap: 3 }}>
-                    {(row.patterns.gaps ?? []).map((g, i) => (
+                    {asLines(row.patterns.gaps).map((g, i) => (
                       <li key={i}>{em(g)}</li>
                     ))}
-                    {(row.patterns.gaps ?? []).length === 0 && <li style={{ color: "var(--text-3)" }}>None recurring yet.</li>}
+                    {asLines(row.patterns.gaps).length === 0 && <li style={{ color: "var(--text-3)" }}>None recurring yet.</li>}
                   </ul>
                 </div>
               </div>

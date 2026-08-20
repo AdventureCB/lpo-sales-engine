@@ -14,6 +14,16 @@ interface CallScript {
   voicemail: string;
 }
 
+// The model occasionally returns a list field as one string despite the
+// schema (crashed the dialer once: cached script with plan-as-string →
+// .map is not a function). Coerce, never trust.
+const asLines = (v: unknown): string[] =>
+  Array.isArray(v) ? v.map((x) => String(x)) : v == null || v === "" ? [] : String(v).split(/\n+/).map((s) => s.trim()).filter(Boolean);
+const asObjections = (v: unknown): { objection: string; counter: string }[] =>
+  Array.isArray(v)
+    ? v.filter((o) => o && typeof o === "object").map((o) => ({ objection: String((o as any).objection ?? ""), counter: String((o as any).counter ?? "") }))
+    : [];
+
 /**
  * 🗒 Scripts & drafts — collapsed by default. The call outline (StoryBrand)
  * preloads during the dialer review pause; email/text drafts generate ONLY on
@@ -141,20 +151,20 @@ export function ScriptsCard({
               <Section label="🤝 Guide move">{em(call.guide_move)}</Section>
               <Section label="🗺 The plan">
                 <ol style={{ margin: 0, paddingLeft: 20, display: "grid", gap: 3 }}>
-                  {(call.plan ?? []).map((p, i) => <li key={i}>{em(p)}</li>)}
+                  {asLines(call.plan).map((p, i) => <li key={i}>{em(p)}</li>)}
                 </ol>
               </Section>
-              {(call.discovery ?? []).length > 0 && (
+              {asLines(call.discovery).length > 0 && (
                 <Section label="❓ Ask">
                   <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 3 }}>
-                    {(call.discovery ?? []).map((q, i) => <li key={i}>{em(q)}</li>)}
+                    {asLines(call.discovery).map((q, i) => <li key={i}>{em(q)}</li>)}
                   </ul>
                 </Section>
               )}
-              {(call.objections ?? []).length > 0 && (
+              {asObjections(call.objections).length > 0 && (
                 <Section label="🛡 If they push back">
                   <div style={{ display: "grid", gap: 5 }}>
-                    {(call.objections ?? []).map((o, i) => (
+                    {asObjections(call.objections).map((o, i) => (
                       <div key={i}>
                         <i style={{ color: "var(--accent-2, var(--text-2))" }}>“{String(o.objection ?? "").replace(/\*/g, "")}”</i>
                         <span style={{ color: "var(--text-3)" }}> → </span>

@@ -187,6 +187,15 @@ export async function reviewCall(
   });
   await logAiUsage(db, { dealId: opts.dealId, task: "call_review", tier, call });
 
+  // Normalize list fields at write time (model sometimes returns a string
+  // where the schema says array — a cached bad shape once crashed the UI).
+  const normalized = {
+    ...call.input,
+    worked: Array.isArray(call.input.worked) ? call.input.worked.map((x: unknown) => String(x)) : call.input.worked ? [String(call.input.worked)] : [],
+    scorecard: Array.isArray(call.input.scorecard) ? call.input.scorecard.filter((s: any) => s && typeof s === "object") : [],
+    do_differently: Array.isArray(call.input.do_differently) ? call.input.do_differently.filter((d: any) => d && typeof d === "object") : [],
+  };
+
   const now = new Date().toISOString();
   const row = {
     deal_id: opts.dealId,
@@ -197,13 +206,13 @@ export async function reviewCall(
     profile_version: version,
     transcript_chars: transcript.length,
     model: tier,
-    review: call.input,
+    review: normalized,
     updated_at: now,
   };
   // Partial unique indexes can't take PostgREST onConflict — select-then-write.
   if (existing) await db.from("call_reviews").update(row).eq("id", existing.id);
   else await db.from("call_reviews").insert(row);
-  return { ok: true, review: call.input, reviewedAt: now };
+  return { ok: true, review: normalized, reviewedAt: now };
 }
 
 // ── Per-rep patterns rollup ─────────────────────────────────────────────────

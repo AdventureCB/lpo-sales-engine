@@ -35,6 +35,11 @@ export const em = (raw: string | null | undefined): React.ReactNode[] => {
   return parts;
 };
 
+// Model list fields can arrive malformed (string instead of array) — coerce.
+export const asLines = (v: unknown): string[] =>
+  Array.isArray(v) ? v.map((x) => String(x)) : v == null || v === "" ? [] : [String(v)];
+const asObjects = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v.filter((o) => o && typeof o === "object") as T[]) : []);
+
 const VERDICT: Record<string, { icon: string; color: string; label: string }> = {
   hit: { icon: "✓", color: "var(--good)", label: "hit" },
   partial: { icon: "◐", color: "var(--text-2)", label: "partial" },
@@ -114,10 +119,10 @@ export function CallReviewInline({
           )}
           <div style={{ fontSize: 13.5, lineHeight: 1.5, color: "var(--text-1)" }}>{em(review.snapshot)}</div>
 
-          {(review.worked ?? []).length > 0 && (
+          {asLines(review.worked).length > 0 && (
             <Section label="👍 What worked">
               <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 3 }}>
-                {review.worked!.map((w, i) => (
+                {asLines(review.worked).map((w, i) => (
                   <li key={i}>{em(w)}</li>
                 ))}
               </ul>
@@ -126,7 +131,7 @@ export function CallReviewInline({
 
           <Section label="📖 StoryBrand scorecard">
             <div style={{ display: "grid", gap: 4 }}>
-              {(review.scorecard ?? []).map((s, i) => {
+              {asObjects<ScoreRow>(review.scorecard).map((s, i) => {
                 const v = VERDICT[s.verdict] ?? VERDICT.partial;
                 return (
                   <div key={i} style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
@@ -143,10 +148,10 @@ export function CallReviewInline({
             </div>
           </Section>
 
-          {(review.do_differently ?? []).length > 0 && (
+          {asObjects<{ moment: string; try: string }>(review.do_differently).length > 0 && (
             <Section label="🔁 Do differently">
               <div style={{ display: "grid", gap: 5 }}>
-                {review.do_differently!.map((d, i) => (
+                {asObjects<{ moment: string; try: string }>(review.do_differently).map((d, i) => (
                   <div key={i}>
                     {em(d.moment)}
                     <span style={{ color: "var(--text-3)" }}> → </span>
