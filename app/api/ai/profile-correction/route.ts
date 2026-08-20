@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
+import { extractProfile } from "@/lib/ai-profiler-engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
-type Op = "archetype_wrong" | "attribute_clear" | "tag_remove" | "restore";
+type Op = "archetype_wrong" | "attribute_clear" | "tag_remove" | "restore" | "note";
 
 /**
  * Phase 5a: rep corrections. A correction is PINNED — the display updates
@@ -50,6 +52,13 @@ export async function POST(req: NextRequest) {
   } else if (op === "tag_remove") {
     add("tags_removed", key.toLowerCase());
     patch.tags = ((profile.tags as string[]) ?? []).filter((t) => t.toLowerCase() !== key.toLowerCase());
+  } else if (op === "note") {
+    // Free-text feedback — verified fact for every future run. Deliberate rep
+    // effort, so bust the input-hash cache and re-extract NOW (budget still
+    // respected) so the profile visibly absorbs it.
+    const text = key.trim().slice(0, 500);
+    corr.notes = [...(Array.isArray(corr.notes) ? corr.notes : []), { text, by: user.email, at: entry.at }].slice(-25);
+    patch.watermark = { ...((profile.watermark as any) ?? {}), input_hash: `rep-note:${Date.now()}` };
   } else if (op === "restore") {
     // kind tells us which pin list; display returns on the next run.
     const name = { archetype: "archetypes_wrong", attribute: "attributes_cleared", tag: "tags_removed", interest: "interests_removed" }[
@@ -63,5 +72,10 @@ export async function POST(req: NextRequest) {
 
   const { error } = await db.from("deal_profiles").update(patch).eq("deal_id", dealId);
   if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+
+  if (op === "note") {
+    const result = await extractProfile(db, dealId, { manual: true });
+    return NextResponse.json({ ok: true, corrections: corr, reran: result.ran, profile: result.profile ?? null, reason: result.reason });
+  }
   return NextResponse.json({ ok: true, corrections: corr });
 }

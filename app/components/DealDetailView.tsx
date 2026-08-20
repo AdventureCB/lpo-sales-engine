@@ -1802,6 +1802,24 @@ function DealProfileSection({
     [dealId, onRefreshed]
   );
 
+  // Free-text feedback — becomes verified fact + immediate re-extraction.
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [noteText, setNoteText] = useState("");
+  const [noteBusy, setNoteBusy] = useState(false);
+  const sendNote = async () => {
+    if (!noteText.trim() || noteBusy) return;
+    setNoteBusy(true);
+    await fetch("/api/ai/profile-correction", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dealId, op: "note", key: noteText.trim() }),
+    }).catch(() => {});
+    setNoteBusy(false);
+    setNoteText("");
+    setNoteOpen(false);
+    onRefreshed();
+  };
+
   const xBtn = (title: string, fn: () => void) => (
     <button
       title={title}
@@ -1944,6 +1962,31 @@ function DealProfileSection({
               )}
             </div>
           )}
+
+          {/* Free-text feedback → pinned fact + immediate re-read */}
+          <div>
+            {!noteOpen ? (
+              <button className="btn ghost" style={{ padding: "3px 10px", fontSize: 12 }} onClick={() => setNoteOpen(true)}>
+                ✎ Tell the AI something it got wrong
+              </button>
+            ) : (
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input
+                  className="vmsel"
+                  style={{ flex: 1, fontSize: 12.5 }}
+                  placeholder={`e.g. "not a hunter — that was his brother" or "budget is ~$15k"`}
+                  value={noteText}
+                  autoFocus
+                  onChange={(e) => setNoteText(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && void sendNote()}
+                />
+                <button className="btn primary" style={{ padding: "5px 12px", fontSize: 12.5 }} disabled={!noteText.trim() || noteBusy} onClick={() => void sendNote()}>
+                  {noteBusy ? "Re-reading…" : "Teach"}
+                </button>
+                <button className="btn ghost" style={{ padding: "5px 9px", fontSize: 12.5 }} onClick={() => { setNoteOpen(false); setNoteText(""); }}>✕</button>
+              </div>
+            )}
+          </div>
 
           {profile.last_run_at && (
             <div style={{ fontSize: 11, color: "var(--text-3)" }}>

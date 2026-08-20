@@ -395,12 +395,16 @@ export async function extractProfile(
     attributes_cleared?: string[];
     tags_removed?: string[];
     interests_removed?: string[];
+    notes?: { text: string; by: string; at: string }[];
   };
   const corrLines = [
     corr.archetypes_wrong?.length && `- NOT these archetypes (rep marked wrong): ${corr.archetypes_wrong.join(", ")} — exclude them.`,
     corr.attributes_cleared?.length && `- Do NOT assert these attributes (rep cleared them as wrong): ${corr.attributes_cleared.join(", ")}.`,
     corr.tags_removed?.length && `- Never re-add these tags: ${corr.tags_removed.join(", ")}.`,
     corr.interests_removed?.length && `- Never re-add these interests: ${corr.interests_removed.join(", ")}.`,
+    ...(corr.notes ?? []).slice(-10).map(
+      (n) => `- Rep note (${(n.at ?? "").slice(0, 10)}): "${String(n.text).slice(0, 300)}" — treat as verified fact; reinterpret other evidence in its light.`
+    ),
   ].filter(Boolean) as string[];
   if (corrLines.length) {
     userParts.unshift(`# REP CORRECTIONS (authoritative — a human verified these; never contradict)\n${corrLines.join("\n")}`);

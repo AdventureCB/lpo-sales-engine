@@ -262,6 +262,29 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   // Summary shows in the lead card; confidence/archetypes in the right panel.
   const [leadProfile, setLeadProfile] = useState<{ profile: AiProfile | null; stale: boolean; building: boolean }>({ profile: null, stale: false, building: false });
 
+  // Free-text feedback from the dialer card → pinned fact + immediate re-read.
+  const [aiNoteOpen, setAiNoteOpen] = useState(false);
+  const [aiNoteText, setAiNoteText] = useState("");
+  const [aiNoteBusy, setAiNoteBusy] = useState(false);
+  const sendAiNote = async () => {
+    const dealId = lead?.crmDealId;
+    if (!dealId || !aiNoteText.trim() || aiNoteBusy) return;
+    setAiNoteBusy(true);
+    try {
+      const r = await fetch("/api/ai/profile-correction", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dealId, op: "note", key: aiNoteText.trim() }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (d?.profile) setLeadProfile((lp) => ({ ...lp, profile: d.profile }));
+      setAiNoteText("");
+      setAiNoteOpen(false);
+    } finally {
+      setAiNoteBusy(false);
+    }
+  };
+
   // Rep correction from the dialer card: pin server-side + drop locally.
   const correctProfile = (op: string, key: string) => {
     const dealId = lead?.crmDealId;
@@ -1668,6 +1691,29 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                         </div>
                       </div>
                     )}
+                    <div style={{ marginTop: 8 }}>
+                      {!aiNoteOpen ? (
+                        <button className="btn ghost" style={{ padding: "3px 9px", fontSize: 12 }} onClick={() => setAiNoteOpen(true)}>
+                          ✎ Tell the AI
+                        </button>
+                      ) : (
+                        <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                          <input
+                            className="vmsel"
+                            style={{ flex: 1, fontSize: 12, padding: "5px 8px" }}
+                            placeholder="Correct something…"
+                            value={aiNoteText}
+                            autoFocus
+                            onChange={(e) => setAiNoteText(e.target.value)}
+                            onKeyDown={(e) => e.key === "Enter" && void sendAiNote()}
+                          />
+                          <button className="btn primary" style={{ padding: "4px 10px", fontSize: 12 }} disabled={!aiNoteText.trim() || aiNoteBusy} onClick={() => void sendAiNote()}>
+                            {aiNoteBusy ? "…" : "Teach"}
+                          </button>
+                          <button className="btn ghost" style={{ padding: "4px 8px", fontSize: 12 }} onClick={() => { setAiNoteOpen(false); setAiNoteText(""); }}>✕</button>
+                        </div>
+                      )}
+                    </div>
                   </>
                 )}
               </div>
