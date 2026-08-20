@@ -1387,7 +1387,9 @@ export function DealDetailView({
                       )}
                       {t.body && isOpen && (
                         <div style={{ fontSize: 13.5, color: "var(--text-2)", whiteSpace: "pre-wrap", wordBreak: "break-word", marginTop: 4 }}>
-                          {t.body}
+                          {/* Linkify: URLs (e.g. saved-build links) become click-to-copy — the
+                              FULL stored URL, no error-prone manual selection. */}
+                          <Linkify text={t.body} />
                         </div>
                       )}
                       {isOpen && t.kind === "note" && t.id && !String(t.id).startsWith("sms-") && (
@@ -2095,28 +2097,58 @@ const last10 = (p: string) => p.replace(/\D/g, "").slice(-10);
 
 /** URLs inside event text: click copies the link (works identically in the
  * browser and the companion webview, which can't open external tabs). */
+// Clipboard with WKWebView fallback — navigator.clipboard can be missing or
+// silently rejected in the companion's webview; execCommand still works there.
+function copyText(s: string) {
+  const fallback = () => {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = s;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    } catch {}
+  };
+  try {
+    if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(s).catch(fallback);
+    else fallback();
+  } catch {
+    fallback();
+  }
+}
+
 function Linkify({ text }: { text: string }) {
-  const parts = String(text).split(/(https?:\/\/[^\s"',]+)/g);
+  // Don't break URLs on commas/apostrophes — saved-build links carry long
+  // comma-separated accessory lists; a comma-split copy is a dead link. Only
+  // trailing sentence punctuation is trimmed off the match.
+  const parts = String(text).split(/(https?:\/\/[^\s<>"]+)/g);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   return (
     <>
-      {parts.map((p, i) =>
-        /^https?:\/\//.test(p) ? (
+      {parts.map((p, i) => {
+        if (!/^https?:\/\//.test(p)) return <span key={i}>{p}</span>;
+        const url = p.replace(/[.,;:!?)\]'"]+$/, "");
+        const tail = p.slice(url.length);
+        return (
           <span key={i}>
             <a
-              href={p}
+              href={url}
               style={{ color: "var(--accent-2)", wordBreak: "break-all", cursor: "copy" }}
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                void navigator.clipboard?.writeText(p).catch(() => {});
+                copyText(url);
                 setCopiedIdx(i);
                 setTimeout(() => setCopiedIdx((c) => (c === i ? null : c)), 2000);
               }}
               title="Click to copy the link"
             >
-              {p}
+              {url}
             </a>
+            {tail}
             {copiedIdx === i && (
               <span
                 style={{
@@ -2134,10 +2166,8 @@ function Linkify({ text }: { text: string }) {
               </span>
             )}
           </span>
-        ) : (
-          p
-        )
-      )}
+        );
+      })}
     </>
   );
 }
