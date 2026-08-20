@@ -148,7 +148,7 @@ export async function runTaxonomyReview(
       `- Add an archetype: ≥8 fit-failures whose summaries describe the same missing persona.`,
       `- Retire/merge: an archetype with high correction rate AND low usage, or an attribute cleared repeatedly and rarely filled.`,
       `${opts.bootstrap ? "BOOTSTRAP MODE: this is the first deep pass — you may additionally propose enrichments to EVERY archetype (fuller positive/negative traits, watch-for signals, sharper selling approaches grounded in the won/lost summaries) even below thresholds, but keep each proposal defensible from the evidence shown." : "Standard review: most runs should return ZERO proposals with a no_changes_reason."}`,
-      `Keys are stable snake_case identifiers — never rename an existing key (edit fields instead). Max 12 proposals, highest-impact first. Every proposal cites its evidence.`,
+      `Keys are stable snake_case identifiers — never rename an existing key (edit fields instead). If a key already exists in the current taxonomy, the kind MUST be *_edit (with target_key) — *_add is ONLY for keys not present. Max 12 proposals, highest-impact first. Every proposal cites its evidence.`,
     ].join("\n\n"),
     user: [
       `# CURRENT ARCHETYPES\n${JSON.stringify(archs ?? [], null, 0).slice(0, 12000)}`,
@@ -192,14 +192,25 @@ export async function decideProposal(
   if (p.status !== "pending") return { ok: false, reason: "already decided" };
 
   if (approve) {
-    const table = p.kind.startsWith("archetype") ? "deal_archetypes" : "profile_attributes";
-    const proposed = (p.proposed as Record<string, unknown>) ?? {};
+    const isArch = p.kind.startsWith("archetype");
+    const table = isArch ? "deal_archetypes" : "profile_attributes";
+    // Whitelist columns so a stray field from the model can't break the write.
+    const ALLOWED = isArch
+      ? ["key", "name", "emoji", "tagline", "description", "positive_traits", "negative_traits", "signals", "ad_ids", "selling_approach", "avoid", "sort_order"]
+      : ["key", "name", "description", "category", "value_type", "options", "importance", "sort_order"];
+    const proposed: Record<string, unknown> = {};
+    for (const k of ALLOWED) if ((p.proposed as any)?.[k] !== undefined) proposed[k] = (p.proposed as any)[k];
+
     if (p.kind.endsWith("_retire")) {
       if (!p.target_key) return { ok: false, reason: "retire needs target_key" };
       const { error } = await db.from(table).update({ enabled: false, updated_at: new Date().toISOString() }).eq("key", p.target_key);
       if (error) return { ok: false, reason: error.message };
     } else if (p.kind.endsWith("_add")) {
-      const { error } = await db.from(table).insert({ ...proposed, enabled: true });
+      // The critic sometimes labels an enrichment of an EXISTING key as an
+      // add — upsert by key so both cases land.
+      const { error } = await db
+        .from(table)
+        .upsert({ ...proposed, enabled: true, updated_at: new Date().toISOString() }, { onConflict: "key" });
       if (error) return { ok: false, reason: error.message };
     } else {
       if (!p.target_key) return { ok: false, reason: "edit needs target_key" };

@@ -64,13 +64,21 @@ export function TaxonomyReview() {
 
   const decide = async (id: string, approve: boolean) => {
     setBusyId(id);
-    await fetch("/api/admin/taxonomy-review", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "decide", id, approve }),
-    }).catch(() => {});
-    setBusyId(null);
-    load();
+    try {
+      const r = await fetch("/api/admin/taxonomy-review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "decide", id, approve }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || d.error) setMsg(`⚠ ${d.error ?? `HTTP ${r.status}`}`);
+      else setMsg(approve ? "✓ Applied" : "Rejected");
+    } catch (e) {
+      setMsg(`⚠ ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setBusyId(null);
+      load();
+    }
   };
 
   if (!data) return null;
