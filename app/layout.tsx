@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { PhoneDock } from "./components/PhoneDock";
 import { ActivityTracker } from "./components/ActivityTracker";
+import { ErrorReporter } from "./components/ErrorReporter";
 
 export const metadata: Metadata = {
   title: "LPO Sales Engine",
@@ -27,6 +28,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* Renderless engagement tracker — same root-mount rule as the
             softphone so it survives navigation and sees every route. */}
         <ActivityTracker />
+        {/* Renderless crash telemetry — WKWebView has no devtools, so this is
+            how rep-side "Application error" screens become debuggable. */}
+        <ErrorReporter />
         {children}
       </body>
     </html>

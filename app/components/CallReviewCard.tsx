@@ -17,7 +17,8 @@ interface Review {
 }
 
 /** Inline emphasis from the model's markers: **bold** key words, *italics* = spoken lines. */
-export const em = (text: string): React.ReactNode[] => {
+export const em = (raw: string | null | undefined): React.ReactNode[] => {
+  const text = String(raw ?? "");
   const parts: React.ReactNode[] = [];
   const re = /(\*\*[^*]+\*\*|\*[^*]+\*)/g;
   let last = 0;

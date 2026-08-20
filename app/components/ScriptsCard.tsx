@@ -90,7 +90,8 @@ export function ScriptsCard({
 
   // Inline emphasis from the model's markers: **bold** = load-bearing words,
   // *italic* = what the customer might say. Plain text renders unchanged.
-  const em = (text: string): React.ReactNode[] => {
+  const em = (raw: string | null | undefined): React.ReactNode[] => {
+    const text = String(raw ?? "");
     const parts: React.ReactNode[] = [];
     const re = /(\*\*[^*]+\*\*|\*[^*]+\*)/g;
     let last = 0;
@@ -155,7 +156,7 @@ export function ScriptsCard({
                   <div style={{ display: "grid", gap: 5 }}>
                     {(call.objections ?? []).map((o, i) => (
                       <div key={i}>
-                        <i style={{ color: "var(--accent-2, var(--text-2))" }}>“{o.objection.replace(/\*/g, "")}”</i>
+                        <i style={{ color: "var(--accent-2, var(--text-2))" }}>“{String(o.objection ?? "").replace(/\*/g, "")}”</i>
                         <span style={{ color: "var(--text-3)" }}> → </span>
                         {em(o.counter)}
                       </div>
