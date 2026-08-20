@@ -331,9 +331,12 @@ async function enrich(
   }
 
   for (const a of pending) {
-    // Ignore system-generated tasks (e.g. hot-list "call today" tasks,
-    // actor='sys') — only real rep-scheduled activities suppress/promote a deal.
-    if (a.actor === "sys") continue;
+    // Sprint lists run off APP-created activities ONLY (Kyle, 8/20). Rows
+    // without an actor originated in Pipedrive — legacy imports and the
+    // hot-list cron's PD-side "call today" tasks — and must neither suppress
+    // a deal nor promote it to tier 2 ("scheduled"). App writes always stamp
+    // an actor (rep email / 'intake' / 'automation').
+    if (!a.actor || a.actor === "sys") continue;
     const targets = [a.deal_id, /* contact fallthrough below */].filter(Boolean) as string[];
     let ids: string[] = a.deal_id ? [a.deal_id] : [];
     // contact-linked pending activities apply to that contact's deals
