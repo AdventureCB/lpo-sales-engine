@@ -46,7 +46,7 @@ const REPS = [
 const TIER_BADGE: Record<string, { label: string; color: string }> = {
   "1a": { label: "🔥 Buy intent", color: "#e8623a" },
   "1b": { label: "✦ Engaged", color: "#d99a2b" },
-  "2": { label: "📅 Scheduled today", color: "#3aa0e8" },
+  "2": { label: "📅 Scheduled", color: "#3aa0e8" },
   "3": { label: "🆕 New", color: "#4ab86a" },
   "4": { label: "📣 Marketing", color: "#9a7be0" },
   "5": { label: "❄ No convo 60d", color: "#7c8aa0" },

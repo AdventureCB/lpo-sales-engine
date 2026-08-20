@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isAllDayIso } from "./allday";
 
 /**
  * Sprint Lists — daily auto-generated call lists on the sprint rail.
@@ -364,7 +365,11 @@ function classify(
   // resurfaces as tier 2) — you already have a plan for it. EXCEPTION: a fresh
   // high-intent buy signal with nothing scheduled in the next 7 days still
   // surfaces (flagged), so the rep can act on renewed intent.
-  const dueLa = f.nextPendingDueAt ? laDate(new Date(f.nextPendingDueAt)) : null;
+  // All-day activities (00:00 UTC by convention, lib/allday) belong on their
+  // UTC date — running them through laDate shifted them a day EARLY, so
+  // tomorrow's planned calls leaked onto today's list.
+  const due = f.nextPendingDueAt;
+  const dueLa = due ? (isAllDayIso(due) ? due.slice(0, 10) : laDate(new Date(due))) : null;
   if (dueLa && dueLa > todayLa) {
     if (f.hot1aAt && !f.scheduledNext7) {
       return { tier: 1, tierLabel: "1a", recencyAt: f.hot1aAt, flag: `🔥 New buy signal — callback scheduled ${dueLa}` };
@@ -374,8 +379,12 @@ function classify(
 
   if (f.hot1aAt) return { tier: 1, tierLabel: "1a", recencyAt: f.hot1aAt };
   if (f.hot1bAt) return { tier: 1, tierLabel: "1b", recencyAt: f.hot1bAt };
-  // A scheduled activity due today (or overdue) surfaces at tier 2.
-  if (dueLa) return { tier: 2, tierLabel: "2", recencyAt: f.nextPendingDueAt };
+  // A scheduled activity due today (or overdue) surfaces at tier 2 — flagged
+  // honestly when it's an OVERDUE task rather than one planned for today.
+  if (dueLa) {
+    const flag = dueLa < todayLa ? `⏰ Task overdue since ${dueLa.slice(5).replace("-", "/")}` : null;
+    return { tier: 2, tierLabel: "2", recencyAt: f.nextPendingDueAt, flag };
+  }
   if (created >= daysAgoIso(w.new_deal_days) && !f.hasAnyCall)
     return { tier: 3, tierLabel: "3", recencyAt: created };
   if (f.marketingAt && !recentActivity && !f.scheduledNext7)
