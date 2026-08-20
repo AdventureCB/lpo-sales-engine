@@ -240,6 +240,7 @@ export async function POST(req: NextRequest) {
     lostReason?: string;
     note?: string;
     noteTitle?: string;
+    sprintSnoozeUntil?: string | null;
     ownerPipedriveId?: number | null;
     activity?: { type: string; subject: string; dueAt?: string | null };
     logActivity?: { type: string; subject: string; body?: string; occurredAt?: string };
@@ -517,6 +518,28 @@ export async function POST(req: NextRequest) {
         { onConflict: "sprint_id,deal_id", ignoreDuplicates: true }
       );
     if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+  }
+
+  // Manual sprint-list snooze (Actions card): date = excluded until then;
+  // null clears. System note keeps the timeline honest about why the deal
+  // went quiet.
+  if (body.sprintSnoozeUntil !== undefined) {
+    const until = body.sprintSnoozeUntil;
+    if (until !== null && !/^\d{4}-\d{2}-\d{2}$/.test(until)) {
+      return NextResponse.json({ error: "sprintSnoozeUntil must be YYYY-MM-DD or null" }, { status: 400 });
+    }
+    const { error } = await db
+      .from("crm_deals")
+      .update({ sprint_snooze_until: until, updated_at: new Date().toISOString() })
+      .eq("id", deal.id);
+    if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+    await db.from("crm_activities").insert({
+      deal_id: deal.id,
+      type: "system",
+      subject: until ? `😴 Snoozed from call lists until ${until}` : "⏰ Call-list snooze cleared",
+      actor: user.email,
+      meta: {},
+    });
   }
 
   if (body.note?.trim()) {

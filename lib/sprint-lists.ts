@@ -28,6 +28,7 @@ export type SprintListConfig = {
     stale_min_days: number;
     stale_max_days: number;
     cap_fill_no_activity_days: number;
+    cooldown_attempts_7d: number;
   };
   hot_1a_regex: string; // high-intent buy signals (tier 1a)
   hot_1b_regex: string; // ACTIVE engagement (tier 1b) — excludes passive opens
@@ -49,6 +50,9 @@ export const DEFAULT_CONFIG: SprintListConfig = {
     stale_min_days: 60,
     stale_max_days: 90,
     cap_fill_no_activity_days: 60,
+    // ≥ this many outgoing dials in the trailing 7 days → the deal rests off
+    // lists (every source EXCEPT tier 1a buy signals). 0 = off.
+    cooldown_attempts_7d: 3,
   },
   // Matched against engagement_events.type (snake_case): Shopify buy-intent.
   hot_1a_regex: "(cart|checkout|builder_save|save.?build|3d.?build|abandon)",
@@ -81,6 +85,12 @@ async function confirmationStageIds(db: SupabaseClient): Promise<string[]> {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function notConfirmation<T = any>(q: T, ids: string[]): T {
   return ids.length ? (q as any).not("stage_id", "in", `(${ids.join(",")})`) : q;
+}
+
+/** Chainable filter: drop deals manually snoozed off lists until a date. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function notSnoozed<T = any>(q: T, todayLaStr: string): T {
+  return (q as any).or(`sprint_snooze_until.is.null,sprint_snooze_until.lt.${todayLaStr}`);
 }
 
 export async function loadConfig(db: SupabaseClient): Promise<SprintListConfig> {
@@ -201,6 +211,7 @@ type Facts = {
   marketingAt: string | null; // most recent marketing signal <= window
   hasAnyCall: boolean;
   lastConversationAt: string | null;
+  attempts7d: number; // outgoing dials in the trailing 7 days (cooldown)
 };
 
 /**
@@ -284,11 +295,13 @@ async function enrich(
         marketingAt: null,
         hasAnyCall: false,
         lastConversationAt: null,
+        attempts7d: 0,
       })
       .get(id)!;
 
   const hotCutoff = daysAgoIso(w.hot_days);
   const mktgCutoff = daysAgoIso(w.marketing_signal_days);
+  const attemptCutoff = daysAgoIso(7);
   for (const ev of engagement) {
     const at = ev.occurred_at;
     // engagement_events attribute by direct deal id (5k rows carry it) OR email.
@@ -324,6 +337,7 @@ async function enrich(
     for (const id of ids) {
       const fct = get(id);
       fct.hasAnyCall = true;
+      if (ce.started_at && ce.started_at >= attemptCutoff) fct.attempts7d += 1;
       if (isConversation && ce.started_at && (!fct.lastConversationAt || ce.started_at > fct.lastConversationAt)) {
         fct.lastConversationAt = ce.started_at;
       }
@@ -412,16 +426,19 @@ async function computeLadder(
   const confIds = await confirmationStageIds(db);
 
   const deals = (await fetchAll((f, t) =>
-    notConfirmation(
-      db
-        .from("crm_deals")
-        .select(
-          "id, pipedrive_deal_id, title, created_at, pd_add_time, last_activity_at, contact_id, crm_contacts!inner ( id, name, emails, phones, tz_offset )"
-        )
-        .eq("status", "open")
-        .eq("owner_pipedrive_id", repPipedriveId)
-        .filter("crm_contacts.tz_offset", "in", `(${offsets.join(",")})`),
-      confIds
+    notSnoozed(
+      notConfirmation(
+        db
+          .from("crm_deals")
+          .select(
+            "id, pipedrive_deal_id, title, created_at, pd_add_time, last_activity_at, contact_id, crm_contacts!inner ( id, name, emails, phones, tz_offset )"
+          )
+          .eq("status", "open")
+          .eq("owner_pipedrive_id", repPipedriveId)
+          .filter("crm_contacts.tz_offset", "in", `(${offsets.join(",")})`),
+        confIds
+      ),
+      todayLa
     ).range(f, t)
   )) as DealRow[];
 
@@ -433,8 +450,13 @@ async function computeLadder(
     if (off == null) continue;
     const phone = primaryPhone(d.crm_contacts?.phones ?? []);
     if (!phone) continue;
-    const cls = classify(d, facts.get(d.id) ?? blankFacts(), cfg, todayLa);
+    const f = facts.get(d.id) ?? blankFacts();
+    const cls = classify(d, f, cfg, todayLa);
     if (!cls) continue;
+    // Rest a hammered number: ≥N outgoing dials in the trailing week takes
+    // the deal off lists — EXCEPT fresh buy intent (1a), which always rings.
+    const cap = cfg.windows.cooldown_attempts_7d;
+    if (cap > 0 && cls.tierLabel !== "1a" && f.attempts7d >= cap) continue;
     items.push({
       crmDealId: d.id,
       pipedriveDealId: d.pipedrive_deal_id,
@@ -486,6 +508,7 @@ function blankFacts(): Facts {
     marketingAt: null,
     hasAnyCall: false,
     lastConversationAt: null,
+    attempts7d: 0,
   };
 }
 
@@ -566,20 +589,26 @@ async function computeList3(
   // outbound emails keep last_activity_at fresh, so they don't count here.
   const confIds3 = await confirmationStageIds(db);
   const repDeals = (await fetchAll((f, t) =>
-    notConfirmation(
-      db
-        .from("crm_deals")
-        .select("id, pipedrive_deal_id, title, contact_id, crm_contacts ( name, phones, tz_offset )")
-        .eq("status", "open")
-        .eq("owner_pipedrive_id", args.repPipedriveId),
-      confIds3
+    notSnoozed(
+      notConfirmation(
+        db
+          .from("crm_deals")
+          .select("id, pipedrive_deal_id, title, contact_id, crm_contacts ( name, phones, tz_offset )")
+          .eq("status", "open")
+          .eq("owner_pipedrive_id", args.repPipedriveId),
+        confIds3
+      ),
+      laDate(new Date())
     ).range(f, t)
   )) as any[];
-  const engAt = await customerEngagementRecency(db, repDeals, w.stale_max_days);
+  const { engAt, attempts7d } = await customerEngagementRecency(db, repDeals, w.stale_max_days);
   const staleMaxT = daysAgoIso(w.stale_max_days);
   const staleMinT = daysAgoIso(w.stale_min_days);
+  const cooldownCap = w.cooldown_attempts_7d;
   const staleDeals = repDeals
     .filter((d) => {
+      // Same rest rule as the ladder: a deal dialed ≥N times this week sits out.
+      if (cooldownCap > 0 && (attempts7d.get(d.id) ?? 0) >= cooldownCap) return false;
       const at = engAt.get(d.id);
       return at != null && at >= staleMaxT && at < staleMinT;
     })
@@ -616,13 +645,16 @@ async function loadDealsById(db: SupabaseClient, ids: string[]): Promise<Map<str
     // Open, non-Confirmation deals only — a deal marked Lost/Confirmed or
     // moved into the Confirmation Pipeline since the morning list must never
     // carry into List 3.
-    const { data } = await notConfirmation(
-      db
-        .from("crm_deals")
-        .select("id, pipedrive_deal_id, title, created_at, pd_add_time, last_activity_at, contact_id, status, crm_contacts ( id, name, emails, phones, tz_offset )")
-        .in("id", chunk)
-        .eq("status", "open"),
-      confIds
+    const { data } = await notSnoozed(
+      notConfirmation(
+        db
+          .from("crm_deals")
+          .select("id, pipedrive_deal_id, title, created_at, pd_add_time, last_activity_at, contact_id, status, crm_contacts ( id, name, emails, phones, tz_offset )")
+          .in("id", chunk)
+          .eq("status", "open"),
+        confIds
+      ),
+      laDate(new Date())
     );
     for (const d of (data ?? []) as any[]) map.set(d.id, d);
   }
@@ -638,7 +670,7 @@ async function customerEngagementRecency(
   db: SupabaseClient,
   deals: { id: string; pipedrive_deal_id: number | null; contact_id: string | null; crm_contacts: any }[],
   days: number
-): Promise<Map<string, string>> {
+): Promise<{ engAt: Map<string, string>; attempts7d: Map<string, number> }> {
   const phoneToDeals = new Map<string, string[]>();
   const pdIdToDeal = new Map<number, string>();
   const contactToDeals = new Map<string, string[]>();
@@ -672,13 +704,14 @@ async function customerEngagementRecency(
   ]);
 
   const out = new Map<string, string>();
+  const attempts7d = new Map<string, number>();
+  const attemptCutoff = daysAgoIso(7);
   const bump = (id: string, at: string | null) => {
     if (!at) return;
     if (!out.has(id) || at > out.get(id)!) out.set(id, at);
   };
 
   for (const ce of calls) {
-    if (!(ce.classification === "conversation" || ce.disposition === "connected")) continue;
     let ids: string[] = [];
     if (ce.deal_id != null && pdIdToDeal.has(ce.deal_id)) ids = [pdIdToDeal.get(ce.deal_id)!];
     else {
@@ -687,13 +720,17 @@ async function customerEngagementRecency(
       for (const p of parts) for (const id of phoneToDeals.get(p) ?? []) seen.add(id);
       ids = [...seen];
     }
-    for (const id of ids) bump(id, ce.started_at);
+    const isConversation = ce.classification === "conversation" || ce.disposition === "connected";
+    for (const id of ids) {
+      if (ce.started_at && ce.started_at >= attemptCutoff) attempts7d.set(id, (attempts7d.get(id) ?? 0) + 1);
+      if (isConversation) bump(id, ce.started_at);
+    }
   }
   for (const a of inbound) {
     const ids = a.deal_id ? [a.deal_id] : a.contact_id ? contactToDeals.get(a.contact_id) ?? [] : [];
     for (const id of ids) bump(id, a.occurred_at);
   }
-  return out;
+  return { engAt: out, attempts7d };
 }
 
 // ── Reprospecting pool: exclusive 3-day checkout ───────────────────────────
@@ -733,8 +770,18 @@ async function claimReprospect(
       .select("id, pipedrive_deal_id, title, last_activity_at, contact_id, crm_contacts ( name, emails, phones, tz_offset )")
       .eq("status", "open");
     q = poolOwnerId ? q.eq("owner_pipedrive_id", poolOwnerId) : q.is("owner_pipedrive_id", null);
-    return notConfirmation(q, confIdsPool).range(f, t);
+    return notSnoozed(notConfirmation(q, confIdsPool), laDate(new Date())).range(f, t);
   })) as any[];
+
+  // Cooldown: pool deals dialed ≥N times in the trailing week rest too —
+  // whoever dialed them (the 3-day checkout alone doesn't stop a re-claim
+  // right after release).
+  const cooldownCap = cfg.windows.cooldown_attempts_7d;
+  let hammered = new Set<string>();
+  if (cooldownCap > 0 && pool.length > 0) {
+    const { attempts7d } = await customerEngagementRecency(db, pool as any, 7);
+    hammered = new Set([...attempts7d.entries()].filter(([, n]) => n >= cooldownCap).map(([id]) => id));
+  }
 
   // Marketing recency per email (any age — "last marketing signal" wins).
   const mkt = await latestSignalByEmail(db);
@@ -763,10 +810,11 @@ async function claimReprospect(
   const byId = new Map(pool.map((d) => [d.id, d]));
   const items: ListItem[] = [];
 
-  // 1) Re-include this rep's active holds (prior commitments, ignore cap).
+  // 1) Re-include this rep's active holds (prior commitments, ignore cap) —
+  // unless they've already hammered the number this week.
   for (const id of mine) {
     const d = byId.get(id);
-    if (d && primaryPhone(d.crm_contacts?.phones ?? [])) items.push(toItem(d));
+    if (d && !hammered.has(id) && primaryPhone(d.crm_contacts?.phones ?? [])) items.push(toItem(d));
   }
 
   // 2) Claim new deals to fill remaining slots, ranked by marketing recency.
@@ -774,7 +822,7 @@ async function claimReprospect(
   let newSlots = Math.min(Math.max(remaining, 0), subcap) - items.length;
   if (newSlots > 0) {
     const candidates = pool
-      .filter((d) => !mine.has(d.id) && !lockedByOther.has(d.id) && primaryPhone(d.crm_contacts?.phones ?? []))
+      .filter((d) => !mine.has(d.id) && !lockedByOther.has(d.id) && !hammered.has(d.id) && primaryPhone(d.crm_contacts?.phones ?? []))
       .sort((a, b) => (signalAt(b) ?? "").localeCompare(signalAt(a) ?? ""));
     const expires = new Date(Date.now() + cfg.checkout_hold_days * 86_400_000).toISOString();
     for (const d of candidates) {

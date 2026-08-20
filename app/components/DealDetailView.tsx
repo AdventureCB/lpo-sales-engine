@@ -185,7 +185,8 @@ export function DealDetailView({
   // Upcoming-activity inline editor
   const [editAct, setEditAct] = useState<{ id: string; subject: string; type: string; due: string } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [modal, setModal] = useState<null | "note" | "schedule" | "sprint" | "lost" | "reopen" | "log">(null);
+  const [modal, setModal] = useState<null | "note" | "schedule" | "sprint" | "lost" | "reopen" | "log" | "snooze">(null);
+  const [snoozeDate, setSnoozeDate] = useState("");
   const [logType, setLogType] = useState("call");
   const [logSubject, setLogSubject] = useState("");
   const [logNote, setLogNote] = useState("");
@@ -739,8 +740,59 @@ export function DealDetailView({
               <button className="btn" onClick={() => setModal("sprint")}>
                 ⚡ Add to sprint{data.dealSprintIds.length > 0 ? ` (in ${data.dealSprintIds.length})` : ""}
               </button>
+              <button
+                className="btn"
+                style={(d as any).sprint_snooze_until && (d as any).sprint_snooze_until >= new Date().toISOString().slice(0, 10) ? { color: "var(--warn)" } : undefined}
+                title="Keep this deal off the daily sprint call lists until a date"
+                onClick={() => {
+                  const cur = (d as any).sprint_snooze_until as string | null;
+                  const week = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+                  setSnoozeDate(cur && cur >= new Date().toISOString().slice(0, 10) ? cur : week);
+                  setModal("snooze");
+                }}
+              >
+                😴 {(d as any).sprint_snooze_until && (d as any).sprint_snooze_until >= new Date().toISOString().slice(0, 10)
+                  ? `Snoozed → ${(d as any).sprint_snooze_until.slice(5).replace("-", "/")}`
+                  : "Snooze lists"}
+              </button>
             </div>
           </div>
+          )}
+
+          {modal === "snooze" && (
+            <ActionModal title="Snooze from call lists" onClose={() => setModal(null)}>
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ fontSize: 13, color: "var(--text-3)" }}>
+                  This deal won't appear on any sprint list until the date below. It stays visible everywhere else.
+                </div>
+                <input type="date" className="vmsel" value={snoozeDate} min={new Date().toISOString().slice(0, 10)} onChange={(e) => setSnoozeDate(e.target.value)} />
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {[[7, "1 week"], [14, "2 weeks"], [30, "1 month"], [90, "3 months"]].map(([days, label]) => (
+                    <button key={String(label)} className="btn ghost" style={{ padding: "4px 10px", fontSize: 12.5 }} onClick={() => setSnoozeDate(new Date(Date.now() + Number(days) * 86_400_000).toISOString().slice(0, 10))}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="btn primary"
+                    disabled={!snoozeDate || saving}
+                    onClick={async () => {
+                      await update({ sprintSnoozeUntil: snoozeDate });
+                      setModal(null);
+                    }}
+                  >
+                    Snooze
+                  </button>
+                  {(d as any).sprint_snooze_until && (
+                    <button className="btn ghost" disabled={saving} onClick={async () => { await update({ sprintSnoozeUntil: null }); setModal(null); }}>
+                      Clear snooze
+                    </button>
+                  )}
+                  <button className="btn ghost" style={{ marginLeft: "auto" }} onClick={() => setModal(null)}>Cancel</button>
+                </div>
+              </div>
+            </ActionModal>
           )}
 
           {modal === "note" && (
