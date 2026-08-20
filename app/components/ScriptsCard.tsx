@@ -88,10 +88,31 @@ export function ScriptsCard({
     openChat({ phone, name: contactName, dealId, draft: sms.body });
   };
 
-  const line = (label: string, text: string) => (
-    <div style={{ display: "flex", gap: 8, fontSize: 13.5, lineHeight: 1.45 }}>
-      <b style={{ flexShrink: 0, width: 74, color: "var(--text-3)", fontSize: 11.5, textTransform: "uppercase", letterSpacing: "0.05em", paddingTop: 2 }}>{label}</b>
-      <span style={{ color: "var(--text-1)" }}>{text}</span>
+  // Inline emphasis from the model's markers: **bold** = load-bearing words,
+  // *italic* = what the customer might say. Plain text renders unchanged.
+  const em = (text: string): React.ReactNode[] => {
+    const parts: React.ReactNode[] = [];
+    const re = /(\*\*[^*]+\*\*|\*[^*]+\*)/g;
+    let last = 0;
+    let m: RegExpExecArray | null;
+    let i = 0;
+    while ((m = re.exec(text))) {
+      if (m.index > last) parts.push(text.slice(last, m.index));
+      const tok = m[0];
+      if (tok.startsWith("**")) parts.push(<b key={i++} style={{ color: "var(--text-1)" }}>{tok.slice(2, -2)}</b>);
+      else parts.push(<i key={i++} style={{ color: "var(--accent-2, var(--text-2))" }}>{tok.slice(1, -1)}</i>);
+      last = m.index + tok.length;
+    }
+    if (last < text.length) parts.push(text.slice(last));
+    return parts;
+  };
+
+  const Section = ({ label, first, children }: { label: string; first?: boolean; children: React.ReactNode }) => (
+    <div style={{ borderTop: first ? "none" : "1px solid var(--border-soft)", paddingTop: first ? 0 : 10, marginTop: first ? 0 : 2 }}>
+      <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: "0.09em", textTransform: "uppercase", color: "var(--accent)", marginBottom: 4 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 13.5, lineHeight: 1.5, color: "var(--text-2)" }}>{children}</div>
     </div>
   );
 
@@ -113,15 +134,37 @@ export function ScriptsCard({
           {/* Call outline (StoryBrand) */}
           {busy === "call" && !call && <div style={{ color: "var(--text-3)", fontSize: 13 }}>Building call outline…</div>}
           {call && (
-            <div style={{ display: "grid", gap: 6 }}>
-              {line("Hook", call.hook)}
-              {line("Their story", call.their_story)}
-              {line("Guide", call.guide_move)}
-              {line("Plan", (call.plan ?? []).join("  →  "))}
-              {(call.discovery ?? []).length > 0 && line("Ask", (call.discovery ?? []).join(" · "))}
-              {(call.objections ?? []).map((o, i) => line(i === 0 ? "Objections" : "", `"${o.objection}" → ${o.counter}`))}
-              {line("CTA", call.cta)}
-              {line("Voicemail", call.voicemail)}
+            <div style={{ display: "grid", gap: 8 }}>
+              <Section label="🪝 Hook" first>{em(call.hook)}</Section>
+              <Section label="🧭 Their story">{em(call.their_story)}</Section>
+              <Section label="🤝 Guide move">{em(call.guide_move)}</Section>
+              <Section label="🗺 The plan">
+                <ol style={{ margin: 0, paddingLeft: 20, display: "grid", gap: 3 }}>
+                  {(call.plan ?? []).map((p, i) => <li key={i}>{em(p)}</li>)}
+                </ol>
+              </Section>
+              {(call.discovery ?? []).length > 0 && (
+                <Section label="❓ Ask">
+                  <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 3 }}>
+                    {(call.discovery ?? []).map((q, i) => <li key={i}>{em(q)}</li>)}
+                  </ul>
+                </Section>
+              )}
+              {(call.objections ?? []).length > 0 && (
+                <Section label="🛡 If they push back">
+                  <div style={{ display: "grid", gap: 5 }}>
+                    {(call.objections ?? []).map((o, i) => (
+                      <div key={i}>
+                        <i style={{ color: "var(--accent-2, var(--text-2))" }}>“{o.objection.replace(/\*/g, "")}”</i>
+                        <span style={{ color: "var(--text-3)" }}> → </span>
+                        {em(o.counter)}
+                      </div>
+                    ))}
+                  </div>
+                </Section>
+              )}
+              <Section label="🎯 The ask">{em(call.cta)}</Section>
+              <Section label="📼 If voicemail">{em(call.voicemail)}</Section>
               <div>
                 <button className="btn ghost" style={{ padding: "2px 10px", fontSize: 12 }} disabled={busy === "call"} onClick={() => void gen("call", true)}>
                   ↻ Rebuild outline

@@ -192,6 +192,7 @@ export async function generateCallScript(
       COMPANY,
       `You produce a LIGHTWEIGHT call outline a rep can scan in 10 seconds mid-dial, built on StoryBrand principles: the BUYER is the hero on a quest; the rep is the GUIDE (empathy + authority); give them a simple PLAN and one clear call to action. Avoid failure-scare framing — keep it aspirational and concrete to this buyer's profile and interests.`,
       `Every line must be short. No paragraphs. No generic filler ("hope you're well"). Use the buyer's actual context (truck, interests, signals) wherever known.`,
+      `FORMATTING (the card renders these): wrap the 1-2 LOAD-BEARING words of each line in **double asterisks** (bold — what the rep's eye should catch); wrap anything the CUSTOMER might say or think in *single asterisks* (italics — predicted responses, their words). Example: "Ask about the **bed length** — he'll likely say *I've got the 5-footer*". Never bold whole sentences.`,
     ].join("\n\n"),
     user: [`# BUYER PROFILE\n${ctx.profileText}`, `\n# DEAL\n${ctx.inputs.header}`, `\n# SIGNALS\n${ctx.inputs.signalText}`, `\n# CALL HISTORY\n${ctx.inputs.callText}`].join("\n"),
     tool: CALL_TOOL,
