@@ -845,11 +845,20 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setLeads((prev) => prev.filter((l) => l !== target));
   };
 
+  // True while the rep is typing anywhere — inputs, selects, textareas, AND
+  // contentEditable surfaces (the rich-text email composer is a DIV, which a
+  // tagName check alone misses). Hotkeys must never fire mid-typing.
+  const isTyping = () => {
+    const el = document.activeElement as HTMLElement | null;
+    return !!el && (["INPUT", "SELECT", "TEXTAREA"].includes(el.tagName) || el.isContentEditable);
+  };
+
   // Keypad popup owns the keyboard while open (digits type into the number).
   useEffect(() => {
     if (!keypadOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (inCall) return; // in-call controls are buttons only
+      if (isTyping()) return;
       if (/^[0-9]$/.test(e.key)) setKeypadNum((n) => (n.length < 11 ? n + e.key : n));
       else if (e.key === "Backspace") setKeypadNum((n) => n.slice(0, -1));
       else if (e.key === "Enter") void keypadCall();
@@ -863,8 +872,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (keypadOpen) return; // keypad effect handles its own keys
-      const tag = (document.activeElement as HTMLElement)?.tagName;
-      if (["INPUT", "SELECT", "TEXTAREA"].includes(tag)) return;
+      if (isTyping()) return;
       if (awaitingNext && (e.key === "Enter" || e.key === "n" || e.key === "N")) { advanceNext(); return; }
       if (e.key === "Enter" && !inCall && !awaitingDispo && !awaitingNext) dial();
       if (e.key === "Enter" && pendingDispo) completeDispo(null);
