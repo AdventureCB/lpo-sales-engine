@@ -25,16 +25,22 @@ export async function GET(req: NextRequest) {
       .or(orFilter)
       .order("occurred_at", { ascending: false })
       .limit(3),
+    // Pending = due and not done, INCLUDING overdue (an old task is still the
+    // rep's next obligation) — and app-created only, matching the sprint-list
+    // rule: Pipedrive-era rows (no actor) don't count as a plan.
     db
       .from("crm_activities")
       .select("type, subject, due_at")
       .or(orFilter)
       .is("done_at", null)
-      .gt("due_at", nowIso)
+      .not("due_at", "is", null)
+      .not("actor", "is", null)
+      .neq("actor", "sys")
       .order("due_at", { ascending: true })
       .limit(1),
   ]);
 
+  const n = upcoming?.[0] ?? null;
   return NextResponse.json({
     recent: (recent ?? []).map((a) => ({
       type: a.type,
@@ -42,6 +48,6 @@ export async function GET(req: NextRequest) {
       snippet: a.body ? String(a.body).replace(/\s+/g, " ").slice(0, 80) : null,
       at: a.occurred_at,
     })),
-    next: upcoming?.[0] ? { type: upcoming[0].type, subject: upcoming[0].subject, dueAt: upcoming[0].due_at } : null,
+    next: n ? { type: n.type, subject: n.subject, dueAt: n.due_at, overdue: n.due_at < nowIso } : null,
   });
 }

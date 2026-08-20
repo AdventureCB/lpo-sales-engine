@@ -84,7 +84,9 @@ function QuickInfoPanel({ dealId, info }: { dealId: string; info: QuickInfo | "l
           <>
             <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.4 }}>Next scheduled</div>
             {info.next ? (
-              <div style={{ fontSize: 13, color: "var(--accent)", marginBottom: 6 }}>{ACT_ICON[info.next.type] ?? "•"} {info.next.subject ?? info.next.type} · {qWhen(info.next.dueAt)}</div>
+              <div style={{ fontSize: 13, color: (info.next as any).overdue ? "var(--crit)" : "var(--accent)", marginBottom: 6 }}>
+                {ACT_ICON[info.next.type] ?? "•"} {info.next.subject ?? info.next.type} · {(info.next as any).overdue ? "⏰ overdue " : ""}{qWhen(info.next.dueAt)}
+              </div>
             ) : (
               <div style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 6 }}>Nothing scheduled.</div>
             )}
