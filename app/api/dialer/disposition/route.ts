@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
         body: text,
         actor: user.email,
         occurred_at: new Date().toISOString(),
-        meta: withMentions(null, await extractMentions(db, text)) ?? null,
+        meta: withMentions(null, await extractMentions(db, text)),
       });
     }
     if (dealId) {

@@ -70,6 +70,31 @@ const KIND_ICON: Record<string, string> = {
   call: "📞", sms: "💬", email: "✉️", task: "📋", note: "📝", meeting: "📅", system: "⚙️",
 };
 
+// Shared by the CommBar's post-call flow AND the Log-activity modal — same
+// dispositions, same follow-up subjects, same quick-date math as the dialer.
+const DISPOSITIONS: [string, string][] = [
+  ["connected", "✅ Connected"],
+  ["vm_dropped", "🎙 VM left"],
+  ["bad_number", "🚫 Bad number"],
+  ["callback", "📅 Callback set"],
+  ["confirmation", "📋 Confirmation call"],
+  ["no_answer", "📵 No answer"],
+];
+const FOLLOW_UP_SUBJECT: Record<string, string> = {
+  connected: "Continue conversation",
+  vm_dropped: "Follow up — voicemail left",
+  no_answer: "Follow up — no answer",
+  callback: "Callback requested",
+  bad_number: "Follow up — fix number first",
+  confirmation: "Confirmation follow-up",
+};
+const followUpAt = (days: number): string => {
+  const dt = new Date();
+  dt.setDate(dt.getDate() + days);
+  dt.setHours(9, 0, 0, 0);
+  return dt.toISOString();
+};
+
 // ── Prefetch cache ─────────────────────────────────────────────────────────
 // Lets the dialer warm the NEXT lead's deal (and its AI profile) during the
 // post-call review pause, so advancing paints instantly instead of showing a
@@ -165,6 +190,13 @@ export function DealDetailView({
   const [logSubject, setLogSubject] = useState("");
   const [logNote, setLogNote] = useState("");
   const [logWhen, setLogWhen] = useState("");
+  // Call logs run through the disposition flow (same as the dialer).
+  const [logDispo, setLogDispo] = useState<string | null>(null);
+  const [logNoAnswer, setLogNoAnswer] = useState<string | null>(null);
+  const [logNextDays, setLogNextDays] = useState<number | "custom" | null>(null);
+  const [logNextCustom, setLogNextCustom] = useState("");
+  const [logNextType, setLogNextType] = useState("call");
+  const [logBusy, setLogBusy] = useState(false);
   const [depositFollow, setDepositFollow] = useState(false); // schedule modal opened by the Deposit flow
   const [lostReason, setLostReason] = useState("");
   const [mergeOpen, setMergeOpen] = useState(false);
@@ -832,21 +864,47 @@ export function DealDetailView({
                   <option value="task">📋 Task</option>
                   <option value="note">📝 Note</option>
                 </select>
-                <input
-                  className="vmsel"
-                  placeholder="What happened?"
-                  value={logSubject}
-                  autoFocus
-                  onChange={(e) => setLogSubject(e.target.value)}
-                />
-                <textarea
-                  className="vmsel"
-                  rows={3}
-                  style={{ resize: "vertical" }}
-                  placeholder="Details (optional)"
-                  value={logNote}
-                  onChange={(e) => setLogNote(e.target.value)}
-                />
+
+                {logType === "call" ? (
+                  <>
+                    {/* Same dispositions as the dialer — the log runs through the
+                        disposition flow (call stats, bad-number strike, pool claim). */}
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {DISPOSITIONS.map(([k, label]) => (
+                        <button
+                          key={k}
+                          className={`btn ${logDispo === k ? "primary" : "ghost"}`}
+                          style={{ padding: "5px 10px", fontSize: 13 }}
+                          onClick={() => { setLogDispo(k); if (k !== "no_answer") setLogNoAnswer(null); }}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    {logDispo === "no_answer" && (
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>Why?</span>
+                        <button className={`btn ${logNoAnswer === "ignored" ? "primary" : "ghost"}`} style={{ padding: "4px 10px", fontSize: 12.5 }} onClick={() => setLogNoAnswer((r) => (r === "ignored" ? null : "ignored"))}>
+                          🙈 Ignored
+                        </button>
+                        <button className={`btn ${logNoAnswer === "vm_unavailable" ? "primary" : "ghost"}`} style={{ padding: "4px 10px", fontSize: 12.5 }} onClick={() => setLogNoAnswer((r) => (r === "vm_unavailable" ? null : "vm_unavailable"))}>
+                          📪 VM full / not set
+                        </button>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <input
+                    className="vmsel"
+                    placeholder="What happened?"
+                    value={logSubject}
+                    autoFocus
+                    onChange={(e) => setLogSubject(e.target.value)}
+                  />
+                )}
+
+                <MentionInput rows={3} placeholder="Details… (@name to tag a teammate, optional)" value={logNote} onChange={setLogNote} />
+
                 <label style={{ fontSize: 12.5, color: "var(--text-3)" }}>
                   When (leave blank for now)
                   <input
@@ -857,23 +915,105 @@ export function DealDetailView({
                     onChange={(e) => setLogWhen(e.target.value)}
                   />
                 </label>
+
+                {/* Next step — same quick scheduling the dialer offers post-dispo. */}
+                <div style={{ borderTop: "1px solid var(--border-soft)", paddingTop: 8 }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>Next step:</span>
+                    <select className="vmsel" style={{ width: "auto", padding: "5px 8px", fontSize: 13 }} value={logNextType} onChange={(e) => setLogNextType(e.target.value)}>
+                      <option value="call">📞 Call</option>
+                      <option value="sms">💬 Text</option>
+                      <option value="email">✉️ Email</option>
+                      <option value="task">📋 Task</option>
+                      <option value="meeting">📅 Meeting</option>
+                    </select>
+                    {[[1, "Tomorrow"], [3, "3 days"], [7, "1 week"]].map(([days, label]) => (
+                      <button
+                        key={String(label)}
+                        className={`btn ${logNextDays === days ? "primary" : "ghost"}`}
+                        style={{ padding: "4px 10px", fontSize: 12.5 }}
+                        onClick={() => setLogNextDays((v) => (v === days ? null : (days as number)))}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                    <button className={`btn ${logNextDays === "custom" ? "primary" : "ghost"}`} style={{ padding: "4px 10px", fontSize: 12.5 }} onClick={() => setLogNextDays((v) => (v === "custom" ? null : "custom"))}>
+                      Custom
+                    </button>
+                    {logNextDays === "custom" && (
+                      <input type="date" className="vmsel" style={{ width: "auto", fontSize: 12.5, padding: "4px 8px" }} value={logNextCustom} onChange={(e) => setLogNextCustom(e.target.value)} />
+                    )}
+                    {logNextDays === null && <span style={{ fontSize: 12, color: "var(--text-3)" }}>(none)</span>}
+                  </div>
+                </div>
+
                 <div style={{ display: "flex", gap: 8 }}>
                   <button
                     className="btn primary"
-                    disabled={!logSubject.trim() || saving}
+                    disabled={logBusy || saving || (logType === "call" ? !logDispo : !logSubject.trim())}
                     onClick={async () => {
-                      await update({
-                        logActivity: {
-                          type: logType,
-                          subject: logSubject.trim(),
-                          body: logNote.trim() || undefined,
-                          occurredAt: logWhen ? new Date(logWhen).toISOString() : undefined,
-                        },
-                      });
-                      setModal(null);
+                      setLogBusy(true);
+                      try {
+                        const whenIso = logWhen ? new Date(logWhen).toISOString() : new Date().toISOString();
+                        const dueAt =
+                          logNextDays === "custom"
+                            ? (logNextCustom ? new Date(`${logNextCustom}T09:00:00`).toISOString() : null)
+                            : logNextDays != null
+                              ? followUpAt(logNextDays)
+                              : null;
+                        const reasonLabel = logDispo === "no_answer" && logNoAnswer ? (logNoAnswer === "ignored" ? "ignored" : "VM full / not set") : null;
+                        const logPhone = goodPhones.find((p) => p.primary)?.e164 ?? goodPhones[0]?.e164 ?? goodPhones[0]?.value ?? null;
+
+                        if (logType === "call" && logDispo && logPhone) {
+                          // Full disposition flow — identical to a dialer call:
+                          // call_events row (stats), bad-number strike, PD sync,
+                          // reprospect claim, note w/ mentions, next-step.
+                          const followSubject = reasonLabel ? `Follow up — no answer (${reasonLabel})` : FOLLOW_UP_SUBJECT[logDispo] ?? "Follow up";
+                          const noteText = reasonLabel ? `No answer — ${reasonLabel}${logNote.trim() ? " · " + logNote.trim() : ""}` : logNote.trim() || null;
+                          const r = await fetch("/api/dialer/disposition", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              phone: logPhone,
+                              disposition: logDispo,
+                              dialStartedAt: whenIso,
+                              final: true,
+                              dealId: d.pipedrive_deal_id ?? undefined,
+                              crmDealId: d.id,
+                              note: noteText,
+                              next: dueAt ? { type: logNextType, subject: followSubject, dueAt } : undefined,
+                            }),
+                          });
+                          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                          await load();
+                        } else {
+                          // Non-call types (or no phone): plain timeline log +
+                          // optional scheduled next step.
+                          const subject = logType === "call" && logDispo
+                            ? DISPOSITIONS.find(([k]) => k === logDispo)?.[1] ?? "Call"
+                            : logSubject.trim();
+                          await update({
+                            logActivity: { type: logType, subject, body: logNote.trim() || undefined, occurredAt: whenIso },
+                          });
+                          if (dueAt) {
+                            await update({ activity: { type: logNextType, subject: `Follow up — ${subject}`, dueAt } });
+                          }
+                        }
+                        setModal(null);
+                        setLogDispo(null);
+                        setLogNoAnswer(null);
+                        setLogNextDays(null);
+                        setLogNextCustom("");
+                        setLogNote("");
+                        setLogSubject("");
+                      } catch {
+                        setWarn("Log failed — try again");
+                      } finally {
+                        setLogBusy(false);
+                      }
                     }}
                   >
-                    Log it
+                    {logBusy ? "Logging…" : "Log it"}
                   </button>
                   <button className="btn ghost" onClick={() => setModal(null)}>Cancel</button>
                 </div>
@@ -1148,6 +1288,10 @@ export function DealDetailView({
                   setLogSubject("");
                   setLogNote("");
                   setLogWhen("");
+                  setLogDispo(null);
+                  setLogNoAnswer(null);
+                  setLogNextDays(null);
+                  setLogNextCustom("");
                   setModal("log");
                 }}
               >
@@ -2281,28 +2425,8 @@ function CommBar({
   const [customDue, setCustomDue] = useState("");
   const [showCustomDue, setShowCustomDue] = useState(false);
 
-  const DISPOSITIONS: [string, string][] = [
-    ["connected", "✅ Connected"],
-    ["vm_dropped", "🎙 VM left"],
-    ["bad_number", "🚫 Bad number"],
-    ["callback", "📅 Callback set"],
-    ["confirmation", "📋 Confirmation call"],
-    ["no_answer", "📵 No answer"],
-  ];
-  const FOLLOW_UP_SUBJECT: Record<string, string> = {
-    connected: "Continue conversation",
-    vm_dropped: "Follow up — voicemail left",
-    no_answer: "Follow up — no answer",
-    callback: "Callback requested",
-    bad_number: "Follow up — fix number first",
-    confirmation: "Confirmation follow-up",
-  };
-  const followUpAt = (days: number): string => {
-    const dt = new Date();
-    dt.setDate(dt.getDate() + days);
-    dt.setHours(9, 0, 0, 0);
-    return dt.toISOString();
-  };
+  // DISPOSITIONS / FOLLOW_UP_SUBJECT / followUpAt hoisted to module scope —
+  // shared with the Log-activity modal.
 
   useEffect(() => {
     fetch("/api/crm/comm-library")

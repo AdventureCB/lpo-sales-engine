@@ -288,7 +288,7 @@ export async function POST(req: NextRequest) {
         actor: user.email,
         occurred_at: at,
         done_at: at, // it already happened
-        meta: withMentions(null, await extractMentions(db, note)) ?? null,
+        meta: withMentions(null, await extractMentions(db, note)),
       })
       .select("id")
       .single();
@@ -527,7 +527,7 @@ export async function POST(req: NextRequest) {
       subject: title ? `📝 ${title}` : null,
       body: body.note.trim(),
       actor: user.email,
-      meta: withMentions(null, await extractMentions(db, body.note)) ?? null,
+      meta: withMentions(null, await extractMentions(db, body.note)),
     });
     if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
     if (canWriteThrough) {

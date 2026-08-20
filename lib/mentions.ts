@@ -42,8 +42,12 @@ export async function extractMentions(db: SupabaseClient, text: string | null | 
   return [...out];
 }
 
-/** Merge mentions into an activity meta object (returns undefined if none and no prior meta). */
-export function withMentions(meta: Record<string, unknown> | null | undefined, mentions: string[]): Record<string, unknown> | undefined {
-  if (mentions.length === 0) return (meta ?? undefined) as Record<string, unknown> | undefined;
+/**
+ * Merge mentions into an activity meta object. ALWAYS returns an object —
+ * crm_activities.meta is NOT NULL (default '{}'), so callers must never
+ * write null (that broke every note/log insert for a day).
+ */
+export function withMentions(meta: Record<string, unknown> | null | undefined, mentions: string[]): Record<string, unknown> {
+  if (mentions.length === 0) return (meta ?? {}) as Record<string, unknown>;
   return { ...(meta ?? {}), mentions };
 }
