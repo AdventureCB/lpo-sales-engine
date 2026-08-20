@@ -261,6 +261,29 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   // AI profile for the current lead — surfaced up from the embedded deal view.
   // Summary shows in the lead card; confidence/archetypes in the right panel.
   const [leadProfile, setLeadProfile] = useState<{ profile: AiProfile | null; stale: boolean; building: boolean }>({ profile: null, stale: false, building: false });
+
+  // Rep correction from the dialer card: pin server-side + drop locally.
+  const correctProfile = (op: string, key: string) => {
+    const dealId = lead?.crmDealId;
+    if (!dealId) return;
+    void fetch("/api/ai/profile-correction", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dealId, op, key }),
+    }).catch(() => {});
+    setLeadProfile((lp) => {
+      const p: any = lp.profile;
+      if (!p) return lp;
+      const next = { ...p };
+      if (op === "archetype_wrong") next.archetypes = (p.archetypes ?? []).filter((a: any) => a.key !== key);
+      if (op === "tag_remove") next.tags = (p.tags ?? []).filter((t: string) => t.toLowerCase() !== key.toLowerCase());
+      if (op === "attribute_clear") {
+        next.attributes = { ...(p.attributes ?? {}) };
+        delete next.attributes[key];
+      }
+      return { ...lp, profile: next };
+    });
+  };
   const handleProfile = useCallback((p: { profile: AiProfile | null; stale: boolean; building: boolean }) => setLeadProfile(p), []);
   const [aiExpanded, setAiExpanded] = useState(false);
   const [aiRefreshing, setAiRefreshing] = useState(false);
@@ -1605,8 +1628,11 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                     <div>
                       {(p.archetypes ?? []).slice(0, 4).map((a) => (
                         <div key={a.key} style={{ marginBottom: 6 }} title={(a.evidence ?? []).join(" · ")}>
-                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 2 }}>
-                            <span style={{ fontWeight: 600 }}>{a.name}</span>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: 12.5, marginBottom: 2 }}>
+                            <span style={{ fontWeight: 600 }}>
+                              {a.name}{" "}
+                              <button title="Not a fit — the AI won't use this archetype again" onClick={() => correctProfile("archetype_wrong", a.key)} style={{ border: "none", background: "none", color: "var(--text-3)", cursor: "pointer", fontSize: 11, padding: "0 2px", lineHeight: 1 }}>✕</button>
+                            </span>
                             <span style={{ color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>{Math.round(a.pct)}%</span>
                           </div>
                           <div style={{ height: 6, borderRadius: 3, background: "var(--border-soft)", overflow: "hidden" }}>
@@ -1625,14 +1651,18 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                         {tags.length > 0 && (
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: attrs.length ? 8 : 0 }}>
                             {tags.map((t) => (
-                              <span key={t} className="chip stage" style={{ background: "var(--accent-2-soft)", color: "var(--text-1)", fontSize: 12 }}>#{t}</span>
+                              <span key={t} className="chip stage" style={{ background: "var(--accent-2-soft)", color: "var(--text-1)", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 3 }}>
+                                #{t}
+                                <button title="Wrong — never re-add this tag" onClick={() => correctProfile("tag_remove", t)} style={{ border: "none", background: "none", color: "var(--text-3)", cursor: "pointer", fontSize: 11, padding: 0, lineHeight: 1 }}>✕</button>
+                              </span>
                             ))}
                           </div>
                         )}
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                           {attrs.map(([k, v]) => (
-                            <span key={k} title={`${(v.confidence ?? 0) * 100 | 0}% confident${(v.evidence ?? []).length ? " · " + (v.evidence ?? []).join(" · ") : ""}`} className="chip stage" style={{ opacity: 0.5 + Math.min(v.confidence ?? 0.5, 1) * 0.5 }}>
+                            <span key={k} title={`${(v.confidence ?? 0) * 100 | 0}% confident${(v.evidence ?? []).length ? " · " + (v.evidence ?? []).join(" · ") : ""}`} className="chip stage" style={{ opacity: 0.5 + Math.min(v.confidence ?? 0.5, 1) * 0.5, display: "inline-flex", alignItems: "center", gap: 3 }}>
                               {humanize(k)}: <strong style={{ marginLeft: 3 }}>{v.value}</strong>
+                              <button title="Wrong — the AI won't assert this attribute again" onClick={() => correctProfile("attribute_clear", k)} style={{ border: "none", background: "none", color: "var(--text-3)", cursor: "pointer", fontSize: 11, padding: 0, lineHeight: 1 }}>✕</button>
                             </span>
                           ))}
                         </div>

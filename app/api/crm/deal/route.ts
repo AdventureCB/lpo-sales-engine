@@ -416,11 +416,29 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Primary interests — CRM-native (no Pipedrive field).
+  // Primary interests — CRM-native (no Pipedrive field). Removals are
+  // CORRECTIONS: pinned so the AI profiler never re-adds them; re-adding a
+  // chip manually lifts the pin.
   if (body.interests !== undefined) {
     const clean = [...new Set((body.interests ?? []).map((s) => s.trim()).filter(Boolean))];
+    const { data: cur } = await db.from("crm_deals").select("interests").eq("id", deal.id).maybeSingle();
+    const before = new Set(((cur?.interests as string[]) ?? []));
+    const after = new Set(clean);
+    const removed = [...before].filter((i) => !after.has(i));
+    const added = clean.filter((i) => !before.has(i));
     const { error } = await db.from("crm_deals").update({ interests: clean }).eq("id", deal.id);
     if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+    if (removed.length || added.length) {
+      const { data: prof } = await db.from("deal_profiles").select("corrections").eq("deal_id", deal.id).maybeSingle();
+      if (prof || removed.length) {
+        const corr = { ...((prof?.corrections as any) ?? {}) };
+        const cur2: string[] = Array.isArray(corr.interests_removed) ? corr.interests_removed : [];
+        corr.interests_removed = [...new Set([...cur2.filter((i: string) => !added.includes(i)), ...removed])];
+        await db
+          .from("deal_profiles")
+          .upsert({ deal_id: deal.id, corrections: corr, updated_at: new Date().toISOString() }, { onConflict: "deal_id" });
+      }
+    }
   }
 
   // Truck model — manual entry from conversation. CRM-native.

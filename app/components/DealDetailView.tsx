@@ -1788,6 +1788,33 @@ function DealProfileSection({
     [dealId, onRefreshed]
   );
 
+  // Rep correction: pin an item as wrong — display drops it immediately and
+  // the profiler never re-asserts it.
+  const correct = useCallback(
+    async (op: string, key: string) => {
+      await fetch("/api/ai/profile-correction", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dealId, op, key }),
+      }).catch(() => {});
+      onRefreshed();
+    },
+    [dealId, onRefreshed]
+  );
+
+  const xBtn = (title: string, fn: () => void) => (
+    <button
+      title={title}
+      onClick={(e) => {
+        e.stopPropagation();
+        fn();
+      }}
+      style={{ border: "none", background: "none", color: "var(--text-3)", cursor: "pointer", fontSize: 11, padding: "0 2px", lineHeight: 1 }}
+    >
+      ✕
+    </button>
+  );
+
   // Auto-build on open when the engine says it's due (enabled + eligible +
   // new activity). Runs once per mount; the server no-ops if nothing's due.
   useEffect(() => {
@@ -1842,8 +1869,10 @@ function DealProfileSection({
           <div>
             {(profile.archetypes ?? []).slice(0, 4).map((a) => (
               <div key={a.key} style={{ marginBottom: 6 }} title={(a.evidence ?? []).join(" · ")}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 2 }}>
-                  <span style={{ fontWeight: 600 }}>{a.name}</span>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: 12.5, marginBottom: 2 }}>
+                  <span style={{ fontWeight: 600 }}>
+                    {a.name} {xBtn("Not a fit — the AI won't use this archetype again", () => void correct("archetype_wrong", a.key))}
+                  </span>
                   <span style={{ color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>{Math.round(a.pct)}%</span>
                 </div>
                 <div style={{ height: 6, borderRadius: 3, background: "var(--border-soft)", overflow: "hidden" }}>
@@ -1859,8 +1888,8 @@ function DealProfileSection({
           {(profile.tags ?? []).length > 0 && (
             <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
               {profile.tags!.map((t) => (
-                <span key={t} className="chip stage" style={{ background: "var(--accent-2-soft)", color: "var(--text-1)", fontSize: 12 }}>
-                  #{t}
+                <span key={t} className="chip stage" style={{ background: "var(--accent-2-soft)", color: "var(--text-1)", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 3 }}>
+                  #{t} {xBtn("Wrong — never re-add this tag", () => void correct("tag_remove", t))}
                 </span>
               ))}
             </div>
@@ -1876,9 +1905,10 @@ function DealProfileSection({
                   key={k}
                   title={`${(v.confidence ?? 0) * 100 | 0}% confident${(v.evidence ?? []).length ? " · " + (v.evidence ?? []).join(" · ") : ""}`}
                   className="chip stage"
-                  style={{ opacity: 0.5 + Math.min(v.confidence ?? 0.5, 1) * 0.5 }}
+                  style={{ opacity: 0.5 + Math.min(v.confidence ?? 0.5, 1) * 0.5, display: "inline-flex", alignItems: "center", gap: 3 }}
                 >
                   {humanize(k)}: <strong style={{ marginLeft: 3 }}>{v.value}</strong>
+                  {xBtn("Wrong — the AI won't assert this attribute again", () => void correct("attribute_clear", k))}
                 </span>
               ))}
           </div>

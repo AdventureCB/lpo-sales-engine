@@ -388,6 +388,23 @@ export async function extractProfile(
         transcriptsToSend.map((t, i) => `--- Call ${i + 1} (${(t.at ?? "").slice(0, 10)}) ---\n${t.text}`).join("\n\n")
       : "\n# CALL TRANSCRIPTS\nNone yet.",
   ];
+  // Rep corrections are authoritative — the model is told, AND the output is
+  // hard-enforced after the call (belt and suspenders).
+  const corr = (prior?.corrections ?? {}) as {
+    archetypes_wrong?: string[];
+    attributes_cleared?: string[];
+    tags_removed?: string[];
+    interests_removed?: string[];
+  };
+  const corrLines = [
+    corr.archetypes_wrong?.length && `- NOT these archetypes (rep marked wrong): ${corr.archetypes_wrong.join(", ")} — exclude them.`,
+    corr.attributes_cleared?.length && `- Do NOT assert these attributes (rep cleared them as wrong): ${corr.attributes_cleared.join(", ")}.`,
+    corr.tags_removed?.length && `- Never re-add these tags: ${corr.tags_removed.join(", ")}.`,
+    corr.interests_removed?.length && `- Never re-add these interests: ${corr.interests_removed.join(", ")}.`,
+  ].filter(Boolean) as string[];
+  if (corrLines.length) {
+    userParts.unshift(`# REP CORRECTIONS (authoritative — a human verified these; never contradict)\n${corrLines.join("\n")}`);
+  }
   if (prior) {
     userParts.unshift(
       `# PRIOR PROFILE (reconcile against new evidence; keep stable high-confidence reads; MERGE tags; re-emit ALL fields)\n` +
@@ -411,14 +428,25 @@ export async function extractProfile(
   await logAiUsage(db, { dealId, task: prior ? "revalidate" : "extract", tier, call });
 
   const out = call.input;
-  // Normalize attributes array → { key: {value, confidence, evidence} } map.
+  // Normalize attributes array → { key: {value, confidence, evidence} } map,
+  // enforcing rep corrections: cleared attributes never re-assert.
+  const clearedSet = new Set(corr.attributes_cleared ?? []);
   const attrMap: Record<string, any> = {};
-  for (const a of out.attributes ?? []) if (a.key) attrMap[a.key] = { value: a.value, confidence: a.confidence, evidence: a.evidence ?? [] };
+  for (const a of out.attributes ?? []) {
+    if (a.key && !clearedSet.has(a.key)) attrMap[a.key] = { value: a.value, confidence: a.confidence, evidence: a.evidence ?? [] };
+  }
 
   // Merge tags with the prior set (belt-and-suspenders — the model is also
-  // told to merge). Dedup, lowercase, cap.
+  // told to merge). Dedup, lowercase, cap; rep-removed tags never return.
+  const removedTags = new Set((corr.tags_removed ?? []).map((t) => t.toLowerCase()));
   const priorTags: string[] = Array.isArray(prior?.tags) ? prior!.tags : [];
-  const tags = [...new Set([...priorTags, ...((out.tags ?? []) as string[])].map((t) => String(t).trim().toLowerCase()).filter(Boolean))].slice(0, 40);
+  const tags = [...new Set([...priorTags, ...((out.tags ?? []) as string[])].map((t) => String(t).trim().toLowerCase()).filter(Boolean))]
+    .filter((t) => !removedTags.has(t))
+    .slice(0, 40);
+
+  // Rep-marked-wrong archetypes are hard-excluded no matter what came back.
+  const wrongSet = new Set(corr.archetypes_wrong ?? []);
+  if (Array.isArray(out.archetypes)) out.archetypes = out.archetypes.filter((a: any) => !wrongSet.has(a.key));
 
   // Carry forward confidence / data_sufficiency if a reconcile omitted them,
   // so an incremental run never blanks out fields the deal already had.
@@ -428,7 +456,9 @@ export async function extractProfile(
   const row = {
     deal_id: dealId,
     attributes: Object.keys(attrMap).length ? attrMap : (prior?.attributes ?? {}),
-    archetypes: (out.archetypes?.length ? out.archetypes : prior?.archetypes ?? []).sort((a: any, b: any) => (b.pct ?? 0) - (a.pct ?? 0)),
+    archetypes: ((out.archetypes?.length ? out.archetypes : prior?.archetypes ?? []) as any[])
+      .filter((a: any) => !wrongSet.has(a.key))
+      .sort((a: any, b: any) => (b.pct ?? 0) - (a.pct ?? 0)),
     tags,
     summary: out.summary ?? prior?.summary ?? null,
     next_action: nextAction,
@@ -445,8 +475,12 @@ export async function extractProfile(
   if (error) return { ran: false, reason: `save failed: ${error.message}` };
 
   // Write interests back to the deal: UNION of what's on file (rep-verified —
-  // never removed) and the model's catalog-validated picks.
-  const validPicks = ((out.interests ?? []) as string[]).filter((i) => (INTERESTS as readonly string[]).includes(i));
+  // never removed) and the model's catalog-validated picks. Interests a rep
+  // explicitly removed stay removed.
+  const blockedInterests = new Set(corr.interests_removed ?? []);
+  const validPicks = ((out.interests ?? []) as string[]).filter(
+    (i) => (INTERESTS as readonly string[]).includes(i) && !blockedInterests.has(i)
+  );
   const merged = [...new Set([...inputs.interestsOnFile, ...validPicks])];
   if (merged.length > inputs.interestsOnFile.length) {
     await db.from("crm_deals").update({ interests: merged, updated_at: new Date().toISOString() }).eq("id", dealId);
