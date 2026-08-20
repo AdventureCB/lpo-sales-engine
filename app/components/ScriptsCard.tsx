@@ -49,6 +49,24 @@ export function ScriptsCard({
   const [busy, setBusy] = useState<string | null>(null); // "call" | "email" | "sms"
   const [err, setErr] = useState<string | null>(null);
   const fetchedFor = useRef<string | null>(null);
+  // Theme steering (hybrid model: stable catalog, deal-ranked ordering).
+  const [themes, setThemes] = useState<{ key: string; name: string; intent: string | null; channels: string[]; suggested: boolean }[] | null>(null);
+  const [picker, setPicker] = useState<"email" | "sms" | null>(null); // which channel's picker is open
+  const [theme, setTheme] = useState<string | null>(null); // selected chip (null = auto)
+  const [direction, setDirection] = useState("");
+  const [draftIds, setDraftIds] = useState<{ email?: string; sms?: string }>({});
+  const [thumbed, setThumbed] = useState<{ email?: boolean; sms?: boolean }>({});
+  const [noteFor, setNoteFor] = useState<"email" | "sms" | null>(null);
+  const [thumbNote, setThumbNote] = useState("");
+
+  const loadThemes = async () => {
+    if (themes) return;
+    try {
+      const r = await fetch(`/api/ai/themes?dealId=${dealId}`);
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) setThemes(d.themes ?? []);
+    } catch {}
+  };
 
   const gen = async (kind: "call" | "email" | "sms", force = false) => {
     setBusy(kind);
@@ -57,18 +75,46 @@ export function ScriptsCard({
       const r = await fetch("/api/ai/script", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dealId, kind, force }),
+        body: JSON.stringify({
+          dealId,
+          kind,
+          force,
+          ...(kind !== "call" && theme ? { theme } : {}),
+          ...(kind !== "call" && direction.trim() ? { direction: direction.trim() } : {}),
+        }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || d.error) throw new Error(d.error ?? `HTTP ${r.status}`);
       if (kind === "call") setCall(d.script);
       else if (kind === "email") setEmail(d.script);
       else setSms(d.script);
+      if (kind !== "call" && d.draftId) setDraftIds((s) => ({ ...s, [kind]: d.draftId }));
+      if (kind !== "call") {
+        setThumbed((s) => ({ ...s, [kind]: false }));
+        setPicker(null);
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
     }
+  };
+
+  const reportDraft = (kind: "email" | "sms", action: "used" | "thumbs", note?: string) => {
+    const draftId = draftIds[kind];
+    if (!draftId) return;
+    void fetch("/api/ai/draft-event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ draftId, action, ...(action === "thumbs" ? { thumbs: "down", note } : {}) }),
+    }).catch(() => {});
+  };
+
+  const openPicker = (kind: "email" | "sms") => {
+    void loadThemes();
+    setPicker(kind);
+    setTheme(null);
+    setDirection("");
   };
 
   // The dialer preload already generated (and cached) the call script — this
@@ -86,15 +132,24 @@ export function ScriptsCard({
     setEmail(null);
     setSms(null);
     setErr(null);
+    setThemes(null);
+    setPicker(null);
+    setTheme(null);
+    setDirection("");
+    setDraftIds({});
+    setThumbed({});
+    setNoteFor(null);
     fetchedFor.current = null;
   }, [dealId]);
 
   const useEmail = () => {
     if (!email) return;
+    reportDraft("email", "used");
     window.dispatchEvent(new CustomEvent("lpo:compose", { detail: { dealId, channel: "email", subject: email.subject, body: email.body } }));
   };
   const useSms = () => {
     if (!sms || !phone) return;
+    reportDraft("sms", "used");
     openChat({ phone, name: contactName, dealId, draft: sms.body });
   };
 
@@ -184,32 +239,130 @@ export function ScriptsCard({
             </div>
           )}
 
-          {/* Drafts — generated individually, on purpose */}
+          {/* Drafts — generated individually, on purpose. Button → theme picker → generate. */}
           <div style={{ borderTop: "1px solid var(--border-soft)", paddingTop: 10, display: "grid", gap: 8 }}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button className="btn" style={{ padding: "6px 12px", fontSize: 13 }} disabled={!hasEmail || busy === "email"} title={hasEmail ? "Draft an email for this buyer" : "No email on contact"} onClick={() => void gen("email", !!email)}>
+              <button className="btn" style={{ padding: "6px 12px", fontSize: 13 }} disabled={!hasEmail || busy === "email"} title={hasEmail ? "Draft an email for this buyer" : "No email on contact"} onClick={() => (picker === "email" ? setPicker(null) : openPicker("email"))}>
                 {busy === "email" ? "Drafting…" : email ? "↻ Redraft email" : "✉️ Draft email"}
               </button>
-              <button className="btn" style={{ padding: "6px 12px", fontSize: 13 }} disabled={!phone || busy === "sms"} title={phone ? "Draft a text for this buyer" : "No phone on contact"} onClick={() => void gen("sms", !!sms)}>
+              <button className="btn" style={{ padding: "6px 12px", fontSize: 13 }} disabled={!phone || busy === "sms"} title={phone ? "Draft a text for this buyer" : "No phone on contact"} onClick={() => (picker === "sms" ? setPicker(null) : openPicker("sms"))}>
                 {busy === "sms" ? "Drafting…" : sms ? "↻ Redraft text" : "💬 Draft text"}
               </button>
             </div>
+
+            {picker && (
+              <div style={{ background: "var(--surface-2)", borderRadius: 8, padding: "10px 12px", display: "grid", gap: 8 }}>
+                <div style={{ fontSize: 12, color: "var(--text-3)" }}>Angle for this {picker === "email" ? "email" : "text"}:</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <button
+                    className="chip stage"
+                    style={{ cursor: "pointer", fontSize: 12.5, border: theme === null ? "1px solid var(--accent)" : "1px solid transparent", background: theme === null ? "var(--accent-soft)" : undefined }}
+                    onClick={() => setTheme(null)}
+                  >
+                    ✨ Auto
+                  </button>
+                  {(themes ?? [])
+                    .filter((t) => (t.channels ?? []).includes(picker))
+                    .slice(0, 6)
+                    .map((t) => (
+                      <button
+                        key={t.key}
+                        className="chip stage"
+                        title={t.intent ?? undefined}
+                        style={{ cursor: "pointer", fontSize: 12.5, border: theme === t.key ? "1px solid var(--accent)" : "1px solid transparent", background: theme === t.key ? "var(--accent-soft)" : undefined }}
+                        onClick={() => setTheme(t.key)}
+                      >
+                        {t.suggested ? "⭐ " : ""}{t.name}
+                      </button>
+                    ))}
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input
+                    className="vmsel"
+                    style={{ flex: 1, fontSize: 12.5, padding: "6px 9px" }}
+                    placeholder="Anything specific? (optional — e.g. mention the Tacoma bed length)"
+                    value={direction}
+                    maxLength={300}
+                    onChange={(e) => setDirection(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && void gen(picker)}
+                  />
+                  <button className="btn primary" style={{ padding: "6px 14px", fontSize: 13 }} disabled={busy === picker} onClick={() => void gen(picker)}>
+                    {busy === picker ? "…" : "Generate"}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {email && (
               <div style={{ background: "var(--surface-2)", borderRadius: 8, padding: "10px 12px", fontSize: 13.5 }}>
                 <b>{email.subject}</b>
                 <div style={{ whiteSpace: "pre-wrap", marginTop: 6, color: "var(--text-2)" }}>{email.body}</div>
-                <button className="btn primary" style={{ padding: "5px 14px", fontSize: 13, marginTop: 8 }} onClick={useEmail}>
-                  Use in email composer →
-                </button>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+                  <button className="btn primary" style={{ padding: "5px 14px", fontSize: 13 }} onClick={useEmail}>
+                    Use in email composer →
+                  </button>
+                  <button
+                    className="btn ghost"
+                    style={{ padding: "4px 9px", fontSize: 12.5, opacity: thumbed.email ? 0.5 : 1 }}
+                    disabled={thumbed.email}
+                    title="Not good — tell the system why (optional)"
+                    onClick={() => { setNoteFor("email"); setThumbNote(""); }}
+                  >
+                    👎
+                  </button>
+                </div>
               </div>
             )}
             {sms && (
               <div style={{ background: "var(--surface-2)", borderRadius: 8, padding: "10px 12px", fontSize: 13.5 }}>
                 <div style={{ whiteSpace: "pre-wrap", color: "var(--text-2)" }}>{sms.body}</div>
-                <button className="btn primary" style={{ padding: "5px 14px", fontSize: 13, marginTop: 8 }} disabled={!phone} onClick={useSms}>
-                  Use in text chat →
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+                  <button className="btn primary" style={{ padding: "5px 14px", fontSize: 13 }} disabled={!phone} onClick={useSms}>
+                    Use in text chat →
+                  </button>
+                  <button
+                    className="btn ghost"
+                    style={{ padding: "4px 9px", fontSize: 12.5, opacity: thumbed.sms ? 0.5 : 1 }}
+                    disabled={thumbed.sms}
+                    title="Not good — tell the system why (optional)"
+                    onClick={() => { setNoteFor("sms"); setThumbNote(""); }}
+                  >
+                    👎
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {noteFor && (
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input
+                  className="vmsel"
+                  style={{ flex: 1, fontSize: 12.5, padding: "6px 9px" }}
+                  placeholder="What's off? (optional — helps the system learn)"
+                  value={thumbNote}
+                  autoFocus
+                  maxLength={300}
+                  onChange={(e) => setThumbNote(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      reportDraft(noteFor, "thumbs", thumbNote.trim() || undefined);
+                      setThumbed((s) => ({ ...s, [noteFor]: true }));
+                      setNoteFor(null);
+                    }
+                  }}
+                />
+                <button
+                  className="btn"
+                  style={{ padding: "5px 12px", fontSize: 12.5 }}
+                  onClick={() => {
+                    reportDraft(noteFor, "thumbs", thumbNote.trim() || undefined);
+                    setThumbed((s) => ({ ...s, [noteFor]: true }));
+                    setNoteFor(null);
+                  }}
+                >
+                  Send
                 </button>
+                <button className="btn ghost" style={{ padding: "5px 9px", fontSize: 12.5 }} onClick={() => setNoteFor(null)}>✕</button>
               </div>
             )}
           </div>

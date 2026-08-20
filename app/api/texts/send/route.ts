@@ -138,16 +138,25 @@ export async function POST(req: NextRequest) {
 
   // Deal-page sends land on the timeline immediately.
   if (body.crmDealId || body.contactId) {
-    await db.from("crm_activities").insert({
-      deal_id: body.crmDealId ?? null,
-      contact_id: body.contactId ?? null,
-      type: "sms",
-      subject: "💬 Text sent",
-      body: (content || "📷 photo").slice(0, 500),
-      actor: user.email,
-      occurred_at: new Date().toISOString(),
-      ...(mediaUrls.length ? { meta: { media: mediaUrls } } : {}),
-    });
+    const { data: act } = await db
+      .from("crm_activities")
+      .insert({
+        deal_id: body.crmDealId ?? null,
+        contact_id: body.contactId ?? null,
+        type: "sms",
+        subject: "💬 Text sent",
+        body: (content || "📷 photo").slice(0, 500),
+        actor: user.email,
+        occurred_at: new Date().toISOString(),
+        ...(mediaUrls.length ? { meta: { media: mediaUrls } } : {}),
+      })
+      .select("id")
+      .single();
+    // Feedback loop: tie the send back to the AI draft used (best-effort).
+    if (body.crmDealId && content) {
+      const { linkDraftToSend } = await import("@/lib/ai-scripts");
+      await linkDraftToSend(db, body.crmDealId, "sms", act?.id ?? null, content);
+    }
   }
 
   return NextResponse.json({

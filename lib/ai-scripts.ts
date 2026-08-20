@@ -248,15 +248,35 @@ export async function generateDraft(
   dealId: string,
   kind: "email" | "sms",
   repName: string | null,
-  opts: { force?: boolean } = {}
-): Promise<{ ok: boolean; reason?: string; draft?: any; cached?: boolean }> {
+  opts: { force?: boolean; theme?: string | null; direction?: string | null } = {}
+): Promise<{ ok: boolean; reason?: string; draft?: any; cached?: boolean; draftId?: string }> {
   const cfg = await loadAiConfig(db);
   const ctx = await loadDealContext(db, dealId);
   if (!ctx) return { ok: false, reason: "deal not found" };
   const version = ctx.profile?.version ?? 0;
-  const cached = (ctx.profile?.scripts as any)?.[kind];
-  if (cached && (ctx.profile?.scripts as any)?.[`${kind}_version`] === version && !opts.force) {
-    return { ok: true, draft: cached, cached: true };
+
+  // Theme + capped style rules (both admin-curated; see migration 00101).
+  const themeKey = opts.theme?.trim() || null;
+  const direction = opts.direction?.trim() || null;
+  let theme: { key: string; name: string; prompt_direction: string } | null = null;
+  if (themeKey) {
+    const { data: t } = await db.from("comm_themes").select("key, name, prompt_direction").eq("key", themeKey).eq("enabled", true).maybeSingle();
+    theme = t ?? null;
+  }
+  const { data: rules } = await db
+    .from("draft_style_rules")
+    .select("rule")
+    .eq("enabled", true)
+    .in("channel", ["all", kind])
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  // Cache per theme (freeform direction always regenerates — it varies).
+  const cacheKey = direction ? null : theme ? `${kind}~${theme.key}` : kind;
+  const cached = cacheKey ? (ctx.profile?.scripts as any)?.[cacheKey] : null;
+  if (cacheKey && cached && (ctx.profile?.scripts as any)?.[`${cacheKey}_version`] === version && !opts.force) {
+    const draftId = await logDraftEvent(db, { dealId, kind, themeKey: theme?.key ?? null, direction: null, rep: repName, body: cached.body });
+    return { ok: true, draft: cached, cached: true, draftId };
   }
   if (!(await budgetOk(db, cfg.monthly_budget_cents))) return { ok: false, reason: "monthly AI budget reached" };
 
@@ -267,20 +287,126 @@ export async function generateDraft(
       COMPANY,
       `You draft ${kind === "email" ? "a sales email" : "a text message"} for a specific buyer. Write in the TEAM'S VOICE — study the macro exemplars below for tone, length, and structure, then write something original tailored to THIS buyer's profile, interests, and where the conversation stands. StoryBrand posture: buyer is the hero, we're the guide; one clear call to action.`,
       commContext,
+      (rules ?? []).length ? `## Standing style rules (learned from rep feedback — always apply)\n${(rules ?? []).map((r) => `- ${r.rule}`).join("\n")}` : "",
       `Rules: use the buyer's real first name; reference only true context (never invent conversations); link an asset ONLY when it genuinely helps this buyer next${kind === "email" ? "; NO sign-off — the rep's signature is appended automatically" : "; keep it under ~320 characters, texting register, no 'Dear'"}.`,
-    ].join("\n\n"),
+    ].filter(Boolean).join("\n\n"),
     user: [
       `Rep sending: ${repName ?? "the rep"}`,
+      theme ? `\n# THEME (the rep chose this angle — follow it)\n${theme.name}: ${theme.prompt_direction}` : "",
+      direction ? `\n# REP DIRECTION (specific ask for this draft — honor it exactly)\n${direction.slice(0, 400)}` : "",
       `\n# BUYER PROFILE\n${ctx.profileText}`,
       `\n# DEAL\n${ctx.inputs.header}`,
       `\n# SIGNALS\n${ctx.inputs.signalText}`,
       `\n# CALL HISTORY\n${ctx.inputs.callText}`,
       ctx.inputs.notes.length ? `\n# RECENT NOTES\n${ctx.inputs.notes.slice(-5).join("\n")}` : "",
-    ].join("\n"),
+    ].filter(Boolean).join("\n"),
     tool: kind === "email" ? EMAIL_TOOL : SMS_TOOL,
     maxTokens: 700,
   });
   await logAiUsage(db, { dealId, task: `draft_${kind}`, tier: cfg.models.drafts ?? "sonnet", call });
-  await saveScript(db, dealId, ctx.profile, kind, call.input, version);
-  return { ok: true, draft: call.input };
+  if (cacheKey) await saveScript(db, dealId, ctx.profile, cacheKey, call.input, version);
+  const draftId = await logDraftEvent(db, { dealId, kind, themeKey: theme?.key ?? null, direction, rep: repName, body: call.input.body });
+  return { ok: true, draft: call.input, draftId };
+}
+
+/** One ledger row per generated draft — the feedback loop's raw material. */
+async function logDraftEvent(
+  db: SupabaseClient,
+  e: { dealId: string; kind: string; themeKey: string | null; direction: string | null; rep: string | null; body: unknown }
+): Promise<string | undefined> {
+  try {
+    const { data } = await db
+      .from("draft_events")
+      .insert({
+        deal_id: e.dealId,
+        kind: e.kind,
+        theme_key: e.themeKey,
+        direction: e.direction,
+        rep: e.rep,
+        draft_body: String(e.body ?? "").slice(0, 4000),
+      })
+      .select("id")
+      .single();
+    return data?.id;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Word-overlap similarity (0-1) between the draft and what was actually sent. */
+export function draftSimilarity(a: string, b: string): number {
+  const words = (s: string) => new Set(s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 2));
+  const wa = words(a);
+  const wb = words(b);
+  if (!wa.size || !wb.size) return 0;
+  let inter = 0;
+  for (const w of wa) if (wb.has(w)) inter++;
+  return inter / Math.max(wa.size, wb.size);
+}
+
+/**
+ * Link a just-sent email/text back to the draft the rep used (45-min window)
+ * and score how much it was edited. Best-effort — never fails the send.
+ */
+export async function linkDraftToSend(db: SupabaseClient, dealId: string, kind: "email" | "sms", sentActivityId: string | null, sentBody: string): Promise<void> {
+  try {
+    const since = new Date(Date.now() - 45 * 60_000).toISOString();
+    const { data: ev } = await db
+      .from("draft_events")
+      .select("id, draft_body")
+      .eq("deal_id", dealId)
+      .eq("kind", kind)
+      .is("sent_activity_id", null)
+      .not("used_at", "is", null)
+      .gte("generated_at", since)
+      .order("generated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!ev) return;
+    await db
+      .from("draft_events")
+      .update({ sent_activity_id: sentActivityId, sent_similarity: draftSimilarity(ev.draft_body ?? "", sentBody) })
+      .eq("id", ev.id);
+  } catch {}
+}
+
+/**
+ * Rank the theme catalog for THIS deal — zero-token heuristic on stage, deal
+ * age, silence, source, and the profile's next_action. Keys stay stable so
+ * feedback/stats attach; only the ordering is deal-aware.
+ */
+export async function suggestThemes(db: SupabaseClient, dealId: string) {
+  const [{ data: themes }, { data: deal }, { data: profile }] = await Promise.all([
+    db.from("comm_themes").select("key, name, intent, channels, sort_order").eq("enabled", true).order("sort_order"),
+    db.from("crm_deals").select("id, title, created_at, last_activity_at, value_cents, deal_sources ( name )").eq("id", dealId).maybeSingle(),
+    db.from("deal_profiles").select("next_action, tags, corrections").eq("deal_id", dealId).maybeSingle(),
+  ]);
+  if (!themes?.length) return [];
+  const now = Date.now();
+  const daysSilent = deal?.last_activity_at ? (now - new Date(deal.last_activity_at).getTime()) / 86_400_000 : 99;
+  const ageDays = deal?.created_at ? (now - new Date(deal.created_at).getTime()) / 86_400_000 : 0;
+  const hay = [
+    deal?.title ?? "",
+    (deal as any)?.deal_sources?.name ?? "",
+    (profile?.next_action as any)?.action ?? "",
+    ...((profile?.tags as string[]) ?? []),
+  ].join(" ").toLowerCase();
+
+  const score: Record<string, number> = {};
+  for (const t of themes) score[t.key] = 0;
+  const bump = (k: string, n: number) => {
+    if (k in score) score[k] += n;
+  };
+  if (daysSilent >= 2 && daysSilent <= 14) bump("quick_nudge", 3);
+  if (daysSilent < 2) bump("recap", 3);
+  if (daysSilent > 21) bump("reengage", 3);
+  if (daysSilent > 30 && ageDays > 60) bump("breakup", 4);
+  if (/build|quote|config|cart/.test(hay)) bump("build_followup", 3);
+  if (/financ|synchrony|payment|budget|price|afford/.test(hay)) bump("financing", 3);
+  if (/call|schedule|phone|talk/.test(hay)) bump("schedule", 2);
+  if (/object|concern|hesita|spouse|wife|husband|think about/.test(hay)) bump("objection", 3);
+  if ((deal?.value_cents ?? 0) >= 700_000) bump("financing", 1);
+
+  const ranked = [...themes].sort((a, b) => score[b.key] - score[a.key] || a.sort_order - b.sort_order);
+  return ranked.map((t, i) => ({ key: t.key, name: t.name, intent: t.intent, channels: t.channels, suggested: i === 0 && score[t.key] > 0 }));
 }

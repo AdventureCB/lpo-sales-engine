@@ -83,17 +83,28 @@ export async function POST(req: NextRequest) {
 
   // Timeline immediately; pd_key matches the sweep's dedupe key so the
   // 15-min Gmail sync won't double-log it.
-  await db.from("crm_activities").insert({
-    pd_key: `gmail:${account.google_email}:${messageId}`,
-    deal_id: body.dealId ?? null,
-    contact_id: body.contactId ?? null,
-    type: "email",
-    subject: `📤 ${subject}`,
-    body: bodyPlain.slice(0, 50_000),
-    actor: user.email,
-    occurred_at: new Date().toISOString(),
-    meta: { gmail: true, direction: "outbound" },
-  });
+  const { data: act } = await db
+    .from("crm_activities")
+    .insert({
+      pd_key: `gmail:${account.google_email}:${messageId}`,
+      deal_id: body.dealId ?? null,
+      contact_id: body.contactId ?? null,
+      type: "email",
+      subject: `📤 ${subject}`,
+      body: bodyPlain.slice(0, 50_000),
+      actor: user.email,
+      occurred_at: new Date().toISOString(),
+      meta: { gmail: true, direction: "outbound" },
+    })
+    .select("id")
+    .single();
+
+  // Feedback loop: tie this send back to the AI draft the rep used (if any)
+  // and score how much it was edited. Best-effort.
+  if (body.dealId) {
+    const { linkDraftToSend } = await import("@/lib/ai-scripts");
+    await linkDraftToSend(db, body.dealId, "email", act?.id ?? null, bodyPlain);
+  }
 
   return NextResponse.json({ ok: true, messageId });
 }

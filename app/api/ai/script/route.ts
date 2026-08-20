@@ -15,7 +15,7 @@ export const maxDuration = 60;
 export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  let body: { dealId?: string; kind?: "call" | "email" | "sms"; force?: boolean };
+  let body: { dealId?: string; kind?: "call" | "email" | "sms"; force?: boolean; theme?: string; direction?: string };
   try {
     body = await req.json();
   } catch {
@@ -28,7 +28,17 @@ export async function POST(req: NextRequest) {
   const result =
     body.kind === "call"
       ? await generateCallScript(db, body.dealId, { force: body.force === true })
-      : await generateDraft(db, body.dealId, body.kind as "email" | "sms", user.repName, { force: body.force === true });
+      : await generateDraft(db, body.dealId, body.kind as "email" | "sms", user.repName, {
+          force: body.force === true,
+          theme: body.theme ?? null,
+          direction: body.direction ?? null,
+        });
   if (!result.ok) return NextResponse.json({ error: result.reason ?? "failed" }, { status: 422 });
-  return NextResponse.json({ ok: true, kind: body.kind, cached: result.cached === true, script: (result as any).script ?? (result as any).draft });
+  return NextResponse.json({
+    ok: true,
+    kind: body.kind,
+    cached: result.cached === true,
+    script: (result as any).script ?? (result as any).draft,
+    draftId: (result as any).draftId ?? null,
+  });
 }
