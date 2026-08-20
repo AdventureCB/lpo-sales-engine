@@ -154,6 +154,24 @@ export function setOutboundHandler(h: ((call: any, callState: string) => void) |
   outboundHandler = h;
 }
 
+/**
+ * Aux windows (?aux=1, sticky per-window via sessionStorage) NEVER register
+ * the softphone — one SIP registration per rep, owned by the main window.
+ * Two live registrations of the same credential double-ring and race answers.
+ */
+export function isAuxWindow(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    if (new URLSearchParams(window.location.search).has("aux")) {
+      sessionStorage.setItem("lpoAux", "1");
+      return true;
+    }
+    return sessionStorage.getItem("lpoAux") === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function phoneWanted(): boolean {
   try {
     return localStorage.getItem("dialMethod") === "browser";
@@ -169,6 +187,7 @@ export function phoneWanted(): boolean {
  * fall straight to voicemail. Cached 30 min per tab.
  */
 export async function phoneRequired(): Promise<boolean> {
+  if (isAuxWindow()) return false;
   if (phoneWanted()) return true;
   try {
     const cached = sessionStorage.getItem("telnyxInbound");
@@ -191,6 +210,7 @@ export async function phoneRequired(): Promise<boolean> {
 }
 
 export async function ensurePhone(): Promise<any> {
+  if (isAuxWindow()) throw new Error("Phone lives in your main window — dial from there");
   if (readyPromise) return readyPromise;
   state.conn = "connecting…";
   emit();

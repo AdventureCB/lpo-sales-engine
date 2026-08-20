@@ -30,6 +30,7 @@ export function ChatDock() {
     const params = new URLSearchParams({ phone: c.phone });
     if (c.name) params.set("name", c.name);
     if (c.dealId) params.set("dealId", c.dealId);
+    params.set("aux", "1"); // popout windows never register the softphone
     const url = `/texts/chat?${params}`;
     const label = `chat-${c.phone.replace(/\D/g, "")}`;
     // Desktop companion: the webview blocks window.open — open a real native

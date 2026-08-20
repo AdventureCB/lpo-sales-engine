@@ -3,6 +3,7 @@ import "./globals.css";
 import { PhoneDock } from "./components/PhoneDock";
 import { ActivityTracker } from "./components/ActivityTracker";
 import { ErrorReporter } from "./components/ErrorReporter";
+import { PageLock } from "./components/PageLock";
 
 export const metadata: Metadata = {
   title: "LPO Sales Engine",
@@ -31,6 +32,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* Renderless crash telemetry — WKWebView has no devtools, so this is
             how rep-side "Application error" screens become debuggable. */}
         <ErrorReporter />
+        {/* Cross-window page exclusivity — two windows never edit one page. */}
+        <PageLock />
         {children}
       </body>
     </html>

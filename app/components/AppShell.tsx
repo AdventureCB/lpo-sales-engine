@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { UserChip } from "./UserChip";
 import { RefreshButton } from "./RefreshButton";
+import { NewWindowButton } from "./NewWindowButton";
 import { NavGroup } from "./NavGroup";
 import { NotificationBell } from "./NotificationBell";
 import { ThemeToggle } from "./ThemeToggle";
@@ -106,6 +107,7 @@ export function AppShell({
               <span>Team view</span>
             </div>
           )}
+          <NewWindowButton />
           <RefreshButton />
           <ThemeToggle />
         </div>

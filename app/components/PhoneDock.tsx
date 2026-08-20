@@ -8,6 +8,7 @@ import {
   ensurePhone,
   silenceRing,
   getPhoneState,
+  isAuxWindow,
   phoneRequired,
   subscribePhone,
 } from "./phoneClient";
@@ -20,6 +21,9 @@ import {
 export function PhoneDock() {
   const router = useRouter();
   const [, rerender] = useReducer((x) => x + 1, 0);
+  // Aux windows never host the phone (state set in an effect to avoid a
+  // hydration mismatch — the flag lives in sessionStorage).
+  const [aux, setAux] = useState(false);
   const [callerInfo, setCallerInfo] = useState<{
     phone: string;
     name: string | null;
@@ -31,9 +35,11 @@ export function PhoneDock() {
   const [minimized, setMinimized] = useState(false);
 
   useEffect(() => {
+    setAux(isAuxWindow());
     const unsub = subscribePhone(rerender);
     // Connect when browser-calling is the chosen method OR this rep receives
     // inbound on a Telnyx number (inbound must ring regardless of preference).
+    // Aux windows never connect (phoneRequired is false there).
     void phoneRequired().then((w) => {
       if (w) void ensurePhone().catch(() => {});
     });
@@ -69,6 +75,8 @@ export function PhoneDock() {
   }, [incoming?.from]);
 
   const who = callerInfo?.name?.trim() || incoming?.from || "";
+
+  if (aux) return null;
 
   return (
     <>

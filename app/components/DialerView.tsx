@@ -6,6 +6,7 @@ import { ensurePhone, getPhoneState, newOutboundCall, setOutboundHandler, subscr
 import type { VmDrop } from "./VmPanel";
 import { DealDetailView, prefetchDeal, fmtWhen, BAND_COLOR, humanize, type AiProfile, type DialerDeal } from "./DealDetailView";
 import MentionInput from "./MentionInput";
+import { setExtraLock } from "./PageLock";
 
 declare global {
   interface Window {
@@ -368,6 +369,13 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const callSecRef = useRef(0);
 
   const lead = leads[leadIdx] ?? null;
+
+  // The dialer embeds the current lead's deal page — hold its page-lock so an
+  // aux window can't open the same deal and double-edit it mid-call.
+  useEffect(() => {
+    setExtraLock(lead?.crmDealId ? `/crm/deal/${lead.crmDealId}` : null);
+    return () => setExtraLock(null);
+  }, [lead?.crmDealId]);
 
   // Clear the previous lead's profile when the lead changes (the embedded view
   // re-emits onProfile once the new deal loads) + collapse the AI card.
