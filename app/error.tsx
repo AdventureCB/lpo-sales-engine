@@ -11,6 +11,21 @@ import { reportClientError } from "./components/ErrorReporter";
 export default function Error({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   useEffect(() => {
     reportClientError("boundary", error.message ?? "unknown", error.stack);
+    // Stale-deploy chunk misses (old client asking for pruned chunks after a
+    // push) heal with one reload — do it automatically, once, so reps never
+    // see this page for that case.
+    if (/chunk|dynamically imported module|import\(\)/i.test(`${error.name} ${error.message}`)) {
+      try {
+        if (!sessionStorage.getItem("chunk-reloaded")) {
+          sessionStorage.setItem("chunk-reloaded", "1");
+          window.location.reload();
+        }
+      } catch {}
+    } else {
+      try {
+        sessionStorage.removeItem("chunk-reloaded");
+      } catch {}
+    }
   }, [error]);
 
   return (
