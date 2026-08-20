@@ -12,10 +12,11 @@ import RichTextEditor, { isEmptyHtml } from "./RichTextEditor";
 import MentionInput from "./MentionInput";
 import { useRoster, ownerName } from "./useRoster";
 import { ScriptsCard } from "./ScriptsCard";
+import { CallReviewInline } from "./CallReviewCard";
 
 interface DealData {
   deal: any;
-  timeline: { id?: string; kind: string; at: string | null; title: string; body: string | null; media?: string[] | null; audio?: string | null; actor: string | null; done: boolean; due: string | null }[];
+  timeline: { id?: string; kind: string; at: string | null; title: string; body: string | null; media?: string[] | null; audio?: string | null; actor: string | null; done: boolean; due: string | null; callId?: string | null; reviewable?: boolean; reviewed?: boolean }[];
   callStats: { dials: number; answered: number; talkS: number; inbound: number } | null;
   adInfo?: { source: string | null; campaign: string | null; channel: string | null; leadCostCents: number | null } | null;
   adJourney?: {
@@ -1408,6 +1409,11 @@ export function DealDetailView({
                         <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 6 }}>
                           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
                           <audio controls preload="none" src={t.audio} style={{ width: "100%", maxWidth: 340, height: 36 }} />
+                        </div>
+                      )}
+                      {isOpen && t.reviewable && (
+                        <div onClick={(e) => e.stopPropagation()}>
+                          <CallReviewInline dealId={data.deal.id} activityId={t.callId ? null : String(t.id ?? "") || null} callId={t.callId ?? null} reviewed={!!t.reviewed} />
                         </div>
                       )}
                       {isOpen && (t.media ?? []).length > 0 && (

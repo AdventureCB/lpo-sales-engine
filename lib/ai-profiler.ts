@@ -49,7 +49,7 @@ export type AiProfilerConfig = {
   monthly_budget_cents: number; // soft cap; engine pauses new runs past it
   lazy_only: boolean; // true = only profile a deal when opened/requested (no backfill sweep)
   // Model routing per task
-  models: { extract: ModelTier; revalidate: ModelTier; deepdive: ModelTier; critic: ModelTier; call_script: ModelTier; drafts: ModelTier };
+  models: { extract: ModelTier; revalidate: ModelTier; deepdive: ModelTier; critic: ModelTier; call_script: ModelTier; drafts: ModelTier; review: ModelTier };
 };
 
 export const DEFAULT_AI_CONFIG: AiProfilerConfig = {
@@ -63,7 +63,7 @@ export const DEFAULT_AI_CONFIG: AiProfilerConfig = {
   lazy_only: true, // profile on deal-open; no upfront backfill burn
   // call_script runs per dial-cycle preload → cheap tier; drafts are
   // customer-facing prose on manual request → quality tier.
-  models: { extract: "haiku", revalidate: "haiku", deepdive: "sonnet", critic: "sonnet", call_script: "haiku", drafts: "sonnet" },
+  models: { extract: "haiku", revalidate: "haiku", deepdive: "sonnet", critic: "sonnet", call_script: "haiku", drafts: "sonnet", review: "sonnet" },
 };
 
 const CONFIG_KEY = "ai_profiler_config";

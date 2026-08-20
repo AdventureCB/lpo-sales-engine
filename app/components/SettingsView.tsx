@@ -304,7 +304,7 @@ export function AIProfilerAdmin() {
 
       <div style={{ fontSize: 13, fontWeight: 600, margin: "8px 0 4px" }}>Model per task</div>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-        {[["extract", "Extract"], ["revalidate", "Re-validate"], ["deepdive", "Deep dive"], ["critic", "Taxonomy critic"]].map(([task, label]) => (
+        {[["extract", "Extract"], ["revalidate", "Re-validate"], ["deepdive", "Deep dive"], ["critic", "Taxonomy critic"], ["review", "Call review"]].map(([task, label]) => (
           <label key={task} style={{ fontSize: 12.5, color: "var(--text-3)", display: "flex", flexDirection: "column", gap: 3 }}>
             {label}
             <select className="vmsel" value={cfg.models?.[task] ?? "haiku"} onChange={(e) => setModel(task, e.target.value)}>

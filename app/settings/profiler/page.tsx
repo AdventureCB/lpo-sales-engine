@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { AppShell } from "../../components/AppShell";
 import { AIProfilerAdmin } from "../../components/SettingsView";
 import { AiAccuracy } from "../../components/AiAccuracy";
+import { CallPatterns } from "../../components/CallPatterns";
 import { getSessionUser } from "@/lib/auth";
 
 export const metadata = { title: "AI Profiler · Settings · LPO Sales Engine" };
@@ -16,6 +17,7 @@ export default async function ProfilerSettingsPage() {
       <h2 className="viewtitle">AI Profiler</h2>
       <AIProfilerAdmin />
       <AiAccuracy />
+      <CallPatterns />
       <Link href="/settings/archetypes" className="card" style={{ display: "flex", alignItems: "center", gap: 12, maxWidth: 680, marginTop: 18, textDecoration: "none", color: "inherit" }}>
         <span style={{ fontSize: 22 }}>🧠</span>
         <div style={{ flex: 1 }}>

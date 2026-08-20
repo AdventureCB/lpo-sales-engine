@@ -76,10 +76,13 @@ export async function GET(req: NextRequest) {
           .limit(30)
       : Promise.resolve({ data: [] as any[] }),
   ]);
-  const [{ data: sources }, { data: pipelines }] = await Promise.all([
+  const [{ data: sources }, { data: pipelines }, { data: reviewRows }] = await Promise.all([
     db.from("deal_sources").select("id, name").order("sort_order").order("name"),
     db.from("crm_pipelines").select("id, name").order("sort_order").order("name"),
+    db.from("call_reviews").select("activity_id, quo_call_id").eq("deal_id", deal.id),
   ]);
+  const reviewedActs = new Set((reviewRows ?? []).map((r) => r.activity_id).filter(Boolean));
+  const reviewedCalls = new Set((reviewRows ?? []).map((r) => r.quo_call_id).filter(Boolean));
 
   const timeline = [
     ...(activities.data ?? []).map((a) => ({
@@ -92,6 +95,10 @@ export async function GET(req: NextRequest) {
       actor: a.actor,
       done: Boolean(a.done_at),
       due: a.due_at,
+      // Same "real call material" bar as the AI profiler (Quo summaries live
+      // in call bodies until the port; short dial stubs aren't reviewable).
+      reviewable: a.type === "call" && (a.body ?? "").trim().length > 120,
+      reviewed: reviewedActs.has(a.id),
     })),
     ...((calls as any).data ?? []).map((c: any) => ({
       kind: "call",
@@ -115,6 +122,9 @@ export async function GET(req: NextRequest) {
       actor: null,
       done: true,
       due: null,
+      callId: c.quo_call_id,
+      reviewable: Boolean(c.transcript && String(c.transcript).trim().length > 120),
+      reviewed: reviewedCalls.has(c.quo_call_id),
     })),
     ...((inboundSms as any).data ?? []).map((m: any) => ({
       id: `sms-in-${m.id}`,
