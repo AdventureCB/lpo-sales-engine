@@ -265,7 +265,7 @@ async function enrich(
     fetchAll((f, t) =>
       db
         .from("call_events")
-        .select("deal_id, classification, disposition, started_at, raw")
+        .select("deal_id, crm_deal_id, classification, disposition, started_at, raw")
         .eq("direction", "outgoing")
         .gte("started_at", daysAgoIso(callDays))
         .range(f, t)
@@ -323,9 +323,11 @@ async function enrich(
   }
 
   for (const ce of calls) {
-    // Match by linked Pipedrive deal id, else by any participant phone.
+    // Match by native crm deal id first (covers native deals + Telnyx rows),
+    // then linked Pipedrive deal id, else by any participant phone.
     let ids: string[] | undefined;
-    if (ce.deal_id != null && pdIdToDeal.has(ce.deal_id)) ids = [pdIdToDeal.get(ce.deal_id)!];
+    if (ce.crm_deal_id) ids = [ce.crm_deal_id];
+    else if (ce.deal_id != null && pdIdToDeal.has(ce.deal_id)) ids = [pdIdToDeal.get(ce.deal_id)!];
     else {
       const parts: string[] = ce.raw?.data?.object?.participants ?? [];
       const seen = new Set<string>();
@@ -687,7 +689,7 @@ async function customerEngagementRecency(
     fetchAll((f, t) =>
       db
         .from("call_events")
-        .select("deal_id, classification, disposition, started_at, raw")
+        .select("deal_id, crm_deal_id, classification, disposition, started_at, raw")
         .eq("direction", "outgoing")
         .gte("started_at", since)
         .range(f, t)
@@ -713,7 +715,8 @@ async function customerEngagementRecency(
 
   for (const ce of calls) {
     let ids: string[] = [];
-    if (ce.deal_id != null && pdIdToDeal.has(ce.deal_id)) ids = [pdIdToDeal.get(ce.deal_id)!];
+    if (ce.crm_deal_id) ids = [ce.crm_deal_id];
+    else if (ce.deal_id != null && pdIdToDeal.has(ce.deal_id)) ids = [pdIdToDeal.get(ce.deal_id)!];
     else {
       const parts: string[] = ce.raw?.data?.object?.participants ?? [];
       const seen = new Set<string>();

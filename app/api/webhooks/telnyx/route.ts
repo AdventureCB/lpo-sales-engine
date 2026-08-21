@@ -516,13 +516,17 @@ export async function POST(req: NextRequest) {
         if (contact) {
           const { data: deal } = await db
             .from("crm_deals")
-            .select("pipedrive_deal_id, status")
+            .select("id, pipedrive_deal_id, status")
             .eq("contact_id", contact.id)
             .order("status", { ascending: true })
             .order("updated_at", { ascending: false })
             .limit(1)
             .maybeSingle();
-          if (deal?.pipedrive_deal_id) update.deal_id = deal.pipedrive_deal_id;
+          // Native-first: link by crm id always; PD id rides along when it exists.
+          if (deal) {
+            update.crm_deal_id = deal.id;
+            if (deal.pipedrive_deal_id) update.deal_id = deal.pipedrive_deal_id;
+          }
         }
       }
       if (Object.keys(update).length > 0) {

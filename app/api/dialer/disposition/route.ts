@@ -58,22 +58,25 @@ export async function POST(req: NextRequest) {
     .limit(1)
     .maybeSingle();
 
-  // Resolve the CRM deal once — the note and next-step both hang off it.
-  const resolveCrmDeal = async (): Promise<{ id: string; contact_id: string | null } | null> => {
-    if (body.crmDealId) {
-      const { data } = await db.from("crm_deals").select("id, contact_id").eq("id", body.crmDealId).maybeSingle();
-      if (data) return data;
-    }
-    if (dealId) {
-      const { data } = await db
-        .from("crm_deals")
-        .select("id, contact_id")
-        .eq("pipedrive_deal_id", dealId)
-        .maybeSingle();
-      if (data) return data;
-    }
-    return null;
-  };
+  // Resolve the CRM deal once — the note, next-step, and call_events native
+  // key all hang off it. Memoized: several steps below need it.
+  let crmDealPromise: Promise<{ id: string; contact_id: string | null } | null> | null = null;
+  const resolveCrmDeal = (): Promise<{ id: string; contact_id: string | null } | null> =>
+    (crmDealPromise ??= (async () => {
+      if (body.crmDealId) {
+        const { data } = await db.from("crm_deals").select("id, contact_id").eq("id", body.crmDealId).maybeSingle();
+        if (data) return data;
+      }
+      if (dealId) {
+        const { data } = await db
+          .from("crm_deals")
+          .select("id, contact_id")
+          .eq("pipedrive_deal_id", dealId)
+          .maybeSingle();
+        if (data) return data;
+      }
+      return null;
+    })());
 
   // Optional typed note — lands on the deal timeline + Pipedrive outbox.
   const saveNote = async () => {
@@ -178,7 +181,7 @@ export async function POST(req: NextRequest) {
 
   if (call) {
     // Webhook-created rows don't know the rep — the disposition does.
-    const update: Record<string, unknown> = { disposition, deal_id: dealId ?? null };
+    const update: Record<string, unknown> = { disposition, deal_id: dealId ?? null, crm_deal_id: (await resolveCrmDeal())?.id ?? null };
     if (user.repId) update.rep_id = user.repId;
     if (body.quality) {
       const { data: row } = await db.from("call_events").select("raw").eq("id", call.id).maybeSingle();
@@ -206,6 +209,7 @@ export async function POST(req: NextRequest) {
       started_at: dialStartedAt,
       disposition,
       deal_id: dealId ?? null,
+      crm_deal_id: (await resolveCrmDeal())?.id ?? null,
       raw: body.quality ? { client_quality: body.quality } : null,
     });
     if (error && !/duplicate/i.test(error.message)) {

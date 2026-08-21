@@ -27,17 +27,22 @@ export async function POST(req: NextRequest) {
   }
 
   const db = supabaseAdmin();
-  // dial_attempts is PD-keyed — only recordable when a Pipedrive id exists.
-  if (body.dealId) {
-    const { error } = await db.from("dial_attempts").insert({
-      deal_id: body.dealId,
-      actor: user.email,
-      rep_id: user.repId,
-    });
-    if (error) {
-      console.error("attempt insert failed", error);
-      return NextResponse.json({ error: "db error" }, { status: 500 });
-    }
+  // Native-first: attempts key on the crm deal; the PD id rides along for
+  // legacy consumers. Resolve whichever key is missing from the mirror.
+  let crmDealId = body.crmDealId ?? null;
+  if (!crmDealId && body.dealId) {
+    const { data } = await db.from("crm_deals").select("id").eq("pipedrive_deal_id", body.dealId).maybeSingle();
+    crmDealId = data?.id ?? null;
+  }
+  const { error } = await db.from("dial_attempts").insert({
+    deal_id: body.dealId ?? null,
+    crm_deal_id: crmDealId,
+    actor: user.email,
+    rep_id: user.repId,
+  });
+  if (error) {
+    console.error("attempt insert failed", error);
+    return NextResponse.json({ error: "db error" }, { status: 500 });
   }
   // Sprint session: mark the item called so it drops from the sprint queue.
   if (body.sprintId && body.crmDealId) {
