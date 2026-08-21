@@ -190,34 +190,37 @@ async function applyPoolRules(
   takeLeases: boolean
 ): Promise<{ leads: QueueLead[]; stats: { eligible: number; coolingDown: number; leasedByOthers: number } }> {
   const now = Date.now();
-  const dealIds = leads.map((l) => l.dealId);
-  if (dealIds.length === 0) return { leads, stats: { eligible: 0, coolingDown: 0, leasedByOthers: 0 } };
+  // Native-first: everything here keys on the CRM uuid (every mirror-built
+  // lead carries one; the PD id rides along on leases for reference only).
+  const crmIds = leads.map((l) => l.crmDealId).filter(Boolean);
+  if (crmIds.length === 0) return { leads, stats: { eligible: 0, coolingDown: 0, leasedByOthers: 0 } };
 
   const cooldownCutoff = new Date(now - POOL_COOLDOWN_DAYS * 24 * 3600_000).toISOString();
   const [attemptsRes, leasesRes] = await Promise.all([
-    db.from("dial_attempts").select("deal_id, attempted_at").in("deal_id", dealIds),
-    db.from("dial_leases").select("deal_id, actor").gt("expires_at", new Date(now).toISOString()),
+    db.from("dial_attempts").select("crm_deal_id, attempted_at").in("crm_deal_id", crmIds),
+    db.from("dial_leases").select("crm_deal_id, actor").gt("expires_at", new Date(now).toISOString()),
   ]);
 
-  const attemptCount = new Map<number, number>();
-  const lastAttempt = new Map<number, string>();
+  const attemptCount = new Map<string, number>();
+  const lastAttempt = new Map<string, string>();
   for (const a of attemptsRes.data ?? []) {
-    attemptCount.set(a.deal_id, (attemptCount.get(a.deal_id) ?? 0) + 1);
-    if ((lastAttempt.get(a.deal_id) ?? "") < a.attempted_at) lastAttempt.set(a.deal_id, a.attempted_at);
+    if (!a.crm_deal_id) continue;
+    attemptCount.set(a.crm_deal_id, (attemptCount.get(a.crm_deal_id) ?? 0) + 1);
+    if ((lastAttempt.get(a.crm_deal_id) ?? "") < a.attempted_at) lastAttempt.set(a.crm_deal_id, a.attempted_at);
   }
   const leasedByOther = new Set(
-    (leasesRes.data ?? []).filter((l) => l.actor !== actor).map((l) => l.deal_id)
+    (leasesRes.data ?? []).filter((l) => l.actor !== actor).map((l) => l.crm_deal_id)
   );
 
   let coolingDown = 0;
   let leasedCount = 0;
   const eligible = leads.filter((l) => {
-    const last = lastAttempt.get(l.dealId);
+    const last = lastAttempt.get(l.crmDealId);
     if (last && last > cooldownCutoff) {
       coolingDown++;
       return false;
     }
-    if (leasedByOther.has(l.dealId)) {
+    if (leasedByOther.has(l.crmDealId)) {
       leasedCount++;
       return false;
     }
@@ -225,11 +228,11 @@ async function applyPoolRules(
   });
 
   eligible.sort((a, b) => {
-    const ca = attemptCount.get(a.dealId) ?? 0;
-    const cb = attemptCount.get(b.dealId) ?? 0;
+    const ca = attemptCount.get(a.crmDealId) ?? 0;
+    const cb = attemptCount.get(b.crmDealId) ?? 0;
     if (ca !== cb) return ca - cb; // fewest attempts first — round fairness
-    const la = lastAttempt.get(a.dealId) ?? "";
-    const lb = lastAttempt.get(b.dealId) ?? "";
+    const la = lastAttempt.get(a.crmDealId) ?? "";
+    const lb = lastAttempt.get(b.crmDealId) ?? "";
     if (la !== lb) return la.localeCompare(lb); // least recently attempted
     return (a.updateTime ?? "").localeCompare(b.updateTime ?? "");
   });
@@ -238,8 +241,8 @@ async function applyPoolRules(
   if (takeLeases && slice.length > 0) {
     const expires = new Date(now + LEASE_MINUTES * 60_000).toISOString();
     const { error } = await db.from("dial_leases").upsert(
-      slice.map((l) => ({ deal_id: l.dealId, actor, expires_at: expires })),
-      { onConflict: "deal_id" }
+      slice.map((l) => ({ crm_deal_id: l.crmDealId, deal_id: l.dealId || null, actor, expires_at: expires })),
+      { onConflict: "crm_deal_id" }
     );
     if (error) console.error("lease upsert failed", error);
   }
