@@ -134,7 +134,8 @@ export function EngagementView() {
         const surfEntries = Object.entries(r.surfaces ?? {}).sort((a, b) => b[1] - a[1]);
         const hasSurfaces = surfEntries.length > 0;
         const stack: { key: string; label: string; s: number; color: string }[] = [
-          { key: "talking", label: "Talking", s: r.talkingS, color: COLORS.talking },
+          { key: "talking", label: "Talking (outbound)", s: r.talkingS - r.inboundTalkS, color: COLORS.talking },
+          { key: "inbound", label: "Inbound calls", s: r.inboundTalkS, color: "#2bb8a1" },
           { key: "dialing", label: "Dialing", s: r.dialingS, color: COLORS.dialing },
           ...(hasSurfaces
             ? surfEntries.map(([surf, s]) => {
@@ -163,7 +164,6 @@ export function EngagementView() {
               </span>
               <span style={{ fontSize: 12.5, color: "var(--text-3)", marginLeft: "auto" }}>
                 {r.dials} dials · {r.connects} connects · {fmtClock(r.firstAt)}–{fmtClock(r.lastAt)}
-                {r.inboundTalkS > 60 ? ` · ${hm(r.inboundTalkS)} inbound talk` : ""}
               </span>
             </div>
 
