@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { processIntake, type IntakeSource } from "./intake";
+import { getProfileByEmail } from "./klaviyo";
 
 /**
  * Hot List Import — create/reopen deals for contacts whose recent marketing
@@ -51,8 +52,13 @@ export async function runHotlistRecovery(
     distinct_types: number;
   }>) {
     if (opts?.deadline && Date.now() > opts.deadline) break;
+    // Enrich like the metric engines do — real name + phone from the Klaviyo
+    // profile, not an email-local-part placeholder contact.
+    const profile = await getProfileByEmail(c.person_email).catch(() => null);
     const r = await processIntake(db, source, {
       email: c.person_email,
+      name: [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") || null,
+      phone: profile?.phoneNumber ?? null,
       note: `Marketing signals (${windowDays}d): ${c.summary}`,
       occurredAt: c.latest_at,
       externalId: `recovery:${c.person_email}:${week}`,

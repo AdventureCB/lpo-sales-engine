@@ -62,8 +62,57 @@ export function personRowFromPipedrive(p: any) {
   };
 }
 
+/**
+ * NATIVE-FIRST identity: when Pipedrive sends a person we don't know by PD id
+ * but a NATIVE (PD-less) contact shares an email, ADOPT that contact — attach
+ * the PD id and merge fields — instead of minting a duplicate. Duplicate
+ * contacts split a person's deals across identities and defeat every
+ * email-based dedupe downstream (the jcheney78 case, 8/21).
+ */
+async function adoptNativeByEmail(db: SupabaseClient, row: ReturnType<typeof personRowFromPipedrive>): Promise<boolean> {
+  const emails = (row.emails ?? []).map((e: any) => String(e.value ?? "").trim().toLowerCase()).filter((s: string) => s.includes("@"));
+  if (!emails.length || !row.pipedrive_person_id) return false;
+  const { data: known } = await db.from("crm_contacts").select("id").eq("pipedrive_person_id", row.pipedrive_person_id).maybeSingle();
+  if (known) return false; // normal upsert path updates it
+  for (const em of emails) {
+    const { data: native } = await db
+      .from("crm_contacts")
+      .select("id, name, emails, phones")
+      .is("pipedrive_person_id", null)
+      .filter("emails", "cs", JSON.stringify([{ value: em }]))
+      .limit(1)
+      .maybeSingle();
+    if (!native) continue;
+    const have = new Set((native.emails ?? []).map((e: any) => String(e.value ?? "").toLowerCase()));
+    const mergedEmails = [...(native.emails ?? []), ...(row.emails ?? []).filter((e: any) => !have.has(String(e.value ?? "").toLowerCase()))];
+    const havePh = new Set((native.phones ?? []).map((ph: any) => ph.e164 ?? ph.value));
+    const mergedPhones = [...(native.phones ?? []), ...(row.phones ?? []).filter((ph: any) => !havePh.has(ph.e164 ?? ph.value))];
+    // PD's name wins only when the native one is an email-local-part placeholder.
+    const placeholder = (native.name ?? "").toLowerCase() === em.split("@")[0].toLowerCase();
+    const { error } = await db
+      .from("crm_contacts")
+      .update({
+        pipedrive_person_id: row.pipedrive_person_id,
+        name: placeholder ? row.name : native.name || row.name,
+        first_name: row.first_name,
+        last_name: row.last_name,
+        emails: mergedEmails,
+        phones: mergedPhones,
+        org_name: row.org_name,
+        updated_at: row.updated_at,
+      })
+      .eq("id", native.id);
+    if (!error) {
+      contactIdCache.set(row.pipedrive_person_id, native.id);
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function upsertContact(db: SupabaseClient, p: any): Promise<void> {
   const row = personRowFromPipedrive(p);
+  if (await adoptNativeByEmail(db, row)) return;
   const { error } = await db
     .from("crm_contacts")
     .upsert(row, { onConflict: "pipedrive_person_id" });
@@ -76,9 +125,20 @@ export async function upsertContactsBatch(db: SupabaseClient, persons: any[]): P
   // Dedupe within the batch — Postgres rejects an upsert that touches the
   // same conflict key twice in one statement.
   const byId = new Map(persons.map((p) => [p.id, personRowFromPipedrive(p)]));
+  // Adopt-by-email for persons the mirror doesn't know yet (see above) —
+  // only NEW pd ids need the check, so the common path stays one statement.
+  const ids = [...byId.keys()].filter(Boolean);
+  const { data: knownRows } = await db.from("crm_contacts").select("pipedrive_person_id").in("pipedrive_person_id", ids);
+  const knownIds = new Set((knownRows ?? []).map((r) => r.pipedrive_person_id));
+  const rows = [];
+  for (const [pdId, row] of byId) {
+    if (!knownIds.has(pdId) && (await adoptNativeByEmail(db, row))) continue;
+    rows.push(row);
+  }
+  if (rows.length === 0) return;
   const { error } = await db
     .from("crm_contacts")
-    .upsert([...byId.values()], { onConflict: "pipedrive_person_id" });
+    .upsert(rows, { onConflict: "pipedrive_person_id" });
   if (error) throw new Error(`contacts batch upsert: ${error.message}`);
 }
 

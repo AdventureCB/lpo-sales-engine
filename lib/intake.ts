@@ -315,6 +315,19 @@ export async function processIntake(
   const contact = await findContact(db, email, phone);
 
   if (contact) {
+    // Placeholder-name healing: recovery-era contacts were named by email
+    // local-part. When any signal arrives carrying a real name, upgrade in
+    // place (exact-placeholder match only — never overwrite a real name).
+    const realName = payload.name?.trim();
+    if (
+      realName &&
+      email &&
+      (contact.name ?? "").toLowerCase() === email.split("@")[0].toLowerCase() &&
+      realName.toLowerCase() !== (contact.name ?? "").toLowerCase()
+    ) {
+      await db.from("crm_contacts").update({ name: realName, updated_at: new Date().toISOString() }).eq("id", contact.id);
+      contact.name = realName;
+    }
     // Most recent deal for the contact decides the path.
     const { data: deals } = await db
       .from("crm_deals")
