@@ -180,8 +180,8 @@ const CALL_TOOL = {
 export async function generateCallScript(
   db: SupabaseClient,
   dealId: string,
-  opts: { force?: boolean } = {}
-): Promise<{ ok: boolean; reason?: string; script?: any; cached?: boolean }> {
+  opts: { force?: boolean; repName?: string | null } = {}
+): Promise<{ ok: boolean; reason?: string; script?: any; cached?: boolean; draftId?: string }> {
   const cfg = await loadAiConfig(db);
   const ctx = await loadDealContext(db, dealId);
   if (!ctx) return { ok: false, reason: "deal not found" };
@@ -192,15 +192,38 @@ export async function generateCallScript(
   }
   if (!(await budgetOk(db, cfg.monthly_budget_cents))) return { ok: false, reason: "monthly AI budget reached" };
 
+  // Approved style rules (call channel) + this rep's coaching focus from the
+  // call-review patterns rollup — the script compensates for their known gap.
+  // Rules are global/stable → cached system; the focus varies per rep → user.
+  const { data: rules } = await db
+    .from("draft_style_rules")
+    .select("rule")
+    .eq("enabled", true)
+    .in("channel", ["all", "call"])
+    .order("created_at", { ascending: false })
+    .limit(10);
+  let repFocus: string | null = null;
+  if (opts.repName) {
+    const { data: rp } = await db.from("rep_call_patterns").select("patterns").eq("rep", opts.repName).maybeSingle();
+    repFocus = ((rp?.patterns as any)?.coaching_focus as string | undefined) ?? null;
+  }
+
   const call = await callClaudeTool({
     tier: cfg.models.call_script ?? "haiku",
     systemCached: [
       COMPANY,
       `You produce a LIGHTWEIGHT call outline a rep can scan in 10 seconds mid-dial, built on StoryBrand principles: the BUYER is the hero on a quest; the rep is the GUIDE (empathy + authority); give them a simple PLAN and one clear call to action. Avoid failure-scare framing — keep it aspirational and concrete to this buyer's profile and interests.`,
       `Every line must be short. No paragraphs. No generic filler ("hope you're well"). Use the buyer's actual context (truck, interests, signals) wherever known.`,
+      (rules ?? []).length ? `Standing style rules (learned from rep feedback — always apply):\n${(rules ?? []).map((r) => `- ${r.rule}`).join("\n")}` : "",
       `FORMATTING (the card renders these): wrap the 1-2 LOAD-BEARING words of each line in **double asterisks** (bold — what the rep's eye should catch); wrap anything the CUSTOMER might say or think in *single asterisks* (italics — predicted responses, their words). Example: "Ask about the **bed length** — he'll likely say *I've got the 5-footer*". Never bold whole sentences.`,
-    ].join("\n\n"),
-    user: [`# BUYER PROFILE\n${ctx.profileText}`, `\n# DEAL\n${ctx.inputs.header}`, `\n# SIGNALS\n${ctx.inputs.signalText}`, `\n# CALL HISTORY\n${ctx.inputs.callText}`].join("\n"),
+    ].filter(Boolean).join("\n\n"),
+    user: [
+      repFocus ? `# REP COACHING FOCUS (from their reviewed calls — structure the outline to reinforce it)\n${repFocus.replace(/\*/g, "")}` : "",
+      `# BUYER PROFILE\n${ctx.profileText}`,
+      `\n# DEAL\n${ctx.inputs.header}`,
+      `\n# SIGNALS\n${ctx.inputs.signalText}`,
+      `\n# CALL HISTORY\n${ctx.inputs.callText}`,
+    ].filter(Boolean).join("\n"),
     tool: CALL_TOOL,
     maxTokens: 800,
   });
@@ -212,7 +235,9 @@ export async function generateCallScript(
     objections: Array.isArray(call.input.objections) ? call.input.objections.filter((o: any) => o && typeof o === "object") : [],
   };
   await saveScript(db, dealId, ctx.profile, "call", script, version);
-  return { ok: true, script };
+  // Ledger row per FRESH generation only (cache-hit preloads would flood it).
+  const draftId = await logDraftEvent(db, { dealId, kind: "call", themeKey: null, direction: null, rep: opts.repName ?? null, body: JSON.stringify(script) });
+  return { ok: true, script, draftId };
 }
 
 // ── Email / text drafts ─────────────────────────────────────────────────────

@@ -31,7 +31,7 @@ const REVIEW_TOOL = {
             proposed: {
               type: "object",
               description:
-                "theme_*: any of {name, intent, prompt_direction, channels, sort_order}. style_add: {channel: all|email|sms, rule}. style_retire: {}.",
+                "theme_*: any of {name, intent, prompt_direction, channels, sort_order}. style_add: {channel: all|email|sms|call, rule}. style_retire: {}.",
             },
             rationale: { type: "string", description: "One or two sentences, grounded in the evidence." },
             evidence: { type: "string", description: "The specific numbers/notes this rests on." },
@@ -47,16 +47,27 @@ const REVIEW_TOOL = {
 
 async function gatherEvidence(db: SupabaseClient) {
   const since = new Date(Date.now() - 60 * 86_400_000).toISOString();
-  const [{ data: events }, { data: themes }, { data: rules }] = await Promise.all([
+  const [{ data: events }, { data: themes }, { data: rules }, { data: reviews }] = await Promise.all([
     db.from("draft_events").select("kind, theme_key, direction, used_at, thumbs, thumbs_note, sent_activity_id, sent_similarity, generated_at").gte("generated_at", since).limit(2000),
     db.from("comm_themes").select("key, name, intent, prompt_direction, channels, enabled"),
     db.from("draft_style_rules").select("id, channel, rule, enabled").order("created_at"),
+    db.from("call_reviews").select("review").gte("created_at", since).limit(500),
   ]);
 
   type Agg = { generated: number; used: number; sent: number; simSum: number; simN: number; down: number; notes: string[] };
   const byTheme = new Map<string, Agg>();
   const dirSamples: string[] = [];
+  const script = { generated: 0, down: 0, notes: [] as string[] };
   for (const e of events ?? []) {
+    // Call-script rows feed the script section, not the theme table.
+    if (e.kind === "call") {
+      if (e.generated_at) script.generated++;
+      if (e.thumbs === "down") {
+        script.down++;
+        if (e.thumbs_note && script.notes.length < 10) script.notes.push(e.thumbs_note);
+      }
+      continue;
+    }
     const k = e.theme_key ?? "(auto)";
     const a = byTheme.get(k) ?? { generated: 0, used: 0, sent: 0, simSum: 0, simN: 0, down: 0, notes: [] };
     a.generated++;
@@ -75,6 +86,16 @@ async function gatherEvidence(db: SupabaseClient) {
     if (e.direction && dirSamples.length < 30) dirSamples.push(e.direction.slice(0, 120));
   }
 
+  // How real calls scored on the StoryBrand principles (⚖ reviews) — the
+  // outcome signal for call-script style rules.
+  const scorecard: Record<string, { hit: number; partial: number; missed: number }> = {};
+  for (const r of reviews ?? []) {
+    for (const s of (r.review as any)?.scorecard ?? []) {
+      const t = (scorecard[s.principle] ??= { hit: 0, partial: 0, missed: 0 });
+      if (s.verdict === "hit" || s.verdict === "partial" || s.verdict === "missed") t[s.verdict as "hit"]++;
+    }
+  }
+
   const themeLines = [...byTheme.entries()]
     .map(([k, a]) => {
       const sim = a.simN ? ` avg-sent-similarity ${(a.simSum / a.simN).toFixed(2)}` : "";
@@ -90,6 +111,14 @@ async function gatherEvidence(db: SupabaseClient) {
     text: [
       `# DRAFT USAGE (last 60d, ${(events ?? []).length} drafts)`,
       themeLines || "(no drafts generated yet)",
+      ``,
+      `# CALL SCRIPTS (last 60d)`,
+      `- generated ${script.generated}, 👎 ${script.down}${script.notes.length ? ` — notes: ${script.notes.map((n) => `"${n}"`).join(" | ")}` : ""}`,
+      ``,
+      `# CALL REVIEW SCORECARD (${(reviews ?? []).length} reviewed calls — how real calls scored on the StoryBrand principles the scripts teach)`,
+      Object.keys(scorecard).length
+        ? Object.entries(scorecard).map(([p, v]) => `- ${p}: hit ${v.hit} / partial ${v.partial} / missed ${v.missed}`).join("\n")
+        : "(no reviewed calls yet)",
       ``,
       `# FREEFORM DIRECTIONS reps typed (signals for missing themes)`,
       dirSamples.length ? dirSamples.map((d) => `- "${d}"`).join("\n") : "(none)",
@@ -113,8 +142,8 @@ export async function runDraftReview(db: SupabaseClient): Promise<{ ok: boolean;
   const call = await callClaudeTool({
     tier,
     systemCached: [
-      `You are the draft-generation critic for Lone Peak Overland's sales engine. You review how AI email/text drafts actually performed — use rates, how heavily reps edited them before sending, thumbs-down notes, and the freeform directions reps keep typing — and propose MEANINGFUL, BOUNDED changes.`,
-      `EVIDENCE THRESHOLDS (hard rules): theme_edit/theme_retire only with ≥8 generates for that theme; style_add only when ≥3 independent signals point the same way (similar 👎 notes, or consistently low sent-similarity with a visible pattern); theme_add only when ≥3 freeform directions ask for essentially the same missing angle. Below threshold → propose nothing for it.`,
+      `You are the draft-generation critic for Lone Peak Overland's sales engine. You review how AI email/text drafts AND call-script outlines actually performed — use rates, how heavily reps edited drafts before sending, thumbs-down notes, freeform directions reps keep typing, and how real calls scored on the StoryBrand principles the scripts teach — and propose MEANINGFUL, BOUNDED changes.`,
+      `EVIDENCE THRESHOLDS (hard rules): theme_edit/theme_retire only with ≥8 generates for that theme; style_add only when ≥3 independent signals point the same way (similar 👎 notes, or consistently low sent-similarity with a visible pattern); theme_add only when ≥3 freeform directions ask for essentially the same missing angle; call-channel style rules only with ≥10 reviewed calls AND a principle missing ≥40% of the time (or ≥3 aligned script 👎 notes). Below threshold → propose nothing for it.`,
       `CONSTRAINTS: at most ${MAX_PROPOSALS} proposals; theme keys are immutable (edit fields, never keys); theme_add keys must be new snake_case; at most ${MAX_ACTIVE_STYLE_RULES} style rules may be active — if full, a style_add MUST be paired with a style_retire (target_key = the rule id). Style rules are one imperative sentence each. Most runs should return an empty proposals list with no_changes_reason — churn is worse than imperfection.`,
     ].join("\n\n"),
     user: ev.text.slice(0, 20_000),
@@ -179,7 +208,7 @@ export async function decideDraftProposal(
       if ((count ?? 0) >= MAX_ACTIVE_STYLE_RULES) return { ok: false, reason: `style rules at cap (${MAX_ACTIVE_STYLE_RULES}) — retire one first` };
       const rule = String(proposed.rule ?? "").trim();
       if (!rule) return { ok: false, reason: "style_add missing rule text" };
-      const channel = ["all", "email", "sms"].includes(String(proposed.channel)) ? String(proposed.channel) : "all";
+      const channel = ["all", "email", "sms", "call"].includes(String(proposed.channel)) ? String(proposed.channel) : "all";
       const { error } = await db.from("draft_style_rules").insert({ channel, rule: rule.slice(0, 300), source: "critic" });
       if (error) return { ok: false, reason: error.message };
     } else if (p.kind === "style_retire") {

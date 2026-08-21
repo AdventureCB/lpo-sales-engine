@@ -54,9 +54,9 @@ export function ScriptsCard({
   const [picker, setPicker] = useState<"email" | "sms" | null>(null); // which channel's picker is open
   const [theme, setTheme] = useState<string | null>(null); // selected chip (null = auto)
   const [direction, setDirection] = useState("");
-  const [draftIds, setDraftIds] = useState<{ email?: string; sms?: string }>({});
-  const [thumbed, setThumbed] = useState<{ email?: boolean; sms?: boolean }>({});
-  const [noteFor, setNoteFor] = useState<"email" | "sms" | null>(null);
+  const [draftIds, setDraftIds] = useState<{ call?: string; email?: string; sms?: string }>({});
+  const [thumbed, setThumbed] = useState<{ call?: boolean; email?: boolean; sms?: boolean }>({});
+  const [noteFor, setNoteFor] = useState<"call" | "email" | "sms" | null>(null);
   const [thumbNote, setThumbNote] = useState("");
 
   const loadThemes = async () => {
@@ -88,11 +88,9 @@ export function ScriptsCard({
       if (kind === "call") setCall(d.script);
       else if (kind === "email") setEmail(d.script);
       else setSms(d.script);
-      if (kind !== "call" && d.draftId) setDraftIds((s) => ({ ...s, [kind]: d.draftId }));
-      if (kind !== "call") {
-        setThumbed((s) => ({ ...s, [kind]: false }));
-        setPicker(null);
-      }
+      if (d.draftId) setDraftIds((s) => ({ ...s, [kind]: d.draftId }));
+      setThumbed((s) => ({ ...s, [kind]: false }));
+      if (kind !== "call") setPicker(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -100,13 +98,15 @@ export function ScriptsCard({
     }
   };
 
-  const reportDraft = (kind: "email" | "sms", action: "used" | "thumbs", note?: string) => {
+  const reportDraft = (kind: "call" | "email" | "sms", action: "used" | "thumbs", note?: string) => {
     const draftId = draftIds[kind];
-    if (!draftId) return;
+    if (!draftId && action === "used") return;
+    // Cache-hit call scripts have no ledger row yet — the server creates one
+    // from dealId+kind when thumbing without a draftId.
     void fetch("/api/ai/draft-event", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ draftId, action, ...(action === "thumbs" ? { thumbs: "down", note } : {}) }),
+      body: JSON.stringify({ draftId, dealId, kind, action, ...(action === "thumbs" ? { thumbs: "down", note } : {}) }),
     }).catch(() => {});
   };
 
@@ -231,9 +231,18 @@ export function ScriptsCard({
               )}
               <Section label="🎯 The ask">{em(call.cta)}</Section>
               <Section label="📼 If voicemail">{em(call.voicemail)}</Section>
-              <div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <button className="btn ghost" style={{ padding: "2px 10px", fontSize: 12 }} disabled={busy === "call"} onClick={() => void gen("call", true)}>
                   ↻ Rebuild outline
+                </button>
+                <button
+                  className="btn ghost"
+                  style={{ padding: "2px 9px", fontSize: 12, opacity: thumbed.call ? 0.5 : 1 }}
+                  disabled={thumbed.call}
+                  title="Outline not good — tell the system why (optional)"
+                  onClick={() => { setNoteFor("call"); setThumbNote(""); }}
+                >
+                  👎
                 </button>
               </div>
             </div>

@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   const db = supabaseAdmin();
   const result =
     body.kind === "call"
-      ? await generateCallScript(db, body.dealId, { force: body.force === true })
+      ? await generateCallScript(db, body.dealId, { force: body.force === true, repName: user.repName })
       : await generateDraft(db, body.dealId, body.kind as "email" | "sms", user.repName, {
           force: body.force === true,
           theme: body.theme ?? null,
