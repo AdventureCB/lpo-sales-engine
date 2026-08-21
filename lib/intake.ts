@@ -71,6 +71,65 @@ export interface IntakeResult {
   detail?: string;
 }
 
+/**
+ * Claim a fresh Hot List Import deal for the engine that actually owns the
+ * signal. Only fires on: a non-recovery engine with a source_name, hitting an
+ * OPEN deal titled/sourced "Hot List Import" created within 48h. Older
+ * recovery deals may carry real history — never touched.
+ */
+async function maybeClaimRecoveryDeal(
+  db: SupabaseClient,
+  source: IntakeSource,
+  open: { id: string; title: string | null; pipedrive_deal_id: number | null },
+  payload: IntakePayload,
+  email: string | null,
+  contactId: string,
+  writePd: boolean
+): Promise<boolean> {
+  try {
+    const engineSourceName = source.config.source_name;
+    if (!engineSourceName || source.adapter === "hotlist_recovery") return false;
+    if (!/^hot list import\b/i.test((open.title ?? "").trim())) return false;
+    const { data: d } = await db
+      .from("crm_deals")
+      .select("id, created_at, deal_sources ( name )")
+      .eq("id", open.id)
+      .maybeSingle();
+    if (!d) return false;
+    if (Date.now() - Date.parse((d as any).created_at) > 48 * 3600_000) return false;
+    if (!/hot list import/i.test((d as any).deal_sources?.name ?? "")) return false;
+
+    const name = payload.name?.trim() || (email ? email.split("@")[0] : payload.phone ?? "");
+    let title = (source.config.title_template ?? `${source.label} - {name}`)
+      .replace("{label}", source.label)
+      .replace("{external_id}", payload.externalId ?? "")
+      .replace("{email}", email ?? "")
+      .replace("{name}", name)
+      .replace(/\s+/g, " ")
+      .trim();
+    if (source.config.title_marker) title = `${title} ${source.config.title_marker}`.trim();
+
+    await db.from("crm_deals").update({ title }).eq("id", open.id);
+    await setDealSourceByName(db, open.id, engineSourceName);
+    await db.from("crm_activities").insert({
+      deal_id: open.id,
+      contact_id: contactId,
+      type: "system",
+      subject: `⚡ Claimed by ${source.label}`,
+      body: `Hot List Import created this deal moments before the ${source.label} event arrived — retitled and re-sourced for correct attribution.`,
+      actor: "intake",
+      occurred_at: new Date().toISOString(),
+    });
+    if (writePd && open.pipedrive_deal_id) {
+      await enqueuePdSync(db, "deal_update", { dealId: open.pipedrive_deal_id, fields: { title } });
+    }
+    return true;
+  } catch (e) {
+    console.error("recovery claim failed", e);
+    return false;
+  }
+}
+
 /** Per-engine round-robin over the enabled pool reps (fallback owner when empty). */
 export async function nextIntakeOwner(db: SupabaseClient, source: IntakeSource): Promise<number | null> {
   const pool = (source.config.owner_pool ?? []).filter((p) => p.enabled && p.pipedrive_id);
@@ -267,6 +326,12 @@ export async function processIntake(
     const closed = (deals ?? [])[0];
 
     if (open) {
+      // Fast-lane race repair: the Hot List Import safety net can create a
+      // deal minutes before the OWNING engine's event arrives (same Klaviyo
+      // signal, two ingestion cadences). When this engine's event lands on a
+      // fresh recovery deal, claim it — retitle + re-source — so funnel
+      // attribution stays correct. The normal funnel-touch note still runs.
+      await maybeClaimRecoveryDeal(db, source, open, payload, email, contact.id, writePd);
       const behavior = source.config.on_existing_open ?? "note";
       if (behavior === "skip") return log({ action: "skipped", dealId: open.id, detail: "open deal exists" });
       if (behavior === "note" || behavior === undefined) {

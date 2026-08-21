@@ -351,6 +351,17 @@ export async function GET(req: Request) {
   // Contacts whose recent signals qualify but who have no OPEN deal: create a
   // new deal (Cainen-owned → reprospect pool) or reopen a closed one to its
   // previous owner. No-op unless the "Hot List Import" engine is enabled.
+  // The OWNING engines (Saved Build etc.) run FIRST so a fresh buy signal is
+  // claimed by its dedicated engine, not the generic safety net.
+  if (remaining() > 8_000) {
+    try {
+      const { runKlaviyoMetricEngines } = await import("@/lib/klaviyo-metric-engines");
+      summary.metricEngines = await runKlaviyoMetricEngines(db);
+    } catch (e) {
+      console.error("metric engines failed", e);
+      summary.metricEngines = { error: e instanceof Error ? e.message : String(e) };
+    }
+  }
   if (remaining() > 8_000) {
     try {
       const { runHotlistRecovery } = await import("@/lib/hotlist-recovery");

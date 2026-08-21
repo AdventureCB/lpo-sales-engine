@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isAuthorizedCron } from "@/lib/cron";
-import { getLists, getSegments, getRecentListMembers, getRecentSegmentMembers, getMetrics, getEventsForMetric, getProfileByEmail } from "@/lib/klaviyo";
+import { getLists, getSegments, getRecentListMembers, getRecentSegmentMembers } from "@/lib/klaviyo";
+import { runKlaviyoMetricEngines } from "@/lib/klaviyo-metric-engines";
 import { processIntake, type IntakeSource } from "@/lib/intake";
 
 export const runtime = "nodejs";
@@ -28,73 +29,9 @@ export async function GET(req: Request) {
 
   const summary: Record<string, unknown> = {};
 
-  // ── Metric-event engines ──
-  for (const src of (sources as IntakeSource[]).filter((s) => s.adapter === "klaviyo_metric")) {
-    try {
-      const cfg = src.config as { klaviyo_metric_name?: string; klaviyo_metric_id?: string };
-      let metricId = cfg.klaviyo_metric_id;
-      if (!metricId && cfg.klaviyo_metric_name) {
-        const metrics = await getMetrics();
-        const want = cfg.klaviyo_metric_name.toLowerCase();
-        metricId = (metrics.find((m) => m.name.toLowerCase() === want) ??
-          metrics.find((m) => m.name.toLowerCase().includes(want)))?.id;
-        if (metricId) {
-          await db
-            .from("intake_sources")
-            .update({ config: { ...src.config, klaviyo_metric_id: metricId }, updated_at: new Date().toISOString() })
-            .eq("id", src.id);
-        }
-      }
-      if (!metricId) {
-        summary[src.label] = "metric not found";
-        continue;
-      }
+  // ── Metric-event engines (shared runner — the hot-list cron also calls it) ──
+  Object.assign(summary, await runKlaviyoMetricEngines(db));
 
-      const cursorKey = `intake:klaviyo_metric:${src.id}`;
-      const { data: cur } = await db.from("crm_sync_state").select("value").eq("key", cursorKey).maybeSingle();
-      let cursor = (cur?.value as any)?.last_event_at as string | undefined;
-      if (!cursor) {
-        cursor = new Date().toISOString();
-        await db.from("crm_sync_state").upsert(
-          { key: cursorKey, value: { last_event_at: cursor }, updated_at: new Date().toISOString() },
-          { onConflict: "key" }
-        );
-        summary[src.label] = "cursor initialized";
-        continue;
-      }
-
-      const events = await getEventsForMetric(metricId, cursor, { fullProps: true });
-      const counts: Record<string, number> = {};
-      let maxAt = cursor;
-      for (const ev of events) {
-        if (!ev.occurredAt || ev.occurredAt <= cursor) continue;
-        // Zap parity: enrich from the subscriber profile (name + phone).
-        const profile = await getProfileByEmail(ev.email).catch(() => null);
-        const evPhone = typeof ev.meta?.phone_number === "string" ? (ev.meta.phone_number as string) : null;
-        const link = typeof ev.meta?.configuration_url === "string" ? (ev.meta.configuration_url as string) : null;
-        const res = await processIntake(db, src, {
-          externalId: (ev.meta?.klaviyo_event_id as string) ?? `${ev.email}:${ev.occurredAt}`,
-          email: ev.email,
-          phone: profile?.phoneNumber ?? evPhone,
-          name: [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") || null,
-          link,
-          occurredAt: ev.occurredAt,
-          meta: { ...ev.meta, source_channel_id: src.channel_id },
-        });
-        counts[res.action] = (counts[res.action] ?? 0) + 1;
-        if (ev.occurredAt > maxAt) maxAt = ev.occurredAt;
-      }
-      if (maxAt > cursor) {
-        await db.from("crm_sync_state").upsert(
-          { key: cursorKey, value: { last_event_at: maxAt }, updated_at: new Date().toISOString() },
-          { onConflict: "key" }
-        );
-      }
-      summary[src.label] = { events: Object.values(counts).reduce((a, b) => a + b, 0), ...counts };
-    } catch (e) {
-      summary[src.label] = `error: ${e instanceof Error ? e.message : "failed"}`;
-    }
-  }
   // ── Group-membership engines (lists + segments share semantics) ──
   for (const src of (sources as (IntakeSource & {
     config: { klaviyo_list_id?: string; klaviyo_list_name?: string; klaviyo_segment_id?: string; klaviyo_segment_name?: string };
