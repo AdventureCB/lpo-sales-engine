@@ -530,6 +530,10 @@ export function IntakeAdmin() {
                     SKU filter
                     <input className="vmsel" style={{ width: 110, display: "block", marginTop: 3 }} defaultValue={cfg.sku_contains ?? ""} onBlur={(e) => e.target.value !== (cfg.sku_contains ?? "") && setCfg("sku_contains", e.target.value.trim())} />
                   </label>
+                  <label style={{ fontSize: 12.5, color: "var(--text-3)" }} title="Carts at or above this total qualify even without the SKU (OR logic). 0 = SKU only.">
+                    Min cart $
+                    <input className="vmsel" style={{ width: 90, display: "block", marginTop: 3 }} type="number" defaultValue={cfg.min_total_cents != null ? cfg.min_total_cents / 100 : 0} onBlur={(e) => setCfg("min_total_cents", Math.max(0, Math.round(Number(e.target.value) * 100)) || undefined)} />
+                  </label>
                   <label style={{ fontSize: 12.5, color: "var(--text-3)" }}>
                     Settle delay (min)
                     <input className="vmsel" style={{ width: 90, display: "block", marginTop: 3 }} type="number" defaultValue={cfg.delay_minutes ?? 60} onBlur={(e) => setCfg("delay_minutes", Number(e.target.value) || 60)} />

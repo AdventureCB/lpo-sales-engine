@@ -22,6 +22,9 @@ const SHOP = "lone-peak-overland.myshopify.com";
 export async function GET(req: Request) {
   if (!isAuthorizedCron(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const db = supabaseAdmin();
+  // ?days=N widens the scan window for one-off backfills (idempotent by
+  // checkout id, so re-sweeping is safe). Normal cadence stays at 7.
+  const windowDays = Math.min(Math.max(Number(new URL(req.url).searchParams.get("days")) || 7, 1), 60);
 
   const { data: sources } = await db
     .from("intake_sources")
@@ -35,7 +38,7 @@ export async function GET(req: Request) {
   }
   const token = await shopifyAdminToken(db);
   const version = envOptional("SHOPIFY_API_VERSION") ?? "2026-01";
-  const createdMin = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const createdMin = new Date(Date.now() - windowDays * 86_400_000).toISOString();
   const r = await fetch(
     `https://${SHOP}/admin/api/${version}/checkouts.json?limit=250&created_at_min=${encodeURIComponent(createdMin)}`,
     { headers: { "X-Shopify-Access-Token": token } }
@@ -51,15 +54,21 @@ export async function GET(req: Request) {
   for (const src of sources as IntakeSource[]) {
     const cfg = src.config ?? {};
     const skuNeedle = (cfg.sku_contains ?? "").toLowerCase();
+    const minTotalCents = Number(cfg.min_total_cents ?? 0);
     const delayMs = (cfg.delay_minutes ?? 60) * 60_000;
 
     for (const co of checkouts ?? []) {
       if (co.completed_at) continue; // recovered — not abandoned
       const updated = Date.parse(co.updated_at ?? co.created_at ?? "");
       if (!Number.isFinite(updated) || now - updated < delayMs) continue; // still settling
-      if (skuNeedle) {
-        const hit = (co.line_items ?? []).some((li: any) => (li.sku ?? "").toLowerCase().includes(skuNeedle));
-        if (!hit) continue;
+      // Qualify on EITHER filter: the SKU needle (deposit carts) OR a big
+      // cart by dollar total — a $5k+ camper build without the deposit line
+      // is just as hot (Kyle, 8/21). No filters configured = take all.
+      if (skuNeedle || minTotalCents > 0) {
+        const skuHit = skuNeedle && (co.line_items ?? []).some((li: any) => (li.sku ?? "").toLowerCase().includes(skuNeedle));
+        const totalCents = co.total_price != null ? Math.round(Number(co.total_price) * 100) : 0;
+        const bigCart = minTotalCents > 0 && totalCents >= minTotalCents;
+        if (!skuHit && !bigCart) continue;
       }
       const email = co.email ?? co.customer?.email ?? null;
       let phone = co.phone ?? co.shipping_address?.phone ?? co.billing_address?.phone ?? co.customer?.phone ?? null;

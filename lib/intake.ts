@@ -27,6 +27,7 @@ export interface IntakeSource {
   enabled: boolean;
   config: {
     sku_contains?: string;
+    min_total_cents?: number; // abandoned-cart: also qualify carts ≥ this total (OR with sku_contains)
     delay_minutes?: number;
     title_template?: string;
     enrich_phone?: boolean;
