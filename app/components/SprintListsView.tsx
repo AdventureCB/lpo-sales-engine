@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { SprintLogicModal } from "./SprintLogicModal";
 
 type ListRow = {
   id: string;
@@ -322,7 +323,12 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
           )}
 
           {/* Today's lists */}
-          <div className="panel-h" style={{ marginBottom: 8 }}>Today</div>
+          <div className="panel-h" style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 10 }}>
+            Today
+            <span style={{ marginLeft: "auto" }}>
+              <SprintLogicModal />
+            </span>
+          </div>
           {todayLists.length === 0 ? (
             <p className="viewsub">No lists generated today{activeOwner === userEmail ? " — hit a Generate button above" : ""}.</p>
           ) : (
