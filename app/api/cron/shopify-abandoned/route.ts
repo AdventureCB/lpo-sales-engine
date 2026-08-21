@@ -4,6 +4,7 @@ import { isAuthorizedCron } from "@/lib/cron";
 import { envOptional } from "@/lib/env";
 import { shopifyAdminConfigured, shopifyAdminToken } from "@/lib/shopify-admin";
 import { processIntake, type IntakeSource } from "@/lib/intake";
+import { getProfileByEmail } from "@/lib/klaviyo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,11 +62,19 @@ export async function GET(req: Request) {
         if (!hit) continue;
       }
       const email = co.email ?? co.customer?.email ?? null;
-      const phone = co.phone ?? co.shipping_address?.phone ?? co.billing_address?.phone ?? co.customer?.phone ?? null;
+      let phone = co.phone ?? co.shipping_address?.phone ?? co.billing_address?.phone ?? co.customer?.phone ?? null;
       if (!email && !phone) continue;
-      const name =
+      let name =
         [co.customer?.first_name, co.customer?.last_name].filter(Boolean).join(" ") ||
         co.shipping_address?.name || co.billing_address?.name || null;
+      // Klaviyo enrichment for whatever Shopify didn't have — early-bail
+      // checkouts can be email-only; the subscriber profile often knows the
+      // rest. Only fetched when something is actually missing.
+      if (email && (!name || !phone)) {
+        const profile = await getProfileByEmail(email).catch(() => null);
+        name = name || [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") || null;
+        phone = phone || profile?.phoneNumber || null;
+      }
 
       const res = await processIntake(db, src, {
         externalId: String(co.id),
