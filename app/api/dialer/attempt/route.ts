@@ -19,17 +19,25 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
-  if (!body.dealId) return NextResponse.json({ error: "dealId required" }, { status: 400 });
+  // Native deals have no Pipedrive id — the sprint stamp below must still
+  // happen for them (a null-dealId attempt used to 400 here, so dialed native
+  // deals reappeared on every list reload).
+  if (!body.dealId && !(body.sprintId && body.crmDealId)) {
+    return NextResponse.json({ error: "dealId or sprintId+crmDealId required" }, { status: 400 });
+  }
 
   const db = supabaseAdmin();
-  const { error } = await db.from("dial_attempts").insert({
-    deal_id: body.dealId,
-    actor: user.email,
-    rep_id: user.repId,
-  });
-  if (error) {
-    console.error("attempt insert failed", error);
-    return NextResponse.json({ error: "db error" }, { status: 500 });
+  // dial_attempts is PD-keyed — only recordable when a Pipedrive id exists.
+  if (body.dealId) {
+    const { error } = await db.from("dial_attempts").insert({
+      deal_id: body.dealId,
+      actor: user.email,
+      rep_id: user.repId,
+    });
+    if (error) {
+      console.error("attempt insert failed", error);
+      return NextResponse.json({ error: "db error" }, { status: 500 });
+    }
   }
   // Sprint session: mark the item called so it drops from the sprint queue.
   if (body.sprintId && body.crmDealId) {

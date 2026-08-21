@@ -574,12 +574,14 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     callSecRef.current = 0;
     setSess((s) => ({ ...s, dials: s.dials + 1 }));
     // Record the attempt — drives the shared pool's cooldown + fairness,
-    // and marks sprint items as called. Manual dials have no deal to log.
-    if (l.dealId) {
+    // and marks sprint items as called. Native deals have no PD dealId but
+    // MUST still stamp their sprint item (else they reappear on reload).
+    // Manual dials have neither and log nothing.
+    if (l.dealId || (l.sprintId && l.crmDealId)) {
       void fetch("/api/dialer/attempt", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dealId: l.dealId, sprintId: l.sprintId, crmDealId: l.crmDealId }),
+        body: JSON.stringify({ dealId: l.dealId || undefined, sprintId: l.sprintId, crmDealId: l.crmDealId }),
       }).catch(() => {});
     }
     if (dialMethod === "browser") {
