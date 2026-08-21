@@ -377,6 +377,31 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     return () => setExtraLock(null);
   }, [lead?.crmDealId]);
 
+  // Cycle micro-timings for the engagement dashboard: lead painted → first
+  // dial (review time), call end → Next (wrap-up time). Reported on advance.
+  const cycleRef = useRef<{ shownAt: number; dialAt: number | null; callEndAt: number | null }>({
+    shownAt: Date.now(),
+    dialAt: null,
+    callEndAt: null,
+  });
+  useEffect(() => {
+    cycleRef.current = { shownAt: Date.now(), dialAt: null, callEndAt: null };
+  }, [lead?.crmDealId, lead?.dealId, lead?.phone]);
+  const reportCycle = () => {
+    const c = cycleRef.current;
+    if (!c.dialAt) return; // never dialed — nothing to measure
+    void fetch("/api/activity/dialer-cycle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        crmDealId: lead?.crmDealId ?? undefined,
+        viewMs: c.dialAt - c.shownAt,
+        wrapMs: c.callEndAt ? Date.now() - c.callEndAt : undefined,
+      }),
+      keepalive: true,
+    }).catch(() => {});
+  };
+
   // Clear the previous lead's profile when the lead changes (the embedded view
   // re-emits onProfile once the new deal loads) + collapse the AI card.
   useEffect(() => {
@@ -569,6 +594,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     }
     qualityRef.current = { sumLoss: 0, maxJitter: 0, samples: 0 };
     dialStartRef.current = new Date().toISOString();
+    if (cycleRef.current.dialAt == null) cycleRef.current.dialAt = Date.now(); // first dial on this lead
     setInCall(true);
     setCallSec(0);
     callSecRef.current = 0;
@@ -620,6 +646,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const hangUp = () => {
     stopTimers();
     setInCall(false);
+    cycleRef.current.callEndAt = Date.now();
     setKeypadOpen(false); // keypad's job is done — disposition happens in the lead card
     setAwaitingDispo(true);
   };
@@ -763,6 +790,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   };
 
   const advanceNext = () => {
+    reportCycle();
     setAwaitingNext(false);
     setLeadIdx((i) => i + 1);
   };

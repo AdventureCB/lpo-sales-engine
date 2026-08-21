@@ -29,6 +29,15 @@ export interface RepEngagement {
   lastAt: string | null;
   dials: number;
   connects: number;
+  // Where the NON-call active time went, by surface (call-covered spans
+  // subtracted so this never double-shows talk/dial time).
+  surfaces: Record<string, number>;
+  // What they produced: rep-authored records that day.
+  actions: { emails: number; texts: number; notes: number; scheduled: number };
+  // Dialer micro-timings (dialer_cycle_stats).
+  cycles: number;
+  avgViewS: number | null; // lead painted → first dial press
+  avgWrapS: number | null; // call end → Next press
 }
 
 /** UTC bounds of a Pacific-time calendar day (DST-aware via Intl). */
@@ -53,6 +62,34 @@ export function laToday(): string {
 
 type Seg = { s: number; e: number; prec: number; inbound?: boolean };
 const PREC = { talking: 3, dialing: 2, between: 1, other: 0 } as const;
+
+type Span = { s: number; e: number };
+/** Sort + merge overlapping spans. */
+function unionSpans(list: Span[]): Span[] {
+  const sorted = list.filter((x) => x.e > x.s).sort((a, b) => a.s - b.s);
+  const out: Span[] = [];
+  for (const x of sorted) {
+    const last = out[out.length - 1];
+    if (last && x.s <= last.e) last.e = Math.max(last.e, x.e);
+    else out.push({ ...x });
+  }
+  return out;
+}
+/** Subtract (already-unioned) cuts from (already-unioned) spans. */
+function subtractSpans(spans: Span[], cuts: Span[]): Span[] {
+  const out: Span[] = [];
+  for (const sp of spans) {
+    let cur = sp.s;
+    for (const c of cuts) {
+      if (c.e <= cur || c.s >= sp.e) continue;
+      if (c.s > cur) out.push({ s: cur, e: Math.min(c.s, sp.e) });
+      cur = Math.max(cur, c.e);
+      if (cur >= sp.e) break;
+    }
+    if (cur < sp.e) out.push({ s: cur, e: sp.e });
+  }
+  return out;
+}
 
 function sweep(segs: Seg[], capMs: number) {
   const clean = segs.filter((x) => x.e > x.s);
@@ -92,7 +129,7 @@ export async function computeEngagement(db: SupabaseClient, dateStr: string): Pr
   const repIds = (reps ?? []).map((r) => r.id);
   const emails = (reps ?? []).map((r) => r.email as string);
 
-  const [{ data: calls }, { data: acts }] = await Promise.all([
+  const [{ data: calls }, { data: acts }, { data: authored }, { data: cycles }] = await Promise.all([
     db
       .from("call_events")
       .select("rep_id, direction, started_at, answered_at, completed_at, duration_s")
@@ -101,10 +138,24 @@ export async function computeEngagement(db: SupabaseClient, dateStr: string): Pr
       .lt("started_at", endIso),
     db
       .from("rep_activity_intervals")
-      .select("rep_email, state, started_at, ended_at")
+      .select("rep_email, state, surface, started_at, ended_at")
       .in("rep_email", emails.length ? emails : ["-"])
       .gte("ended_at", startIso)
       .lte("started_at", endIso),
+    db
+      .from("crm_activities")
+      .select("actor, type, due_at, meta")
+      .in("actor", emails.length ? emails : ["-"])
+      .gte("occurred_at", startIso)
+      .lt("occurred_at", endIso)
+      .limit(3000),
+    db
+      .from("dialer_cycle_stats")
+      .select("rep_email, view_ms, wrap_ms")
+      .in("rep_email", emails.length ? emails : ["-"])
+      .gte("at", startIso)
+      .lt("at", endIso)
+      .limit(3000),
   ]);
 
   const out: RepEngagement[] = [];
@@ -135,6 +186,10 @@ export async function computeEngagement(db: SupabaseClient, dateStr: string): Pr
       }
     }
 
+    const callSpans: { s: number; e: number }[] = [];
+    for (const c of segs) callSpans.push({ s: c.s, e: c.e }); // call segs pushed so far
+
+    const bySurface = new Map<string, { s: number; e: number }[]>();
     for (const a of (acts ?? []).filter((a) => a.rep_email === rep.email)) {
       const s = Date.parse(a.started_at), e = Date.parse(a.ended_at);
       if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
@@ -142,7 +197,20 @@ export async function computeEngagement(db: SupabaseClient, dateStr: string): Pr
       // call is real engagement evidence, but call time itself only counts
       // when call_events corroborates (which then wins on precedence).
       const prec = a.state === "other" ? PREC.other : PREC.between;
-      segs.push({ s: Math.max(s, startMs), e: Math.min(e, capMs), prec });
+      const cs = Math.max(s, startMs), ce = Math.min(e, capMs);
+      segs.push({ s: cs, e: ce, prec });
+      const surf = a.surface ?? "?";
+      (bySurface.get(surf) ?? bySurface.set(surf, []).get(surf)!).push({ s: cs, e: ce });
+    }
+
+    // Per-surface seconds: union-merge each surface's intervals, then subtract
+    // call-covered spans so surface time = where NON-call active time went.
+    const surfaces: Record<string, number> = {};
+    for (const [surf, list] of bySurface) {
+      const merged = unionSpans(list);
+      const net = subtractSpans(merged, unionSpans(callSpans));
+      const sec = Math.round(net.reduce((acc, x) => acc + (x.e - x.s), 0) / 1000);
+      if (sec >= 30) surfaces[surf] = sec;
     }
 
     const agg = sweep(segs, capMs);
@@ -150,6 +218,21 @@ export async function computeEngagement(db: SupabaseClient, dateStr: string): Pr
     const first = times.length ? Math.min(...times.map((x) => x.s)) : null;
     const last = times.length ? Math.max(...times.map((x) => x.e)) : null;
     const spanS = first != null && last != null ? (last - first) / 1000 : 0;
+
+    // What they produced that day (outbound only for emails — the Gmail sweep
+    // logs inbound rows under the same actor sometimes).
+    const mine = (authored ?? []).filter((a) => a.actor === rep.email);
+    const actions = {
+      emails: mine.filter((a) => a.type === "email" && ((a.meta as any)?.direction ?? "outbound") !== "inbound").length,
+      texts: mine.filter((a) => a.type === "sms").length,
+      notes: mine.filter((a) => a.type === "note").length,
+      scheduled: mine.filter((a) => a.due_at != null).length,
+    };
+
+    const myCycles = (cycles ?? []).filter((c) => c.rep_email === rep.email);
+    const views = myCycles.map((c) => c.view_ms).filter((v): v is number => v != null);
+    const wraps = myCycles.map((c) => c.wrap_ms).filter((v): v is number => v != null);
+    const avg = (xs: number[]) => (xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length / 1000) : null);
 
     out.push({
       repId: rep.id,
@@ -166,6 +249,11 @@ export async function computeEngagement(db: SupabaseClient, dateStr: string): Pr
       lastAt: last != null ? new Date(last).toISOString() : null,
       dials,
       connects,
+      surfaces,
+      actions,
+      cycles: myCycles.length,
+      avgViewS: avg(views),
+      avgWrapS: avg(wraps),
     });
   }
   return out;

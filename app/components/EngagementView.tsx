@@ -24,6 +24,11 @@ interface RepRow {
   lastAt: string | null;
   dials: number;
   connects: number;
+  surfaces?: Record<string, number>;
+  actions?: { emails: number; texts: number; notes: number; scheduled: number };
+  cycles?: number;
+  avgViewS?: number | null;
+  avgWrapS?: number | null;
 }
 
 const COLORS = {
@@ -33,6 +38,24 @@ const COLORS = {
   other: "#9c9285",
   idle: "rgba(150,140,125,0.25)",
 };
+
+// Surface → human label + shade. The between/other block splits by WHERE the
+// non-call time went; unlisted surfaces fall back to their path + grey.
+const SURFACES: Record<string, { label: string; color: string }> = {
+  "/dialer": { label: "In dialer", color: "#4a94ec" },
+  "/crm/deal": { label: "Deal pages", color: "#6ab0f3" },
+  "/lists": { label: "Sprint lists", color: "#3d7cc9" },
+  "/hot-list": { label: "Hot list", color: "#2f64a3" },
+  "/texts": { label: "Texting", color: "#8e6ae0" },
+  "/crm": { label: "CRM list", color: "#b0a79a" },
+  "/calendar": { label: "Calendar", color: "#a29782" },
+};
+const surfaceMeta = (surf: string) => SURFACES[surf] ?? { label: surf.replace(/^\//, "") || "other", color: "#9c9285" };
+
+function sec(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return n >= 60 ? `${Math.floor(n / 60)}m ${Math.round(n % 60)}s` : `${Math.round(n)}s`;
+}
 
 function hm(s: number): string {
   const h = Math.floor(s / 3600);
@@ -106,14 +129,26 @@ export function EngagementView() {
       {loading && !data && <p className="viewsub">Loading…</p>}
 
       {data?.reps.map((r) => {
-        const stack: { key: keyof typeof COLORS; label: string; s: number }[] = [
-          { key: "talking", label: "Talking", s: r.talkingS },
-          { key: "dialing", label: "Dialing", s: r.dialingS },
-          { key: "between", label: "Between calls", s: r.betweenS },
-          { key: "other", label: "Other work", s: r.otherS },
-          { key: "idle", label: "Idle", s: r.idleS },
+        // Non-call time splits by surface when the breakdown exists; the
+        // legacy between/other buckets remain as the fallback.
+        const surfEntries = Object.entries(r.surfaces ?? {}).sort((a, b) => b[1] - a[1]);
+        const hasSurfaces = surfEntries.length > 0;
+        const stack: { key: string; label: string; s: number; color: string }[] = [
+          { key: "talking", label: "Talking", s: r.talkingS, color: COLORS.talking },
+          { key: "dialing", label: "Dialing", s: r.dialingS, color: COLORS.dialing },
+          ...(hasSurfaces
+            ? surfEntries.map(([surf, s]) => {
+                const m = surfaceMeta(surf);
+                return { key: `surf:${surf}`, label: m.label, s, color: m.color };
+              })
+            : [
+                { key: "between", label: "Between calls", s: r.betweenS, color: COLORS.between },
+                { key: "other", label: "Other work", s: r.otherS, color: COLORS.other },
+              ]),
+          { key: "idle", label: "Idle", s: r.idleS, color: COLORS.idle },
         ];
         const total = stack.reduce((a, x) => a + x.s, 0);
+        const dialerActiveS = r.talkingS - r.inboundTalkS + r.dialingS + (r.surfaces?.["/dialer"] ?? 0);
         const pct = Math.min(r.engagedS / kpiS, 1);
         const met = r.engagedS >= kpiS;
         return (
@@ -145,17 +180,44 @@ export function EngagementView() {
                     <div
                       key={x.key}
                       title={`${x.label}: ${hm(x.s)}`}
-                      style={{ width: `${(x.s / total) * 100}%`, background: COLORS[x.key], minWidth: x.s > 0 ? 2 : 0 }}
+                      style={{ width: `${(x.s / total) * 100}%`, background: x.color, minWidth: x.s > 0 ? 2 : 0 }}
                     />
                   ))}
                 </div>
                 <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 8, fontSize: 12.5, color: "var(--text-2)" }}>
-                  {stack.map((x) => (
+                  {stack.filter((x) => x.s > 0).map((x) => (
                     <span key={x.key}>
-                      <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: COLORS[x.key], marginRight: 5, verticalAlign: -1 }} />
+                      <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: x.color, marginRight: 5, verticalAlign: -1 }} />
                       {x.label} <b>{hm(x.s)}</b>
                     </span>
                   ))}
+                </div>
+
+                {/* Detail metrics: dialer efficiency + what they produced */}
+                <div style={{ display: "flex", gap: 22, flexWrap: "wrap", marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border-soft)", fontSize: 12.5 }}>
+                  <span title="Talk + dial + between-call time spent in the dialer, vs what it produced">
+                    <span style={{ color: "var(--text-3)" }}>Dialer focus </span>
+                    <b>{hm(dialerActiveS)}</b>
+                    <span style={{ color: "var(--text-3)" }}> → {r.dials} dials · {hm(r.talkingS - r.inboundTalkS)} talk</span>
+                  </span>
+                  <span title="Average time from a lead appearing to pressing Dial (reviewing the deal + script)">
+                    <span style={{ color: "var(--text-3)" }}>Avg review→dial </span>
+                    <b>{sec(r.avgViewS)}</b>
+                  </span>
+                  <span title="Average time from call end to pressing Next (disposition + wrap-up)">
+                    <span style={{ color: "var(--text-3)" }}>Avg wrap-up </span>
+                    <b>{sec(r.avgWrapS)}</b>
+                    {r.cycles ? <span style={{ color: "var(--text-3)" }}> · {r.cycles} cycles</span> : null}
+                  </span>
+                  {r.actions && (
+                    <span title="Rep-authored records today">
+                      <span style={{ color: "var(--text-3)" }}>Produced </span>
+                      <b>{r.actions.emails}</b><span style={{ color: "var(--text-3)" }}> emails · </span>
+                      <b>{r.actions.texts}</b><span style={{ color: "var(--text-3)" }}> texts · </span>
+                      <b>{r.actions.notes}</b><span style={{ color: "var(--text-3)" }}> notes · </span>
+                      <b>{r.actions.scheduled}</b><span style={{ color: "var(--text-3)" }}> scheduled</span>
+                    </span>
+                  )}
                 </div>
               </>
             ) : (
