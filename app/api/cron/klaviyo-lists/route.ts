@@ -81,6 +81,16 @@ export async function GET(req: Request) {
         const noteBits = ["notes_summary", "notes", "Notes Summary"]
           .map((k) => props[k])
           .filter((v) => typeof v === "string" && (v as string).trim());
+        // Identity moment: the member's Klaviyo profile carries our attr_*
+        // stamps (incl. attr_vid) when attr.js saw this browser — link the
+        // anonymous touch history + merge attribution onto the contact.
+        if (m.email) {
+          try {
+            const { touchesFromFlat, mergeContactAttribution, linkVisitor } = await import("@/lib/attribution");
+            await mergeContactAttribution(db, m.email, touchesFromFlat(props));
+            await linkVisitor(db, props, m.email);
+          } catch {}
+        }
         const res = await processIntake(db, src, {
           // Join-scoped: a profile RE-entering (re-engaged, re-applied) processes
           // again as a fresh funnel touch instead of being dedupe-swallowed.

@@ -31,6 +31,7 @@ interface Report {
     wonValueCents: number;
   };
   organicSources: Record<string, number>;
+  beacon?: { lastAt: string | null; touches24h: number; linkedVisitors: number };
 }
 
 const CHANNEL_LABEL: Record<string, string> = {
@@ -168,6 +169,20 @@ export function AdRoiView() {
 
       {error && <p className="viewsub" style={{ color: "var(--crit)" }}>{error}</p>}
       {!data && !error && <p className="viewsub">Loading…</p>}
+
+      {data?.beacon && (() => {
+        const b = data.beacon;
+        const ageH = b.lastAt ? (Date.now() - Date.parse(b.lastAt)) / 3600_000 : null;
+        const stale = ageH == null || ageH > 12;
+        const ageLabel = ageH == null ? "never" : ageH < 1 ? `${Math.round(ageH * 60)}m ago` : `${Math.round(ageH)}h ago`;
+        return (
+          <p className="viewsub" style={{ marginTop: -6, color: stale ? "var(--crit)" : "var(--text-3)" }}>
+            🛰 First-party beacon: last touch <b style={{ color: stale ? "var(--crit)" : "var(--text-2)" }}>{ageLabel}</b>
+            {" "}· {b.touches24h} touch{b.touches24h === 1 ? "" : "es"} in 24h · {b.linkedVisitors} linked visitor{b.linkedVisitors === 1 ? "" : "s"}
+            {stale ? " — beacon may be down, check /api/attr/touch" : ""}
+          </p>
+        );
+      })()}
 
       {t && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 18 }}>

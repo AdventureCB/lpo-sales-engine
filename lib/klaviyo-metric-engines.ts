@@ -59,6 +59,16 @@ export async function runKlaviyoMetricEngines(db: SupabaseClient): Promise<Recor
         if (!ev.occurredAt || ev.occurredAt <= cursor) continue;
         // Zap parity: enrich from the subscriber profile (name + phone).
         const profile = await getProfileByEmail(ev.email).catch(() => null);
+        // Identity moment (e.g. a builder save submits an email): harvest the
+        // profile's attr_* stamps — link the anonymous browser's touch
+        // history and merge attribution onto the contact.
+        if (ev.email && profile?.properties) {
+          try {
+            const { touchesFromFlat, mergeContactAttribution, linkVisitor } = await import("./attribution");
+            await mergeContactAttribution(db, ev.email, touchesFromFlat(profile.properties));
+            await linkVisitor(db, profile.properties, ev.email);
+          } catch {}
+        }
         const evPhone = typeof ev.meta?.phone_number === "string" ? (ev.meta.phone_number as string) : null;
         const link = typeof ev.meta?.configuration_url === "string" ? (ev.meta.configuration_url as string) : null;
         const res = await processIntake(db, src, {

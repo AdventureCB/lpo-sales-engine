@@ -112,7 +112,11 @@
     } catch (e) {}
   })();
 
-  if (!attr.first) return; // nothing to propagate
+  // Identity propagates even WITHOUT campaign params (direct/organic
+  // visitors): the vid alone lets the server link this browser's history
+  // when they later identify (builder save, survey, checkout). Only bail
+  // when there's neither a vid nor any attribution to carry.
+  if (!attr.first && !vid) return;
 
   function flat() {
     var out = {};
