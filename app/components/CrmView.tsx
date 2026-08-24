@@ -468,11 +468,13 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
       const r = await fetch("/api/crm/deal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, ownerPipedriveId: Number(assignOwner) }),
+        // "none" = unassign → reprospecting pool (owner null; mirror fronts
+        // the pool avatar in Pipedrive).
+        body: JSON.stringify({ id, ownerPipedriveId: assignOwner === "none" ? null : Number(assignOwner) }),
       }).catch(() => null);
       if (r?.ok) ok++;
     }
-    setSprintMsg(`✓ Assigned ${ok}/${ids.length} deals`);
+    setSprintMsg(assignOwner === "none" ? `✓ Unassigned ${ok}/${ids.length} deals → pool` : `✓ Assigned ${ok}/${ids.length} deals`);
     setSelected(new Set());
     setAssignOwner("");
     setTimeout(() => setSprintMsg(null), 5000);
@@ -839,9 +841,10 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
             {roster.active.map((o) => (
               <option key={o.id} value={String(o.id)}>→ {o.name}</option>
             ))}
+            <option value="none">→ Unassigned (pool)</option>
           </select>
           <button className="btn ghost" style={{ padding: "8px 14px", fontSize: 14 }} onClick={bulkAssign} disabled={!assignOwner}>
-            Assign {selected.size}
+            {assignOwner === "none" ? "Unassign" : "Assign"} {selected.size}
           </button>
         </div>
       )}
