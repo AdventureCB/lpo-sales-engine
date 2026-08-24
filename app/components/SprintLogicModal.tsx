@@ -69,6 +69,10 @@ export function SprintLogicModal() {
 
             <H>List 2 — Midday ladder · ~12 PM PT · West timezones</H>
             <P>Identical ladder, identical rules — pointed at the western half of the map once their morning is underway. Everything is re-evaluated fresh at generation time.</P>
+            <P>
+              <B>Pool fill:</B> when your own deals don&apos;t fill the 60 slots (new rep, thin book), <B>unassigned pool deals</B> fill the rest — same
+              marketing-signal ranking and 3-day exclusive checkout as List 3, limited to the list&apos;s timezones. Schedule any activity on one and it becomes <B>yours</B>.
+            </P>
 
             <H>List 3 — Afternoon sweep · 1 PM PT (automatic)</H>
             <P><B>1 · Carryover:</B> everything from today&apos;s Lists 1–2 you haven&apos;t dialed yet, original tier order kept. Each deal is re-checked — anything won/lost or moved to the Confirmation Pipeline since morning is dropped.</P>

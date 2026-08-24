@@ -745,7 +745,8 @@ async function claimReprospect(
   db: SupabaseClient,
   args: { repEmail: string; repPipedriveId: number; forDate: string },
   cfg: SprintListConfig,
-  remaining: number
+  remaining: number,
+  opts: { tzOffsets?: number[] } = {} // Lists 1/2 pool-fill: keep the slot's TZ partition
 ): Promise<ListItem[]> {
   // Pool = UNASSIGNED open deals (owner null). cainen_owner_pipedrive_id is a
   // legacy tunable: when set, the pool is that owner's deals instead (the
@@ -767,7 +768,7 @@ async function claimReprospect(
 
   // Load the whole open pool (paginated) with contacts + emails.
   const confIdsPool = await confirmationStageIds(db);
-  const pool = (await fetchAll((f, t) => {
+  let pool = (await fetchAll((f, t) => {
     let q = db
       .from("crm_deals")
       .select("id, pipedrive_deal_id, title, last_activity_at, contact_id, crm_contacts ( name, emails, phones, tz_offset )")
@@ -775,6 +776,11 @@ async function claimReprospect(
     q = poolOwnerId ? q.eq("owner_pipedrive_id", poolOwnerId) : q.is("owner_pipedrive_id", null);
     return notSnoozed(notConfirmation(q, confIdsPool), laDate(new Date())).range(f, t);
   })) as any[];
+  // Slot-partitioned fill (Lists 1/2): only contacts in the slot's timezones;
+  // unknown-TZ pool deals stay List 3 material.
+  if (opts.tzOffsets) {
+    pool = pool.filter((d) => opts.tzOffsets!.includes(d.crm_contacts?.tz_offset));
+  }
 
   // Cooldown: pool deals dialed ≥N times in the trailing week rest too —
   // whoever dialed them (the 3-day checkout alone doesn't stop a re-claim
@@ -902,11 +908,27 @@ export async function generateAndSave(
 
   let items = await computeList(db, args, cfg);
 
-  // List 3 appends the reprospecting pool after carryover + stale.
+  // Lists 1/2: when the rep's own ladder doesn't fill the cap (new rep, thin
+  // book), unassigned pool deals fill the remaining slots — same ranking +
+  // 3-day checkout rules as List 3, partitioned to the slot's timezones.
+  // Claiming (schedule anything → ownership) is how a new rep ramps faster
+  // than round-robin alone (Kyle, 8/24).
+  if ((args.slot === 1 || args.slot === 2) && cfg.cap && items.length < cfg.cap) {
+    const pool = await claimReprospect(db, args, cfg, cfg.cap - items.length, {
+      tzOffsets: SLOT_TZ[args.slot].offsets,
+    });
+    const have = new Set(items.map((i) => i.crmDealId));
+    items = [...items, ...pool.filter((p) => !have.has(p.crmDealId))];
+  }
+
+  // List 3 appends the reprospecting pool after carryover + stale. Dedupe
+  // against carryover — pool deals claimed on Lists 1/2 carry over uncalled
+  // AND re-include as this rep's active holds.
   if (args.slot === 3) {
     const remaining = cfg.cap ? cfg.cap - items.length : Infinity;
     const pool = await claimReprospect(db, args, cfg, remaining);
-    items = [...items, ...pool];
+    const have = new Set(items.map((i) => i.crmDealId));
+    items = [...items, ...pool.filter((p) => !have.has(p.crmDealId))];
   }
   if (cfg.cap && args.slot === 3) items = capList3(items, cfg.cap);
 

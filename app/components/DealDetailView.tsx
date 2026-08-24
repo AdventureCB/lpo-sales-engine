@@ -211,14 +211,21 @@ export function DealDetailView({
   const [pipelineSel, setPipelineSel] = useState<string | null>(null);
 
   const load = useCallback(
-    () =>
+    (retried = false): Promise<void> =>
       fetch(dealUrl(dealId, pdDealId))
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
         .then((d: DealData) => {
           setData(d);
           dealCache.set(dealUrl(dealId, pdDealId), { at: Date.now(), data: d });
         })
-        .catch((e) => setError(String(e))),
+        .catch((e) => {
+          // Transient 401s happen when two windows race the same session's
+          // token refresh (aux windows share cookies) — one retry heals it.
+          if (!retried && String(e).includes("401")) {
+            return new Promise<void>((res) => setTimeout(res, 1500)).then(() => load(true));
+          }
+          setError(String(e));
+        }),
     [dealId, pdDealId]
   );
   useEffect(() => {
