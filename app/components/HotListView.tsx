@@ -229,7 +229,7 @@ export function HotListView({ isAdmin = false }: { isAdmin?: boolean }) {
                     <tr key={f.id}>
                       <td><b>{f.deal_title ?? `Deal #${f.deal_id}`}</b></td>
                       <td style={{ whiteSpace: "nowrap" }}>{f.person_phone ?? "—"}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>{f.owner_name ?? "—"}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{f.owner_name ?? "Unassigned"}</td>
                       <td style={{ fontSize: 13.5, color: "var(--text-2)" }}>{f.reason}</td>
                       <td style={{ whiteSpace: "nowrap", fontSize: 13.5 }}>{flagStatus(f)}</td>
                     </tr>
@@ -271,7 +271,7 @@ export function HotListView({ isAdmin = false }: { isAdmin?: boolean }) {
                           </div>
                         )}
                       </td>
-                      <td style={{ whiteSpace: "nowrap" }}>{f.owner_name ?? "—"}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{f.owner_name ?? "Unassigned"}</td>
                       <td style={{ fontSize: 13.5, color: "var(--text-2)" }}>{f.reason}</td>
                       <td style={{ color: "var(--text-3)", whiteSpace: "nowrap" }}>
                         {fmtWhen(f.flagged_at)}

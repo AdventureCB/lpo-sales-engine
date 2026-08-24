@@ -130,13 +130,17 @@ export async function GET(req: Request) {
           personPhone = normalizePhone(persons?.get(deal.person_id)?.phone);
         }
 
+        // Cainen's PD account only FRONTS the ownerless pool (PD requires an
+        // owner) — in the app those deals are unassigned. Same translation as
+        // the mirror, or the hot list resurrects him as owner.
+        const isPoolAvatar = deal.owner_id === 24723797;
         const { error } = await db.from("hot_flags").insert({
           deal_id: dealId,
           reason: verdict.reason,
           signals: verdict.signals,
           deal_title: deal.title,
-          owner_name: deal.owner_name ?? null,
-          owner_pipedrive_id: deal.owner_id ?? null,
+          owner_name: isPoolAvatar ? null : deal.owner_name ?? null,
+          owner_pipedrive_id: isPoolAvatar ? null : deal.owner_id ?? null,
           person_phone: personPhone,
           cooldown_until: new Date(
             now.getTime() + rules.cooldown_days * 24 * 3600_000
