@@ -163,7 +163,7 @@ async function findContact(db: SupabaseClient, email: string | null, phone: stri
   if (email) {
     const { data } = await db
       .from("crm_contacts")
-      .select("id, name")
+      .select("id, name, dnc")
       .filter("emails", "cs", JSON.stringify([{ value: email }]))
       .limit(1)
       .maybeSingle();
@@ -172,7 +172,7 @@ async function findContact(db: SupabaseClient, email: string | null, phone: stri
   if (phone) {
     const { data } = await db
       .from("crm_contacts")
-      .select("id, name")
+      .select("id, name, dnc")
       .filter("phones", "cs", JSON.stringify([{ e164: phone }]))
       .limit(1)
       .maybeSingle();
@@ -204,7 +204,7 @@ async function createDealNative(
         phones: args.phone ? [{ value: args.phone, e164: args.phone, primary: true }] : [],
         source: source.label,
       })
-      .select("id, name")
+      .select("id, name, dnc")
       .single();
     contact = created;
   } else if (args.phone) {
@@ -314,6 +314,9 @@ export async function processIntake(
   }
 
   const contact = await findContact(db, email, phone);
+
+  // DNC is absolute: no new deals, no reopens, no re-heat notes.
+  if ((contact as any)?.dnc) return log({ action: "skipped", detail: "contact is DNC" });
 
   if (contact) {
     // Placeholder-name healing: recovery-era contacts were named by email

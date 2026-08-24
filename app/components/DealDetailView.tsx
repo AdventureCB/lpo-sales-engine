@@ -201,6 +201,8 @@ export function DealDetailView({
   const [logBusy, setLogBusy] = useState(false);
   const [depositFollow, setDepositFollow] = useState(false); // schedule modal opened by the Deposit flow
   const [lostReason, setLostReason] = useState("");
+  const [lostCat, setLostCat] = useState<string | null>(null);
+  const [competitorName, setCompetitorName] = useState("");
   const [mergeOpen, setMergeOpen] = useState(false);
   const [reopenPipe, setReopenPipe] = useState("");
   const [reopenStage, setReopenStage] = useState("");
@@ -1119,30 +1121,83 @@ export function DealDetailView({
           )}
 
           {modal === "lost" && (
-            <ActionModal title="Mark lost" onClose={() => setModal(null)}>
+            <ActionModal title="Close out deal" onClose={() => { setModal(null); setLostCat(null); setLostReason(""); setCompetitorName(""); }}>
               <div style={{ display: "grid", gap: 8 }}>
-                <input
-                  className="vmsel"
-                  placeholder="Loss reason… (e.g. Price, Timing, Went elsewhere)"
-                  value={lostReason}
-                  autoFocus
-                  onChange={(e) => setLostReason(e.target.value)}
-                />
-                <div style={{ fontSize: 13, color: "var(--text-3)" }}>
-                  The deal is unassigned from its owner and moved to Cainen for later re-prospecting.
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                  {([
+                    ["dnc", "🚫 DNC", "Customer asked us not to contact them — marked lost, contact excluded from all lists & engines"],
+                    ["no_interest", "😐 No interest", "Stays open — released to the reprospecting pool, unassigned"],
+                    ["no_contact", "📵 No contact made", "Stays open — released to the reprospecting pool, unassigned"],
+                    ["competitor", "🏁 Competitor purchase", "Marked lost — competitor name required"],
+                    ["not_qualified", "⛔ Not qualified", "Stays open — released to the reprospecting pool, unassigned"],
+                    ["duplicate", "🔗 Duplicate deal", "Marked lost (tip: ⧉ Merge preserves the timeline instead)"],
+                  ] as [string, string, string][]).map(([key, label, desc]) => (
+                    <button
+                      key={key}
+                      className="btn ghost"
+                      title={desc}
+                      style={{
+                        padding: "8px 10px",
+                        fontSize: 13,
+                        textAlign: "left",
+                        border: lostCat === key ? "1px solid var(--accent)" : "1px solid var(--border-soft)",
+                        background: lostCat === key ? "var(--accent-soft)" : undefined,
+                      }}
+                      onClick={() => setLostCat(key)}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
+
+                {lostCat && (
+                  <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+                    {lostCat === "dnc" && "Deal is marked lost and the contact is flagged Do-Not-Contact — excluded from sprint lists, dialer queues, and intake engines permanently."}
+                    {["no_interest", "no_contact", "not_qualified"].includes(lostCat) && "The deal STAYS OPEN: it's unassigned and returns to the reprospecting pool, where sprint lists resurface it by marketing signal."}
+                    {lostCat === "competitor" && "Deal is marked lost with the competitor recorded."}
+                    {lostCat === "duplicate" && "Deal is marked lost as a duplicate. If the other deal is the keeper, ⧉ Merge moves this timeline onto it instead."}
+                  </div>
+                )}
+
+                {lostCat === "competitor" && (
+                  <input
+                    className="vmsel"
+                    placeholder="Competitor name (required)"
+                    value={competitorName}
+                    autoFocus
+                    onChange={(e) => setCompetitorName(e.target.value)}
+                  />
+                )}
+                {lostCat && (
+                  <input
+                    className="vmsel"
+                    placeholder="Optional detail…"
+                    value={lostReason}
+                    onChange={(e) => setLostReason(e.target.value)}
+                  />
+                )}
+
                 <div style={{ display: "flex", gap: 8 }}>
                   <button
                     className="btn primary"
-                    disabled={!lostReason.trim() || saving}
+                    disabled={!lostCat || saving || (lostCat === "competitor" && !competitorName.trim())}
                     onClick={async () => {
-                      await update({ status: "lost", lostReason: lostReason.trim(), ownerPipedriveId: 24723797 });
+                      await update({
+                        lostCategory: {
+                          key: lostCat,
+                          ...(lostCat === "competitor" ? { competitor: competitorName.trim() } : {}),
+                          ...(lostReason.trim() ? { detail: lostReason.trim() } : {}),
+                        },
+                      });
                       setModal(null);
+                      setLostCat(null);
+                      setLostReason("");
+                      setCompetitorName("");
                     }}
                   >
-                    Mark lost
+                    {lostCat && ["no_interest", "no_contact", "not_qualified"].includes(lostCat) ? "Release to pool" : "Mark lost"}
                   </button>
-                  <button className="btn ghost" onClick={() => setModal(null)}>Cancel</button>
+                  <button className="btn ghost" onClick={() => { setModal(null); setLostCat(null); setLostReason(""); setCompetitorName(""); }}>Cancel</button>
                 </div>
               </div>
             </ActionModal>

@@ -56,30 +56,21 @@ export async function POST(req: NextRequest) {
     })
     .eq("id", survivorId);
 
-  // 3) Notes on both sides for the audit trail.
+  // 3) Audit note on the survivor (the duplicate is about to be deleted).
   const dupStage = (dup as any).crm_stages?.name ?? "—";
   await db.from("crm_activities").insert([
-    { deal_id: survivorId, contact_id: (survivor as any).contact_id, type: "note", actor: "system", subject: "🔗 Merged duplicate", body: `Absorbed "${(dup as any).title}" (was ${dupStage}). Its activities were moved here.` },
-    { deal_id: dupId, contact_id: (dup as any).contact_id, type: "note", actor: "system", subject: "🔗 Merged", body: `Merged into "${(survivor as any).title}".` },
+    { deal_id: survivorId, contact_id: (survivor as any).contact_id, type: "note", actor: "system", subject: "🔗 Merged duplicate", body: `Absorbed "${(dup as any).title}" (was ${dupStage}). Its activities were moved here; the duplicate was deleted.` },
   ]);
 
-  // 4) Close the duplicate.
-  await db
-    .from("crm_deals")
-    .update({ status: "lost", lost_at: nowIso, lost_reason: `Merged into "${(survivor as any).title}"`, updated_at: nowIso })
-    .eq("id", dupId);
-
-  // 5) Recompute the survivor's last-activity from the combined timeline.
-  await db.rpc("refresh_one_deal_last_activity", { p_deal: survivorId }).then(() => {}, () => {});
-
-  // 6) Keep Pipedrive consistent.
+  // 4) Keep Pipedrive consistent BEFORE deleting locally — PD's own merge
+  // deletes the source deal there, so the webhook can't resurrect it.
   let pdNote: string | null = null;
   const hasToken = !!envOptional("PIPEDRIVE_API_TOKEN");
   const dupPd = (dup as any).pipedrive_deal_id as number | null;
   const survPd = (survivor as any).pipedrive_deal_id as number | null;
   if (hasToken && dupPd && survPd) {
     try {
-      await mergeDeals(dupPd, survPd); // moves PD activities + marks dup merged
+      await mergeDeals(dupPd, survPd); // moves PD activities + deletes the PD source
     } catch {
       // Fall back to marking the duplicate lost via the outbox.
       await enqueuePdSync(db, "deal_update", { dealId: dupPd, fields: { status: "lost" } });
@@ -90,5 +81,21 @@ export async function POST(req: NextRequest) {
     await enqueuePdSync(db, "deal_update", { dealId: dupPd, fields: { status: "lost" } });
   }
 
-  return NextResponse.json({ ok: true, survivorId, pdNote });
+  // 5) DELETE the duplicate — only the master remains (Kyle, 8/24). Any
+  // straggler activity rows (NO ACTION FK) move first; sprint items,
+  // checkouts, profiles, and reviews cascade; intake/ai_usage refs null.
+  await db.from("crm_activities").update({ deal_id: survivorId }).eq("deal_id", dupId);
+  const { error: delErr } = await db.from("crm_deals").delete().eq("id", dupId);
+  if (delErr) {
+    // Deletion blocked — fall back to the old close-out so the merge still lands.
+    await db
+      .from("crm_deals")
+      .update({ status: "lost", lost_at: nowIso, lost_reason: `Merged into "${(survivor as any).title}"`, updated_at: nowIso })
+      .eq("id", dupId);
+  }
+
+  // 6) Recompute the survivor's last-activity from the combined timeline.
+  await db.rpc("refresh_one_deal_last_activity", { p_deal: survivorId }).then(() => {}, () => {});
+
+  return NextResponse.json({ ok: true, survivorId, pdNote, deleted: !delErr });
 }

@@ -243,6 +243,7 @@ export async function POST(req: NextRequest) {
 
   let body: {
     id?: string;
+    lostCategory?: { key?: string; competitor?: string; detail?: string };
     title?: string;
     valueDollars?: number | null;
     stageId?: string;
@@ -619,6 +620,64 @@ export async function POST(req: NextRequest) {
       subject: newOwner ? "Owner reassigned" : "Owner unassigned (pool)",
       actor: user.email,
     });
+  }
+
+  // Categorized lost flow (Kyle 8/24): DNC / competitor / duplicate CLOSE
+  // the deal; no-interest / no-contact / not-qualified RELEASE it to the
+  // pool still open (unassigned + checkout ended → reprospect material).
+  if (body.lostCategory) {
+    const cat = body.lostCategory;
+    const CATS: Record<string, string> = {
+      dnc: "DNC — asked not to contact",
+      no_interest: "No interest",
+      no_contact: "No contact made",
+      competitor: "Competitor purchase",
+      not_qualified: "Not qualified",
+      duplicate: "Duplicate deal",
+    };
+    const label = CATS[cat.key ?? ""];
+    if (!label) return NextResponse.json({ error: "bad lost category" }, { status: 400 });
+    const detail = (cat.detail ?? "").trim();
+    if (cat.key === "competitor" && !(cat.competitor ?? "").trim()) {
+      return NextResponse.json({ error: "competitor name required" }, { status: 400 });
+    }
+
+    if (cat.key === "dnc" && deal.contact_id) {
+      // Respected system-wide: intake skips, lists/dialer exclude.
+      await db.from("crm_contacts").update({ dnc: true, updated_at: new Date().toISOString() }).eq("id", deal.contact_id);
+      await db.from("crm_activities").insert({
+        deal_id: deal.id,
+        contact_id: deal.contact_id,
+        type: "system",
+        subject: "🚫 Contact marked Do-Not-Contact",
+        actor: user.email,
+      });
+    }
+
+    if (["no_interest", "no_contact", "not_qualified"].includes(cat.key!)) {
+      await db.from("crm_deals").update({ owner_pipedrive_id: null, updated_at: new Date().toISOString() }).eq("id", deal.id);
+      await db.from("crm_reprospect_checkouts").update({ released_at: new Date().toISOString() }).eq("deal_id", deal.id).is("released_at", null);
+      if (canWriteThrough) {
+        try {
+          await updateDealStage(deal.pipedrive_deal_id!, { owner_id: 24723797 });
+        } catch {
+          await enqueuePdSync(db, "deal_update", { dealId: deal.pipedrive_deal_id, fields: { owner_id: 24723797 } });
+        }
+      }
+      await db.from("crm_activities").insert({
+        deal_id: deal.id,
+        type: "system",
+        subject: `Released to pool — ${label}${detail ? `: ${detail}` : ""}`,
+        actor: user.email,
+      });
+    } else {
+      // Closing category → the normal lost path below, with a structured reason.
+      body.status = "lost";
+      body.lostReason =
+        cat.key === "competitor"
+          ? `Competitor purchase — ${cat.competitor!.trim()}${detail ? ` (${detail})` : ""}`
+          : `${label}${detail ? ` — ${detail}` : ""}`;
+    }
   }
 
   if (body.stageId || body.status) {

@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
     const { data: items, error } = await db
       .from("crm_sprint_items")
       .select(
-        "position, called_at, flag, crm_deals ( id, title, status, pipedrive_deal_id, crm_stages ( name ), crm_contacts ( name, phones ) )"
+        "position, called_at, flag, crm_deals ( id, title, status, pipedrive_deal_id, crm_stages ( name ), crm_contacts ( name, phones, dnc ) )"
       )
       .eq("sprint_id", sprintId)
       .is("called_at", null)
@@ -51,6 +51,7 @@ export async function GET(req: NextRequest) {
       .map((it: any) => {
         const d = it.crm_deals;
         if (d?.status && d.status !== "open") return null; // lost/won since generation
+        if (d?.crm_contacts?.dnc) return null; // Do-Not-Contact is absolute
         const phones = (d?.crm_contacts?.phones ?? []).filter((p: any) => !p.bad);
         const phone =
           phones.find((p: any) => p.primary && p.e164)?.e164 ??

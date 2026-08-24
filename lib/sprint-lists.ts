@@ -200,6 +200,7 @@ type DealRow = {
     emails: any[];
     phones: any[];
     tz_offset: number | null;
+    dnc?: boolean;
   } | null;
 };
 
@@ -433,7 +434,7 @@ async function computeLadder(
         db
           .from("crm_deals")
           .select(
-            "id, pipedrive_deal_id, title, created_at, pd_add_time, last_activity_at, contact_id, crm_contacts!inner ( id, name, emails, phones, tz_offset )"
+            "id, pipedrive_deal_id, title, created_at, pd_add_time, last_activity_at, contact_id, crm_contacts!inner ( id, name, emails, phones, tz_offset, dnc )"
           )
           .eq("status", "open")
           .eq("owner_pipedrive_id", repPipedriveId)
@@ -442,7 +443,7 @@ async function computeLadder(
       ),
       todayLa
     ).range(f, t)
-  )) as DealRow[];
+  )).filter((d: any) => !d.crm_contacts?.dnc) as DealRow[];
 
   const facts = await enrich(db, deals, cfg, todayLa);
 
@@ -559,7 +560,7 @@ async function computeList3(
     const carry: ListItem[] = [];
     for (const c of carryDealIds) {
       const d = byId.get(c.deal_id);
-      if (!d) continue;
+      if (!d || d.crm_contacts?.dnc) continue;
       const phone = primaryPhone(d.crm_contacts?.phones ?? []);
       if (!phone || seen.has(d.id)) continue;
       seen.add(d.id);
@@ -595,14 +596,14 @@ async function computeList3(
       notConfirmation(
         db
           .from("crm_deals")
-          .select("id, pipedrive_deal_id, title, contact_id, crm_contacts ( name, phones, tz_offset )")
+          .select("id, pipedrive_deal_id, title, contact_id, crm_contacts ( name, phones, tz_offset, dnc )")
           .eq("status", "open")
           .eq("owner_pipedrive_id", args.repPipedriveId),
         confIds3
       ),
       laDate(new Date())
     ).range(f, t)
-  )) as any[];
+  )).filter((d: any) => !d.crm_contacts?.dnc) as any[];
   const { engAt, attempts7d } = await customerEngagementRecency(db, repDeals, w.stale_max_days);
   const staleMaxT = daysAgoIso(w.stale_max_days);
   const staleMinT = daysAgoIso(w.stale_min_days);
@@ -651,7 +652,7 @@ async function loadDealsById(db: SupabaseClient, ids: string[]): Promise<Map<str
       notConfirmation(
         db
           .from("crm_deals")
-          .select("id, pipedrive_deal_id, title, created_at, pd_add_time, last_activity_at, contact_id, status, crm_contacts ( id, name, emails, phones, tz_offset )")
+          .select("id, pipedrive_deal_id, title, created_at, pd_add_time, last_activity_at, contact_id, status, crm_contacts ( id, name, emails, phones, tz_offset, dnc )")
           .in("id", chunk)
           .eq("status", "open"),
         confIds
@@ -771,13 +772,14 @@ async function claimReprospect(
   let pool = (await fetchAll((f, t) => {
     let q = db
       .from("crm_deals")
-      .select("id, pipedrive_deal_id, title, last_activity_at, contact_id, crm_contacts ( name, emails, phones, tz_offset )")
+      .select("id, pipedrive_deal_id, title, last_activity_at, contact_id, crm_contacts ( name, emails, phones, tz_offset, dnc )")
       .eq("status", "open");
     q = poolOwnerId ? q.eq("owner_pipedrive_id", poolOwnerId) : q.is("owner_pipedrive_id", null);
     return notSnoozed(notConfirmation(q, confIdsPool), laDate(new Date())).range(f, t);
   })) as any[];
   // Slot-partitioned fill (Lists 1/2): only contacts in the slot's timezones;
   // unknown-TZ pool deals stay List 3 material.
+  pool = pool.filter((d) => !d.crm_contacts?.dnc); // Do-Not-Contact is absolute
   if (opts.tzOffsets) {
     pool = pool.filter((d) => opts.tzOffsets!.includes(d.crm_contacts?.tz_offset));
   }

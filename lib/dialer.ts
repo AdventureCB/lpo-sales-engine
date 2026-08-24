@@ -111,7 +111,7 @@ export async function buildQueueLeads(opts: {
 
   // Read the CRM mirror (Pipedrive is a backup now).
   const cols =
-    "id, pipedrive_deal_id, title, status, owner_pipedrive_id, stage_id, last_activity_at, updated_at, contact_id, crm_stages ( id, name ), crm_contacts ( name, phones )";
+    "id, pipedrive_deal_id, title, status, owner_pipedrive_id, stage_id, last_activity_at, updated_at, contact_id, crm_stages ( id, name ), crm_contacts ( name, phones, dnc )";
   const rows = await fetchAllDeals((from, to) => {
     let q = db.from("crm_deals").select(cols).eq("status", status);
     if (stageUuids) q = q.in("stage_id", stageUuids);
@@ -142,6 +142,7 @@ export async function buildQueueLeads(opts: {
   let skippedNoPhone = 0;
   const leads: QueueLead[] = [];
   for (const d of owned) {
+    if (d.crm_contacts?.dnc) continue; // Do-Not-Contact is absolute
     const phone = pickPhone(d.crm_contacts?.phones ?? []).e164;
     if (!phone) {
       skippedNoPhone++;

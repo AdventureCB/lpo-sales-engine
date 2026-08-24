@@ -89,7 +89,7 @@ export function SprintLogicModal() {
 
             <H>Never on any list</H>
             <P>
-              Won or lost deals · Confirmation Pipeline deals (post-sale work, not sales calls) · contacts with no phone number · numbers struck as <B>bad</B> (a deal whose
+              Won or lost deals · Confirmation Pipeline deals (post-sale work, not sales calls) · contacts marked <B>DNC</B> (asked us not to contact them — excluded everywhere, permanently) · contacts with no phone number · numbers struck as <B>bad</B> (a deal whose
               only numbers are bad drops off entirely) · duplicate contacts (one best-tier deal per person) · old Pipedrive-era scheduled activities (only activities created in this app count for scheduling rules).
             </P>
 
