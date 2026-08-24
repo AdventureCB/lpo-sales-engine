@@ -188,8 +188,17 @@ export interface AdInteraction {
   channel: string | null; // paid channel slug when recognized
   campaign: string | null;
   adId: string | null;
-  origin: "tw" | "site"; // TW pixel journey vs first-party capture
+  origin: "tw" | "site" | "survey"; // TW pixel journey vs first-party capture vs post-purchase survey
   costCents: number | null; // channel CPC when priced; null = untracked cost
+  // Detail fields (row expand on the deal page):
+  campaignId?: string | null; // raw platform campaign id (campaign holds the resolved name)
+  adsetId?: string | null;
+  medium?: string | null;
+  content?: string | null;
+  clickIds?: string[]; // which click ids the touch carried (gclid/fbclid/…)
+  surveyAnswer?: string | null; // verbatim "how did you hear about us" text
+  viaSurvey?: boolean; // platform attribution that came from the survey answer
+  pricedBy?: "campaign" | "channel" | null; // cost basis: campaign CPC vs channel average
 }
 
 export interface AdJourney {
@@ -277,13 +286,33 @@ export async function computeAdJourney(
             if (!c?.source || c.source === "Excluded") continue;
             const key = `${c.source}|${c.campaignId ?? ""}|${c.clickDate ?? ""}`;
             if (seen.has(key)) continue;
+            // Triple Whale's post-purchase survey rides in as pseudo-touches:
+            // "triplesurvey-none" = an answer that maps to NO platform, and
+            // campaignId is the customer's VERBATIM answer text. A platform
+            // source with campaignId "triplesurvey" = attribution derived
+            // from the survey answer.
+            if (String(c.source).startsWith("triplesurvey")) {
+              seen.set(key, {
+                at: c.clickDate ? new Date(c.clickDate).toISOString() : null,
+                source: "Purchase survey",
+                channel: null,
+                campaign: null,
+                adId: null,
+                origin: "survey",
+                surveyAnswer: c.campaignId ? String(c.campaignId).slice(0, 300) : null,
+              } as AdInteraction);
+              continue;
+            }
+            const viaSurvey = c.campaignId === "triplesurvey";
             seen.set(key, {
               at: c.clickDate ? new Date(c.clickDate).toISOString() : null,
               source: String(c.source).slice(0, 60),
               channel: normalizeChannel(c.source),
-              campaign: c.campaignId ? String(c.campaignId).slice(0, 80) : null,
+              campaign: viaSurvey ? null : c.campaignId ? String(c.campaignId).slice(0, 80) : null,
               adId: c.adId ? String(c.adId).slice(0, 40) : null,
+              adsetId: c.adsetId ? String(c.adsetId).slice(0, 40) : null,
               origin: "tw",
+              viaSurvey,
             } as AdInteraction);
           }
         }
@@ -320,6 +349,9 @@ export async function computeAdJourney(
     if (!source) continue;
     const key = `site|${source}|${t.at ?? ""}`;
     if (seen.has(key)) continue;
+    const clickIds = (["gclid", "gbraid", "wbraid", "fbclid", "msclkid"] as const)
+      .filter((k) => t[k])
+      .map((k) => k);
     seen.set(key, {
       at: t.at ?? null,
       source: String(source).slice(0, 60),
@@ -327,6 +359,9 @@ export async function computeAdJourney(
       campaign: t.campaign ? String(t.campaign).slice(0, 80) : null,
       adId: null,
       origin: "site",
+      medium: t.medium ? String(t.medium).slice(0, 60) : null,
+      content: t.content ? String(t.content).slice(0, 120) : null,
+      clickIds: clickIds.length ? clickIds : undefined,
     } as AdInteraction);
   }
 
@@ -344,7 +379,8 @@ export async function computeAdJourney(
       const cost = camp?.cpcCents ?? (i.channel ? cpc.get(i.channel) ?? null : null);
       if (cost != null) { total += cost; priced++; }
       else if (i.channel) unpriced++; // paid channel, no click data → cost unknown
-      return { ...i, campaign: camp?.name ?? i.campaign, costCents: cost };
+      const pricedBy: AdInteraction["pricedBy"] = camp?.cpcCents != null ? "campaign" : cost != null ? "channel" : null;
+      return { ...i, campaignId: i.campaign, campaign: camp?.name ?? i.campaign, costCents: cost, pricedBy };
     })
     .sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""))
     .slice(0, 60);

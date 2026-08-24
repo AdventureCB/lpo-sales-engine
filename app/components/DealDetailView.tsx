@@ -20,7 +20,11 @@ interface DealData {
   callStats: { dials: number; answered: number; talkS: number; inbound: number } | null;
   adInfo?: { source: string | null; campaign: string | null; channel: string | null; leadCostCents: number | null } | null;
   adJourney?: {
-    interactions: { at: string | null; source: string; channel: string | null; campaign: string | null; adId: string | null; origin: string; costCents: number | null }[];
+    interactions: {
+      at: string | null; source: string; channel: string | null; campaign: string | null; adId: string | null; origin: string; costCents: number | null;
+      campaignId?: string | null; adsetId?: string | null; medium?: string | null; content?: string | null; clickIds?: string[];
+      surveyAnswer?: string | null; viaSurvey?: boolean; pricedBy?: string | null;
+    }[];
     totalCostCents: number;
     priced: number;
     unpriced: number;
@@ -2071,7 +2075,22 @@ function DealProfileSection({
 
 function AdJourneySection({ journey }: { journey: NonNullable<DealData["adJourney"]> }) {
   const [open, setOpen] = useState(false);
+  const [openIdx, setOpenIdx] = useState<number | null>(null);
   const shown = open ? journey.interactions : journey.interactions.slice(0, 6);
+
+  const ORIGIN_LABEL: Record<string, string> = {
+    tw: "Triple Whale order attribution (pixel journey tied to their purchase)",
+    site: "First-party site visit (our attr.js beacon saw this click land)",
+    survey: "Post-purchase survey — the customer's own answer to “how did you hear about us?”",
+  };
+
+  const Detail = ({ label, value }: { label: string; value: string }) => (
+    <div style={{ display: "flex", gap: 8, fontSize: 12.5 }}>
+      <span style={{ color: "var(--text-3)", minWidth: 88, flexShrink: 0 }}>{label}</span>
+      <span style={{ color: "var(--text-2)", wordBreak: "break-word" }}>{value}</span>
+    </div>
+  );
+
   return (
     <>
       <div className="panel-h" style={{ marginTop: 16 }}>
@@ -2087,23 +2106,67 @@ function AdJourneySection({ journey }: { journey: NonNullable<DealData["adJourne
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {shown.map((i, idx) => {
           const color = i.channel ? CHANNEL_BADGE[i.channel] ?? "var(--accent)" : "var(--text-3)";
+          const isOpen = openIdx === idx;
           return (
-            <div key={idx} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 13, padding: "3px 2px" }}>
-              <span style={{ color: "var(--text-3)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", minWidth: 92 }}>
-                {i.at
-                  ? new Date(i.at).toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric", year: "2-digit" })
-                  : "—"}
-              </span>
-              <span style={{ color, fontWeight: i.channel ? 650 : 500, whiteSpace: "nowrap" }}>{i.source}</span>
-              {i.campaign && (
-                <span style={{ color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }} title={i.campaign}>
-                  {i.campaign}
+            <div key={idx}>
+              <div
+                style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 13, padding: "3px 2px", cursor: "pointer", borderRadius: 6, background: isOpen ? "var(--surface-2)" : undefined }}
+                title={isOpen ? undefined : "Click for details"}
+                onClick={() => setOpenIdx(isOpen ? null : idx)}
+              >
+                <span style={{ color: "var(--text-3)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", minWidth: 92 }}>
+                  {i.at
+                    ? new Date(i.at).toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric", year: "2-digit" })
+                    : "—"}
                 </span>
+                <span style={{ color, fontWeight: i.channel ? 650 : 500, whiteSpace: "nowrap" }}>
+                  {i.origin === "survey" ? "📋 " : ""}{i.source}
+                </span>
+                {i.origin === "survey" && i.surveyAnswer && (
+                  <span style={{ color: "var(--text-2)", fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 260 }} title={i.surveyAnswer}>
+                    “{i.surveyAnswer}”
+                  </span>
+                )}
+                {i.campaign && (
+                  <span style={{ color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }} title={i.campaign}>
+                    {i.campaign}
+                  </span>
+                )}
+                {i.viaSurvey && <span style={{ fontSize: 11, color: "var(--text-3)" }}>(via survey)</span>}
+                {i.origin === "site" && <span style={{ fontSize: 11, color: "var(--text-3)" }}>(site)</span>}
+                <span style={{ marginLeft: "auto", fontVariantNumeric: "tabular-nums", color: i.costCents != null ? "var(--text-1)" : "var(--text-3)", whiteSpace: "nowrap" }}>
+                  {i.costCents != null ? `$${(i.costCents / 100).toFixed(2)}` : i.channel ? "?" : ""}
+                </span>
+              </div>
+
+              {isOpen && (
+                <div style={{ margin: "2px 0 6px 100px", padding: "8px 12px", background: "var(--surface-2)", borderRadius: 8, display: "grid", gap: 4 }}>
+                  {i.at && (
+                    <Detail label="When" value={new Date(i.at).toLocaleString("en-US", { timeZone: "America/Los_Angeles", dateStyle: "medium", timeStyle: "short" }) + " PT"} />
+                  )}
+                  <Detail label="Recorded by" value={ORIGIN_LABEL[i.origin] ?? i.origin} />
+                  {i.surveyAnswer && <Detail label="They said" value={`“${i.surveyAnswer}”`} />}
+                  {i.viaSurvey && <Detail label="Note" value="Platform credited from the customer's survey answer, not a tracked click." />}
+                  {i.channel && <Detail label="Channel" value={i.channel} />}
+                  {i.campaign && <Detail label="Campaign" value={i.campaign + (i.campaignId && i.campaignId !== i.campaign ? ` (id ${i.campaignId})` : "")} />}
+                  {!i.campaign && i.campaignId && <Detail label="Campaign id" value={i.campaignId} />}
+                  {i.adId && <Detail label="Ad id" value={i.adId} />}
+                  {i.adsetId && <Detail label="Ad set" value={i.adsetId} />}
+                  {i.medium && <Detail label="Medium" value={i.medium} />}
+                  {i.content && <Detail label="Content" value={i.content} />}
+                  {i.clickIds?.length ? <Detail label="Click ids" value={i.clickIds.join(", ")} /> : null}
+                  <Detail
+                    label="Est. cost"
+                    value={
+                      i.costCents != null
+                        ? `$${(i.costCents / 100).toFixed(2)} — ${i.pricedBy === "campaign" ? "this campaign's average CPC" : "channel-average CPC"}`
+                        : i.channel
+                          ? "unknown — paid channel but no click-cost data"
+                          : "free (organic / survey / direct)"
+                    }
+                  />
+                </div>
               )}
-              {i.origin === "site" && <span style={{ fontSize: 11, color: "var(--text-3)" }}>(site)</span>}
-              <span style={{ marginLeft: "auto", fontVariantNumeric: "tabular-nums", color: i.costCents != null ? "var(--text-1)" : "var(--text-3)", whiteSpace: "nowrap" }}>
-                {i.costCents != null ? `$${(i.costCents / 100).toFixed(2)}` : i.channel ? "?" : ""}
-              </span>
             </div>
           );
         })}
