@@ -30,10 +30,13 @@ export async function GET(req: Request) {
   for (const rep of reps ?? []) {
     const num = rep.telnyx_number as string;
     const enc = encodeURIComponent(num);
-    const [msg, campaign] = await Promise.all([
+    const [msg, campPathPlus, campPathBare, campQuery] = await Promise.all([
       g(`/messaging_phone_numbers/${enc}`),
+      g(`/10dlc/phoneNumberAssignmentByPhoneNumber/${enc}`),
       g(`/10dlc/phoneNumberAssignmentByPhoneNumber/${enc.replace("%2B", "")}`),
+      g(`/10dlc/phoneNumberAssignmentByPhoneNumber?phoneNumber=${enc}`),
     ]);
+    const campaign = [campPathPlus, campPathBare, campQuery].find((c) => c.status === 200) ?? campPathBare;
     out[`${rep.name} (${num})`] = {
       messaging: {
         profile_id: msg.json?.data?.messaging_profile_id ?? null,
@@ -41,7 +44,11 @@ export async function GET(req: Request) {
         features: msg.json?.data?.features ?? null,
         http: msg.status,
       },
-      tenDlcCampaign: { http: campaign.status, body: campaign.json?.data ?? campaign.json ?? null },
+      tenDlcCampaign: {
+        http: campaign.status,
+        body: campaign.json?.data ?? campaign.json ?? null,
+        variants: { pathPlus: campPathPlus.status, pathBare: campPathBare.status, query: campQuery.status },
+      },
     };
   }
   return NextResponse.json({ ok: true, numbers: out });
