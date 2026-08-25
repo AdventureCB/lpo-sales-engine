@@ -283,7 +283,7 @@ export async function speakCall(callControlId: string, text: string, clientState
 export async function transferCall(
   callControlId: string,
   to: string,
-  opts: { timeoutSecs: number; clientState: string }
+  opts: { timeoutSecs: number; clientState: string; from?: string | null }
 ): Promise<void> {
   await tx(`/calls/${callControlId}/actions/transfer`, {
     method: "POST",
@@ -291,6 +291,10 @@ export async function transferCall(
       to,
       timeout_secs: opts.timeoutSecs,
       client_state: Buffer.from(opts.clientState).toString("base64"),
+      // Caller-id passthrough: without `from`, the SIP leg presents the
+      // DIALED number and the rep's ring popup shows their own line instead
+      // of who's calling.
+      ...(opts.from ? { from: opts.from } : {}),
     }),
   });
 }

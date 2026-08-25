@@ -199,7 +199,8 @@ export async function POST(req: NextRequest) {
           const { transferCall, getSharedSipUsername } = await import("@/lib/telnyx");
           const shared = await getSharedSipUsername(db);
           if (shared && !p.to.includes(`${shared}@`)) {
-            await transferCall(String(craw.a_ccid), `sip:${shared}@sip.telnyx.com`, { timeoutSecs: 55, clientState: "ring" });
+            const caller = ((craw as any)?.data?.object?.participants ?? [])[0] ?? null;
+            await transferCall(String(craw.a_ccid), `sip:${shared}@sip.telnyx.com`, { timeoutSecs: 55, clientState: "ring", from: typeof caller === "string" ? caller : null });
           }
         }
       } catch (e) {
@@ -430,7 +431,7 @@ export async function POST(req: NextRequest) {
       }
       if (sipLogin) {
         const { transferCall } = await import("@/lib/telnyx");
-        await transferCall(p.call_control_id, `sip:${sipLogin}@sip.telnyx.com`, { timeoutSecs: 55, clientState: "ring" });
+        await transferCall(p.call_control_id, `sip:${sipLogin}@sip.telnyx.com`, { timeoutSecs: 55, clientState: "ring", from: typeof p.from === "string" ? p.from : null });
       } else {
         console.error(`no SIP client for inbound number ${toN} — call goes straight to voicemail timer`);
       }
