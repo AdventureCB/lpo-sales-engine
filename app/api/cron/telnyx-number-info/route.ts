@@ -25,6 +25,37 @@ export async function GET(req: Request) {
   };
 
   const db = supabaseAdmin();
+
+  // ?messages=+1509… → fetch the last 8 outbound Telnyx messages for that
+  // number from Telnyx itself (full status/errors/carrier per recipient —
+  // the webhook only keeps the coarse status).
+  const msgsFor = new URL(req.url).searchParams.get("messages");
+  if (msgsFor) {
+    const { data: rows } = await db
+      .from("sms_messages")
+      .select("provider_message_id, peer_phone, status, created_at")
+      .eq("provider", "telnyx")
+      .eq("direction", "outgoing")
+      .eq("our_number", msgsFor)
+      .order("created_at", { ascending: false })
+      .limit(8);
+    const detail = await Promise.all(
+      (rows ?? []).map(async (m) => {
+        const r = await g(`/messages/${encodeURIComponent(m.provider_message_id as string)}`);
+        const d = r.json?.data ?? null;
+        return {
+          created_at: m.created_at,
+          peer_last4: String(m.peer_phone ?? "").slice(-4),
+          db_status: m.status,
+          telnyx: d
+            ? { to: d.to, errors: d.errors ?? null, cost: d.cost ?? null, parts: d.parts ?? null, type: d.type ?? null }
+            : { http: r.status, body: r.json },
+        };
+      })
+    );
+    return NextResponse.json({ ok: true, number: msgsFor, detail });
+  }
+
   const { data: reps } = await db.from("reps").select("name, telnyx_number").eq("active", true).not("telnyx_number", "is", null);
   const out: Record<string, unknown> = {};
   // ?phone=+1509… adds an arbitrary number to the report (comparison against a known-good line)
