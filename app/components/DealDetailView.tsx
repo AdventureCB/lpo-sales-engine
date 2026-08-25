@@ -2867,6 +2867,27 @@ function CommBar({
     setAwaitingDispo(true);
   };
 
+  // Call popup extras: talk timer + mute toggle.
+  const [callSec, setCallSec] = useState(0);
+  const [muted, setMuted] = useState(false);
+  useEffect(() => {
+    if (callState !== "active") {
+      setCallSec(0);
+      setMuted(false);
+      return;
+    }
+    const iv = setInterval(() => setCallSec((s) => s + 1), 1000);
+    return () => clearInterval(iv);
+  }, [callState]);
+  const toggleMute = () => {
+    try {
+      if (muted) callRef.current?.unmuteAudio();
+      else callRef.current?.muteAudio();
+      setMuted(!muted);
+    } catch {}
+  };
+  const mmss = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+
   const flashOk = (msg: string) => {
     setOk(msg);
     setTimeout(() => setOk(null), 3000);
@@ -3042,63 +3063,114 @@ function CommBar({
         </div>
       )}
 
-      {/* Disposition — appears when a call wraps, same flow as the dialer. */}
-      {awaitingDispo && !pendingDispo && (
-        <div className="card" style={{ marginTop: 12 }}>
-          <div className="panel-h">How did the call go?</div>
-          <div className="dispo-row attn" style={{ display: "flex", marginTop: 0 }}>
-            {DISPOSITIONS.map(([key, label]) => (
-              <button key={key} className="btn" onClick={() => setPendingDispo(key)}>
-                {label}
-              </button>
-            ))}
-            <button className="btn ghost" onClick={() => setAwaitingDispo(false)} title="No disposition — the call still logs via webhook">
-              Skip
-            </button>
-          </div>
-        </div>
-      )}
-      {awaitingDispo && pendingDispo && (
-        <div className="card" style={{ marginTop: 12 }}>
-          <input
-            className="vmsel"
-            style={{ width: "100%", marginBottom: 8 }}
-            placeholder="Add a note about this call… (optional, saves to the deal)"
-            value={dispoNote}
-            onChange={(e) => setDispoNote(e.target.value)}
-          />
-          <div className="dispo-row" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", marginTop: 0 }}>
-            <span style={{ fontSize: 13.5, color: "var(--text-2)" }}>Next step?</span>
-            <select className="vmsel" style={{ width: "auto", padding: "6px 8px", fontSize: 13.5 }} value={nextType} onChange={(e) => setNextType(e.target.value)}>
-              <option value="call">📞 Call</option>
-              <option value="task">📋 Task</option>
-              <option value="email">✉️ Email</option>
-              <option value="meeting">📅 Meeting</option>
-            </select>
-            <button className="btn" onClick={() => completeDispo(followUpAt(7))}>1 week</button>
-            <button className="btn" onClick={() => completeDispo(followUpAt(14))}>2 weeks</button>
-            <button className="btn" onClick={() => completeDispo(followUpAt(30))}>1 month</button>
-            <button className="btn" onClick={() => setShowCustomDue((v) => !v)}>📅 Custom…</button>
-            <button className="btn ghost" onClick={() => completeDispo(null)}>No follow-up</button>
-          </div>
-          {showCustomDue && (
-            <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
-              <input
-                type="datetime-local"
-                className="vmsel"
-                style={{ width: "auto" }}
-                value={customDue}
-                onChange={(e) => setCustomDue(e.target.value)}
-              />
-              <button
-                className="btn primary"
-                style={{ padding: "7px 14px", fontSize: 14 }}
-                disabled={!customDue}
-                onClick={() => completeDispo(new Date(customDue).toISOString())}
-              >
-                Schedule
-              </button>
+      {/* ── Floating call panel: live controls during the call, then the same
+             disposition flow as the dialer — one popup, bottom-right. ── */}
+      {((callState && !callState.startsWith("error")) || awaitingDispo) && (
+        <div
+          style={{
+            position: "fixed",
+            right: 18,
+            bottom: 18,
+            zIndex: 8600,
+            width: "min(400px, 92vw)",
+            boxShadow: "0 10px 34px rgba(0,0,0,0.4)",
+            borderRadius: 12,
+          }}
+          className="card"
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+            <span style={{ fontSize: 20 }}>📞</span>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontWeight: 750, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {contact?.name?.trim() || phone}
+              </div>
+              <div style={{ fontSize: 12.5, color: callState === "active" ? "var(--good)" : "var(--text-3)" }}>
+                {callState === "active"
+                  ? `On call · ${mmss(callSec)}`
+                  : callState
+                    ? "Ringing…"
+                    : "Call ended — log it"}
+              </div>
             </div>
+            {callState === "active" && (
+              <button className="btn ghost" style={{ padding: "6px 10px", fontSize: 13 }} onClick={toggleMute} title={muted ? "Unmute" : "Mute"}>
+                {muted ? "🔇 Muted" : "🎤 Mute"}
+              </button>
+            )}
+            {callState && (
+              <button className="btn" style={{ padding: "6px 14px", fontSize: 13.5, background: "var(--crit)", color: "#fff" }} onClick={endCall}>
+                {callState === "active" ? "⏹ End" : "✕ Cancel"}
+              </button>
+            )}
+          </div>
+
+          {/* Disposition — appears when the call wraps, same flow as the dialer. */}
+          {awaitingDispo && !pendingDispo && (
+            <>
+              <div style={{ fontSize: 13, color: "var(--text-2)", marginBottom: 6 }}>How did the call go?</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {DISPOSITIONS.map(([key, label]) => (
+                  <button key={key} className="btn" style={{ padding: "7px 10px", fontSize: 13 }} onClick={() => setPendingDispo(key)}>
+                    {label}
+                  </button>
+                ))}
+                <button className="btn ghost" style={{ padding: "7px 10px", fontSize: 13 }} onClick={() => setAwaitingDispo(false)} title="No disposition — the call still logs via webhook">
+                  Skip
+                </button>
+              </div>
+            </>
+          )}
+          {awaitingDispo && pendingDispo && (
+            <>
+              <input
+                className="vmsel"
+                style={{ width: "100%", marginBottom: 8 }}
+                placeholder="Add a note about this call… (optional, saves to the deal)"
+                value={dispoNote}
+                autoFocus
+                onChange={(e) => setDispoNote(e.target.value)}
+              />
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 13, color: "var(--text-2)" }}>Next step?</span>
+                <select className="vmsel" style={{ width: "auto", padding: "6px 8px", fontSize: 13 }} value={nextType} onChange={(e) => setNextType(e.target.value)}>
+                  <option value="call">📞 Call</option>
+                  <option value="task">📋 Task</option>
+                  <option value="email">✉️ Email</option>
+                  <option value="meeting">📅 Meeting</option>
+                </select>
+                <button className="btn" style={{ padding: "6px 9px", fontSize: 13 }} onClick={() => completeDispo(followUpAt(7))}>1 wk</button>
+                <button className="btn" style={{ padding: "6px 9px", fontSize: 13 }} onClick={() => completeDispo(followUpAt(14))}>2 wks</button>
+                <button className="btn" style={{ padding: "6px 9px", fontSize: 13 }} onClick={() => completeDispo(followUpAt(30))}>1 mo</button>
+                <button className="btn" style={{ padding: "6px 9px", fontSize: 13 }} onClick={() => setShowCustomDue((v) => !v)}>📅</button>
+                <button className="btn ghost" style={{ padding: "6px 9px", fontSize: 13 }} onClick={() => completeDispo(null)}>No follow-up</button>
+              </div>
+              {showCustomDue && (
+                <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+                  <input
+                    type="datetime-local"
+                    className="vmsel"
+                    style={{ width: "auto" }}
+                    value={customDue}
+                    onChange={(e) => setCustomDue(e.target.value)}
+                  />
+                  <button
+                    className="btn primary"
+                    style={{ padding: "7px 14px", fontSize: 14 }}
+                    disabled={!customDue}
+                    onClick={() => completeDispo(new Date(customDue).toISOString())}
+                  >
+                    Schedule
+                  </button>
+                </div>
+              )}
+              <button
+                className="btn ghost"
+                style={{ padding: "4px 9px", fontSize: 12, marginTop: 8 }}
+                onClick={() => setPendingDispo(null)}
+              >
+                ← Different disposition
+              </button>
+            </>
           )}
         </div>
       )}
