@@ -39,6 +39,18 @@ export async function POST(req: NextRequest) {
     if (entity === "person" && action !== "delete") {
       await upsertContact(db, data);
     } else if (entity === "deal" && action !== "delete") {
+      // Tombstone guard: PD's own merge emits CHANGE events for the source
+      // deal before its delete event — without this, a locally-deleted merge
+      // duplicate resurrects in the mirror (Njriverrat, 8/25).
+      const pdId = data?.id ?? payload?.meta?.entity_id ?? null;
+      if (pdId != null) {
+        const { data: tomb } = await db
+          .from("crm_sync_state")
+          .select("key")
+          .eq("key", `deleted:deal:${pdId}`)
+          .maybeSingle();
+        if (tomb) return NextResponse.json({ ok: true, ignored: "tombstoned deal" });
+      }
       // Live changes emit automation events; the bulk importer does not.
       await upsertDeal(db, data, { emitEvents: true });
     } else if (entity === "activity" && action !== "delete") {
@@ -48,13 +60,21 @@ export async function POST(req: NextRequest) {
     } else if (entity === "activity" && action === "delete") {
       await deleteActivityByPdId(db, payload?.meta?.entity_id ?? payload?.previous?.id);
     } else if (action === "delete") {
+      const entId = payload?.meta?.entity_id ?? payload?.previous?.id ?? "?";
       await db.from("crm_sync_state").upsert(
-        {
-          key: `deleted:${entity}:${payload?.meta?.entity_id ?? payload?.previous?.id ?? "?"}`,
-          value: { at: new Date().toISOString() },
-        },
+        { key: `deleted:${entity}:${entId}`, value: { at: new Date().toISOString() } },
         { onConflict: "key" }
       );
+      // A deal deleted in PD leaves the mirror too (merge sources, deliberate
+      // portal deletions). Activities detach to their contact linkage first —
+      // the activities FK would otherwise block the delete.
+      if (entity === "deal" && entId !== "?") {
+        const { data: row } = await db.from("crm_deals").select("id").eq("pipedrive_deal_id", entId).maybeSingle();
+        if (row) {
+          await db.from("crm_activities").update({ deal_id: null }).eq("deal_id", row.id);
+          await db.from("crm_deals").delete().eq("id", row.id);
+        }
+      }
     } else {
       return NextResponse.json({ ok: true, ignored: entity });
     }

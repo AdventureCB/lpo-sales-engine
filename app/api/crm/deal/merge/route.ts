@@ -68,6 +68,14 @@ export async function POST(req: NextRequest) {
   const hasToken = !!envOptional("PIPEDRIVE_API_TOKEN");
   const dupPd = (dup as any).pipedrive_deal_id as number | null;
   const survPd = (survivor as any).pipedrive_deal_id as number | null;
+  // Tombstone FIRST: PD's merge emits change events for the source deal
+  // before its delete event — the webhook skips tombstoned deals.
+  if (dupPd) {
+    await db.from("crm_sync_state").upsert(
+      { key: `deleted:deal:${dupPd}`, value: { at: nowIso, reason: "merged", into: survPd ?? survivorId } },
+      { onConflict: "key" }
+    );
+  }
   if (hasToken && dupPd && survPd) {
     try {
       await mergeDeals(dupPd, survPd); // moves PD activities + deletes the PD source
