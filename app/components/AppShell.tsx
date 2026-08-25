@@ -6,6 +6,7 @@ import { NavGroup } from "./NavGroup";
 import { NotificationBell } from "./NotificationBell";
 import { ThemeToggle } from "./ThemeToggle";
 import { ChatDock } from "./ChatDock";
+import { InboundTextWatcher } from "./InboundTextWatcher";
 
 interface NavItem {
   label: string;
@@ -114,6 +115,7 @@ export function AppShell({
       </aside>
       <main>{children}</main>
       <ChatDock />
+      <InboundTextWatcher />
     </div>
   );
 }
