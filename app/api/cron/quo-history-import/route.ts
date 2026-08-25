@@ -170,6 +170,19 @@ export async function GET(req: Request) {
       if (pageToken) params.pageToken = pageToken;
       const page = await quoGet("/messages", params).catch(() => null);
       if (!page) break;
+      // One media-state lookup per PAGE (not per message) — a several-
+      //-thousand-message thread must skim already-checked rows in
+      // milliseconds or it can never finish inside the 60s function cap.
+      const pageIds = (page.data ?? []).map((m: any) => m.id).filter(Boolean);
+      const mediaState = new Map<string, unknown>();
+      if (pageIds.length) {
+        const { data: existingRows } = await db
+          .from("sms_messages")
+          .select("provider_message_id, media")
+          .eq("provider", "quo")
+          .in("provider_message_id", pageIds);
+        for (const r of existingRows ?? []) mediaState.set(r.provider_message_id as string, r.media);
+      }
       for (const m of page.data ?? []) {
         if (Date.now() - started > 50_000) return false; // hard stop before Vercel's 60s kill; markers make resume cheap
         scanned++;
@@ -184,13 +197,7 @@ export async function GET(req: Request) {
         // message on each resume.
         let checkedEmpty = false;
         if (!mediaUrls.length) {
-          const { data: existing } = await db
-            .from("sms_messages")
-            .select("media")
-            .eq("provider", "quo")
-            .eq("provider_message_id", m.id)
-            .maybeSingle();
-          if (existing && existing.media != null) continue; // mirrored or checked-empty; row already imported
+          if (mediaState.has(m.id) && mediaState.get(m.id) != null) continue; // mirrored or checked-empty; row already imported
           const det: any = await quoGet(`/messages/${encodeURIComponent(m.id)}`, {}).catch(() => null);
           mediaUrls = (Array.isArray(det?.data?.media) ? det.data.media : [])
             .map((x: any) => (typeof x === "string" ? x : x?.url))
