@@ -138,6 +138,28 @@ export async function gatherDealInputs(db: SupabaseClient, dealId: string): Prom
     }
   }
 
+  // Telnyx-era transcripts live in call_events.raw->transcript (Deepgram) and
+  // never become activity bodies — the Quo-era pipeline wrote transcripts into
+  // crm_activities, this one doesn't. Quo-era call_events deliberately carry
+  // no transcript text, so this source is purely additive (no double-count).
+  {
+    const pdIdForCalls = (deal as any).pipedrive_deal_id;
+    const orExpr = pdIdForCalls != null ? `crm_deal_id.eq.${dealId},deal_id.eq.${pdIdForCalls}` : `crm_deal_id.eq.${dealId}`;
+    const { data: ceTr } = await db
+      .from("call_events")
+      .select("started_at, transcript:raw->>transcript")
+      .or(orExpr)
+      .order("started_at", { ascending: true })
+      .limit(200);
+    for (const ce of ceTr ?? []) {
+      const text = String((ce as any).transcript ?? "").trim();
+      if (text.length <= 120 || !ce.started_at) continue;
+      transcripts.push({ at: ce.started_at, text: text.slice(0, 4000) });
+      if (!latestActivityAt || ce.started_at > latestActivityAt) latestActivityAt = ce.started_at;
+    }
+    transcripts.sort((a, b) => (a.at < b.at ? -1 : 1));
+  }
+
   // Ad interactions (with campaign/ad IDs) + engagement signals, keyed by email.
   let adText = "None recorded.";
   let signalText = "None recorded.";
