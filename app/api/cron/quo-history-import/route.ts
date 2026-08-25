@@ -51,6 +51,26 @@ export async function GET(req: Request) {
     return r.json();
   };
 
+  // ?convs=1 — list conversations with participant counts (group-thread probe)
+  if (u.searchParams.get("convs") === "1") {
+    const convs: any[] = [];
+    let pt: string | null = null;
+    do {
+      const params: Record<string, string> = { "phoneNumbers[]": phoneNumberId, updatedAfter: createdAfter, maxResults: "100" };
+      if (pt) params.pageToken = pt;
+      const page: any = await quoGet("/conversations", params);
+      convs.push(...(page.data ?? []));
+      pt = page.nextPageToken ?? null;
+    } while (pt && Date.now() - started < 45_000);
+    const groups = convs.filter((c) => (c.participants ?? []).length > 1);
+    return NextResponse.json({
+      ok: true,
+      conversations: convs.length,
+      groupThreads: groups.length,
+      groupSample: groups.slice(0, 10).map((c) => ({ id: c.id, participants: c.participants, lastActivityAt: c.lastActivityAt ?? c.updatedAt })),
+    });
+  }
+
   const participants = (await listConversationParticipants({ phoneNumberId, updatedAfter: createdAfter })).sort();
 
   if (probe) {
