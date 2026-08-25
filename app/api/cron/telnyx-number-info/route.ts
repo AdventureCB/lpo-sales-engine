@@ -26,6 +26,21 @@ export async function GET(req: Request) {
 
   const db = supabaseAdmin();
 
+  // ?sendtest=+1to&from=+1from — diagnostic A/B send (delivery-path isolation).
+  const diagUrl = new URL(req.url);
+  const sendTo = diagUrl.searchParams.get("sendtest");
+  const sendFrom = diagUrl.searchParams.get("from");
+  if (sendTo && sendFrom) {
+    const { sendSms } = await import("@/lib/telnyx");
+    const stamp = new Date().toISOString().slice(11, 19);
+    const out = await sendSms({
+      from: sendFrom,
+      to: sendTo,
+      text: `LPO delivery test ${stamp} UTC from ${sendFrom}. Reply STOP to opt out.`,
+    }).catch((e) => ({ error: String(e) } as any));
+    return NextResponse.json({ ok: true, sent: out });
+  }
+
   // ?messages=+1509… → fetch the last 8 outbound Telnyx messages for that
   // number from Telnyx itself (full status/errors/carrier per recipient —
   // the webhook only keeps the coarse status).
