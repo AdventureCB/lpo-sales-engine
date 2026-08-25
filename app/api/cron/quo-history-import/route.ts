@@ -56,7 +56,7 @@ export async function GET(req: Request) {
   if (probe) {
     const sample = participants.slice(0, 3);
     const raw = await quoPool(sample, (p) =>
-      quoGet("/messages", { phoneNumberId, "participants[]": p, maxResults: "3" }).catch((e) => ({ error: String(e) }))
+      quoGet("/messages", { phoneNumberId, participants: p, maxResults: "3" }).catch((e) => ({ error: String(e) }))
     );
     return NextResponse.json({ ok: true, participants: participants.length, sample, raw });
   }
@@ -93,7 +93,7 @@ export async function GET(req: Request) {
     const peer = participants[i];
     let pageToken: string | null = null;
     do {
-      const params: Record<string, string> = { phoneNumberId, "participants[]": peer, maxResults: "100", createdAfter };
+      const params: Record<string, string> = { phoneNumberId, participants: peer, maxResults: "100", createdAfter };
       if (pageToken) params.pageToken = pageToken;
       const page = await quoGet("/messages", params).catch(() => null);
       if (!page) break;
