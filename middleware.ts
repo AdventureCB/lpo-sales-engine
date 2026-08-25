@@ -5,9 +5,11 @@ import { createServerClient } from "@supabase/ssr";
 // bearer secret, health is intentionally public (booleans only).
 // /api/ai has its own auth inside (admin session OR cron bearer) — the same
 // pattern as crons — so it opts out of the cookie gate here.
-// /api/attr/ is the anonymous first-party beacon (attr.js on the store) —
-// it validates + rate-caps internally and MUST be reachable without a session.
-const PUBLIC_PREFIXES = ["/login", "/api/webhooks/", "/api/cron/", "/api/health", "/api/ai/", "/api/attr/"];
+// /api/attr/ is the anonymous first-party beacon and /attr.js is the script
+// itself, loaded by anonymous store visitors — BOTH must bypass the session
+// gate (the matcher only excludes _next assets, so public/ files are matched;
+// /attr.js redirected to /login for two weeks and never ran for visitors).
+const PUBLIC_PREFIXES = ["/login", "/api/webhooks/", "/api/cron/", "/api/health", "/api/ai/", "/api/attr/", "/attr.js"];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
