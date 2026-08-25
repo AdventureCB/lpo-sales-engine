@@ -173,6 +173,32 @@ export async function provisionRepCalling(
     }
   }
 
+  // Self-heal: the SIP login only got stored when a connection was CREATED —
+  // a rep whose connection pre-existed (pilot era) has no stored login, so
+  // their browser registers via token, which does NOT bind for inbound →
+  // calls fall straight to voicemail. Recover (or rotate) the login now.
+  const { data: sipRow } = await db
+    .from("crm_sync_state")
+    .select("value")
+    .eq("key", `telnyx_sip:${rep.id}`)
+    .maybeSingle();
+  if (!sipRow && connectionId) {
+    const conn = await tx(`/credential_connections/${connectionId}`).catch(() => null);
+    let login: string | null = conn?.data?.user_name ?? null;
+    let password: string | null = conn?.data?.password ?? null;
+    if (!login || !password) {
+      login = login ?? `${slug.replace(/-/g, "")}${Math.random().toString(36).slice(2, 6)}`;
+      password = crypto.randomUUID().replace(/-/g, "");
+      await tx(`/credential_connections/${connectionId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ user_name: login, password }),
+      });
+    }
+    await db
+      .from("crm_sync_state")
+      .upsert({ key: `telnyx_sip:${rep.id}`, value: { login, password } }, { onConflict: "key" });
+  }
+
   let credentialId = rep.telnyx_credential_id;
   if (!credentialId) {
     const creds = await tx(`/telephony_credentials?filter[name]=${slug}`);
