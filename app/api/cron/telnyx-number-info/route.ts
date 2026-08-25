@@ -27,17 +27,20 @@ export async function GET(req: Request) {
   const db = supabaseAdmin();
   const { data: reps } = await db.from("reps").select("name, telnyx_number").eq("active", true).not("telnyx_number", "is", null);
   const out: Record<string, unknown> = {};
-  for (const rep of reps ?? []) {
-    const num = rep.telnyx_number as string;
+  // ?phone=+1509… adds an arbitrary number to the report (comparison against a known-good line)
+  const extra = new URL(req.url).searchParams.get("phone");
+  const targets = [...(reps ?? []).map((r) => ({ name: r.name as string, num: r.telnyx_number as string })), ...(extra ? [{ name: "extra", num: extra }] : [])];
+  for (const { name, num } of targets) {
     const enc = encodeURIComponent(num);
-    const [msg, campPathPlus, campPathBare, campQuery] = await Promise.all([
+    const [msg, campPathPlus, campPathBare, campQuery, pnc] = await Promise.all([
       g(`/messaging_phone_numbers/${enc}`),
       g(`/10dlc/phoneNumberAssignmentByPhoneNumber/${enc}`),
       g(`/10dlc/phoneNumberAssignmentByPhoneNumber/${enc.replace("%2B", "")}`),
       g(`/10dlc/phoneNumberAssignmentByPhoneNumber?phoneNumber=${enc}`),
+      g(`/phone_number_campaigns/${enc}`),
     ]);
-    const campaign = [campPathPlus, campPathBare, campQuery].find((c) => c.status === 200) ?? campPathBare;
-    out[`${rep.name} (${num})`] = {
+    const campaign = [campPathPlus, campPathBare, campQuery, pnc].find((c) => c.status === 200) ?? campPathBare;
+    out[`${name} (${num})`] = {
       messaging: {
         profile_id: msg.json?.data?.messaging_profile_id ?? null,
         product: msg.json?.data?.messaging_product ?? null,
@@ -47,7 +50,8 @@ export async function GET(req: Request) {
       tenDlcCampaign: {
         http: campaign.status,
         body: campaign.json?.data ?? campaign.json ?? null,
-        variants: { pathPlus: campPathPlus.status, pathBare: campPathBare.status, query: campQuery.status },
+        variants: { pathPlus: campPathPlus.status, pathBare: campPathBare.status, query: campQuery.status, phoneNumberCampaigns: pnc.status },
+        phoneNumberCampaign: pnc.json?.data ?? pnc.json ?? null,
       },
     };
   }
