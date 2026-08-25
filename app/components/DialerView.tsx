@@ -128,12 +128,19 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [queuesOpen, setQueuesOpen] = useState(false);
 
   const [inCall, setInCall] = useState(false);
-  // How calls are placed: Quo desktop app (tel: handoff), Quo web (clipboard
-  // handoff), or in-tab browser calling via Telnyx WebRTC. Sticky per machine.
-  const [dialMethod, setDialMethod] = useState<"desktop" | "web" | "browser">("desktop");
+  // How calls are placed: in-tab browser calling via Telnyx WebRTC — the
+  // default since the port (sales numbers left Quo 8/25). Stored legacy Quo
+  // choices migrate to browser ONCE at cutover (dialing Quo would silently
+  // fail); an explicit re-pick afterwards is honored again.
+  const [dialMethod, setDialMethod] = useState<"desktop" | "web" | "browser">("browser");
   useEffect(() => {
+    if (!localStorage.getItem("dialMethodPortMigrated")) {
+      localStorage.setItem("dialMethodPortMigrated", "1");
+      localStorage.setItem("dialMethod", "browser");
+      return;
+    }
     const m = localStorage.getItem("dialMethod");
-    if (m === "web" || m === "browser") setDialMethod(m);
+    if (m === "web" || m === "desktop") setDialMethod(m);
   }, []);
   const pickDialMethod = (m: "desktop" | "web" | "browser") => {
     setDialMethod(m);
