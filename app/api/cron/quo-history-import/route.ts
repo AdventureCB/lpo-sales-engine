@@ -171,13 +171,18 @@ export async function GET(req: Request) {
       const page = await quoGet("/messages", params).catch(() => null);
       if (!page) break;
       for (const m of page.data ?? []) {
+        if (Date.now() - started > 50_000) return false; // hard stop before Vercel's 60s kill; markers make resume cheap
         scanned++;
         let mediaUrls: string[] = (Array.isArray(m.media) ? m.media : [])
           .map((x: any) => (typeof x === "string" ? x : x?.url))
           .filter(Boolean);
         // The LIST endpoint silently strips media on some messages (verified
         // live: detail had 2 jpegs where list said []). When the list shows
-        // none, ask the detail endpoint — unless our row already has media.
+        // none, ask the detail endpoint — unless the row was already checked:
+        // media NULL = never checked, [] = detail-checked and empty, [urls…]
+        // = mirrored. The [] marker keeps giant threads from re-checking every
+        // message on each resume.
+        let checkedEmpty = false;
         if (!mediaUrls.length) {
           const { data: existing } = await db
             .from("sms_messages")
@@ -185,14 +190,13 @@ export async function GET(req: Request) {
             .eq("provider", "quo")
             .eq("provider_message_id", m.id)
             .maybeSingle();
-          const already = !!existing?.media && JSON.stringify(existing.media) !== "[]";
-          if (!already) {
-            const det: any = await quoGet(`/messages/${encodeURIComponent(m.id)}`, {}).catch(() => null);
-            mediaUrls = (Array.isArray(det?.data?.media) ? det.data.media : [])
-              .map((x: any) => (typeof x === "string" ? x : x?.url))
-              .filter(Boolean);
-            await new Promise((r) => setTimeout(r, 60));
-          }
+          if (existing && existing.media != null) continue; // mirrored or checked-empty; row already imported
+          const det: any = await quoGet(`/messages/${encodeURIComponent(m.id)}`, {}).catch(() => null);
+          mediaUrls = (Array.isArray(det?.data?.media) ? det.data.media : [])
+            .map((x: any) => (typeof x === "string" ? x : x?.url))
+            .filter(Boolean);
+          checkedEmpty = det != null && !mediaUrls.length;
+          await new Promise((r) => setTimeout(r, 60));
         }
         if (dry) {
           if (mediaUrls.length) mediaMsgs++;
@@ -215,7 +219,7 @@ export async function GET(req: Request) {
             our_number: (m.direction === "incoming" ? to0 : m.from) ?? number,
             peer_phone: peer,
             body: m.body ?? m.text ?? null,
-            ...(mirrored.length ? { media: mirrored } : {}),
+            ...(mirrored.length ? { media: mirrored } : checkedEmpty ? { media: [] } : {}),
             sent_at: m.createdAt ?? null,
           },
           { onConflict: "provider,provider_message_id", ignoreDuplicates: false }
@@ -225,13 +229,16 @@ export async function GET(req: Request) {
       pageToken = page.nextPageToken ?? null;
       if (pageToken) await new Promise((r) => setTimeout(r, 150));
     } while (pageToken);
+    return true;
   };
 
   // 3 peers at a time — detail-endpoint calls added per message, stay under Quo's 10/s.
   let i = offset;
-  for (; i < participants.length; i += 3) {
+  for (; i < participants.length; ) {
     if (Date.now() - started > 42_000) break; // leave room to respond; resume via ?offset=
-    await Promise.all(participants.slice(i, i + 3).map((p) => importPeer(p)));
+    const results = await Promise.all(participants.slice(i, i + 3).map((p) => importPeer(p)));
+    if (results.some((r) => r === false)) break; // a peer was cut mid-thread — retry this batch next run
+    i += 3;
   }
   i = Math.min(i, participants.length);
 
