@@ -27,7 +27,12 @@ export async function GET(req: Request) {
   if ((await monthToDateSpendCents(db)) >= cfg.monthly_budget_cents)
     return NextResponse.json({ skipped: "monthly budget reached" });
 
-  const { data: cands } = await db.rpc("ai_refresh_candidates", { p_limit: PER_RUN, p_since_days: 7 });
+  const { data: cands } = await db.rpc("ai_refresh_candidates", {
+    p_limit: PER_RUN,
+    p_since_days: 7,
+    // Scope at the query so out-of-scope deals never occupy candidate slots.
+    p_pipelines: cfg.pipelines.length ? cfg.pipelines : null,
+  });
   let refreshed = 0;
   let skipped = 0;
   let budgetHit = false;
