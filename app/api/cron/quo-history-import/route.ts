@@ -172,9 +172,28 @@ export async function GET(req: Request) {
       if (!page) break;
       for (const m of page.data ?? []) {
         scanned++;
-        const mediaUrls: string[] = (Array.isArray(m.media) ? m.media : [])
+        let mediaUrls: string[] = (Array.isArray(m.media) ? m.media : [])
           .map((x: any) => (typeof x === "string" ? x : x?.url))
           .filter(Boolean);
+        // The LIST endpoint silently strips media on some messages (verified
+        // live: detail had 2 jpegs where list said []). When the list shows
+        // none, ask the detail endpoint — unless our row already has media.
+        if (!mediaUrls.length) {
+          const { data: existing } = await db
+            .from("sms_messages")
+            .select("media")
+            .eq("provider", "quo")
+            .eq("provider_message_id", m.id)
+            .maybeSingle();
+          const already = !!existing?.media && JSON.stringify(existing.media) !== "[]";
+          if (!already) {
+            const det: any = await quoGet(`/messages/${encodeURIComponent(m.id)}`, {}).catch(() => null);
+            mediaUrls = (Array.isArray(det?.data?.media) ? det.data.media : [])
+              .map((x: any) => (typeof x === "string" ? x : x?.url))
+              .filter(Boolean);
+            await new Promise((r) => setTimeout(r, 60));
+          }
+        }
         if (dry) {
           if (mediaUrls.length) mediaMsgs++;
           continue;
@@ -208,11 +227,11 @@ export async function GET(req: Request) {
     } while (pageToken);
   };
 
-  // 4 peers at a time — ~8 req/s worst case, under Quo's 10/s limit.
+  // 3 peers at a time — detail-endpoint calls added per message, stay under Quo's 10/s.
   let i = offset;
-  for (; i < participants.length; i += 4) {
+  for (; i < participants.length; i += 3) {
     if (Date.now() - started > 42_000) break; // leave room to respond; resume via ?offset=
-    await Promise.all(participants.slice(i, i + 4).map((p) => importPeer(p)));
+    await Promise.all(participants.slice(i, i + 3).map((p) => importPeer(p)));
   }
   i = Math.min(i, participants.length);
 
