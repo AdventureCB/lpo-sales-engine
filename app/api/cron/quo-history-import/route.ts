@@ -186,6 +186,10 @@ export async function GET(req: Request) {
       for (const m of page.data ?? []) {
         if (Date.now() - started > 50_000) return false; // hard stop before Vercel's 60s kill; markers make resume cheap
         scanned++;
+        // Fully processed already (media mirrored or detail-checked empty) —
+        // never re-mirror: retries were re-downloading list-supplied media
+        // every pass and starving giant threads of their time budget.
+        if (mediaState.get(m.id) != null) continue;
         let mediaUrls: string[] = (Array.isArray(m.media) ? m.media : [])
           .map((x: any) => (typeof x === "string" ? x : x?.url))
           .filter(Boolean);
