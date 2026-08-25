@@ -51,6 +51,13 @@ export async function GET(req: Request) {
     return r.json();
   };
 
+  // ?msgid=AC… — raw message detail from Quo (list-vs-detail media check)
+  const msgid = u.searchParams.get("msgid");
+  if (msgid) {
+    const detail = await quoGet(`/messages/${encodeURIComponent(msgid)}`, {}).catch((e) => ({ error: String(e) }));
+    return NextResponse.json({ ok: true, msgid, detail });
+  }
+
   // ?convs=1 — list conversations with participant counts (group-thread probe)
   if (u.searchParams.get("convs") === "1") {
     const convs: any[] = [];
