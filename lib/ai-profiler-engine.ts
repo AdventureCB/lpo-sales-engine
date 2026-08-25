@@ -378,10 +378,14 @@ export async function extractProfile(
     };
   }
   // New info + a very recent run → debounce the auto path (the 20-min
-  // background refresh folds it in once the window passes). Manual/force run now.
+  // background refresh folds it in once the window passes). Manual/force run
+  // now. A NEW CALL TRANSCRIPT busts the debounce — it's the highest-value
+  // signal we get and reps read the profile right after the call; only
+  // notes/email trickle waits out the window.
   if (prior && !bypass) {
+    const hasNewTranscript = inputs.transcripts.some((t) => !wm.processed_at || t.at > wm.processed_at);
     const debounceMs = cfg.debounce_hours * 3_600_000;
-    if (prior.last_run_at && Date.now() - Date.parse(prior.last_run_at) < debounceMs)
+    if (!hasNewTranscript && prior.last_run_at && Date.now() - Date.parse(prior.last_run_at) < debounceMs)
       return { ran: false, reason: "debounced — new activity folds in on the next background refresh", profile: prior };
   }
 
