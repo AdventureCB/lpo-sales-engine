@@ -61,6 +61,54 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, participants: participants.length, sample, raw });
   }
 
+  // ?audit=1 — no writes: list every in-window message Quo says has media,
+  // whether our row has it, and whether the media URL actually downloads.
+  if (u.searchParams.get("audit") === "1") {
+    const findings: any[] = [];
+    for (let a = 0; a < participants.length; a += 6) {
+      if (Date.now() - started > 45_000) break;
+      await Promise.all(
+        participants.slice(a, a + 6).map(async (peer) => {
+          let pageToken: string | null = null;
+          do {
+            const params: Record<string, string> = { phoneNumberId, participants: peer, maxResults: "100", createdAfter };
+            if (pageToken) params.pageToken = pageToken;
+            const page: any = await quoGet("/messages", params).catch(() => null);
+            if (!page) return;
+            for (const m of page.data ?? []) {
+              const urls: string[] = (Array.isArray(m.media) ? m.media : [])
+                .map((x: any) => (typeof x === "string" ? x : x?.url))
+                .filter(Boolean);
+              if (!urls.length) continue;
+              const { data: row } = await db
+                .from("sms_messages")
+                .select("id, media")
+                .eq("provider", "quo")
+                .eq("provider_message_id", m.id)
+                .maybeSingle();
+              const dbHasMedia = !!row?.media && JSON.stringify(row.media) !== "[]";
+              let fetchStatus: number | string = "skipped";
+              if (!dbHasMedia) {
+                try {
+                  const h = await fetch(urls[0], { headers: { "User-Agent": "lpo-sales-engine/0.1" } });
+                  fetchStatus = h.status;
+                  const len = Number(h.headers.get("content-length") ?? 0);
+                  if (h.ok && len > 12 * 1024 * 1024) fetchStatus = `too-big:${len}`;
+                } catch (e) {
+                  fetchStatus = `err:${String(e).slice(0, 80)}`;
+                }
+              }
+              findings.push({ id: m.id, peer, createdAt: m.createdAt, mediaCount: urls.length, inDb: !!row, dbHasMedia, fetchStatus });
+            }
+            pageToken = page.nextPageToken ?? null;
+          } while (pageToken && Date.now() - started < 45_000);
+        })
+      );
+    }
+    const missing = findings.filter((f) => !f.dbHasMedia);
+    return NextResponse.json({ ok: true, audit: true, days, mediaMessages: findings.length, missing: missing.length, detail: missing.slice(0, 40), okSample: findings.filter((f) => f.dbHasMedia).length });
+  }
+
   const mirrorMedia = async (urls: string[]): Promise<string[]> => {
     const out: string[] = [];
     for (const src of urls.slice(0, 5)) {
