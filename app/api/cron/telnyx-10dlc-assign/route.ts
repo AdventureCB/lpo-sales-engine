@@ -27,8 +27,13 @@ export async function GET(req: Request) {
     return { status: r.status, json: await r.json().catch(() => null) };
   };
 
-  // The account's 10DLC campaigns (expect exactly one approved).
-  const camps = await g(`/10dlc/campaign?page=1&recordsPerPage=10`);
+  // The account's 10DLC campaigns (expect exactly one approved) — the list
+  // endpoint requires the brand id, so resolve the brand first.
+  const brands = await g(`/10dlc/brand?page=1&recordsPerPage=10`);
+  const brandRecords: any[] = brands.json?.records ?? brands.json?.data ?? [];
+  const brandId = brandRecords[0]?.brandId ?? brandRecords[0]?.id ?? null;
+  if (!brandId) return NextResponse.json({ ok: false, reason: "no 10DLC brand found", brands });
+  const camps = await g(`/10dlc/campaign?brandId=${encodeURIComponent(brandId)}&page=1&recordsPerPage=10`);
   const records: any[] = camps.json?.records ?? camps.json?.data ?? [];
   const campaign = records.find((c) => /accept|approved|active/i.test(String(c.status ?? c.campaignStatus ?? ""))) ?? records[0];
   const campaignId = campaign?.campaignId ?? campaign?.id ?? null;
