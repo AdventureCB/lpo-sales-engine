@@ -87,10 +87,8 @@ export async function GET(req: Request) {
   let mediaMsgs = 0;
   let mediaFiles = 0;
   let scanned = 0;
-  let i = offset;
-  for (; i < participants.length; i++) {
-    if (Date.now() - started > 42_000) break; // leave room to respond; resume via ?offset=
-    const peer = participants[i];
+
+  const importPeer = async (peer: string) => {
     let pageToken: string | null = null;
     do {
       const params: Record<string, string> = { phoneNumberId, participants: peer, maxResults: "100", createdAfter };
@@ -132,8 +130,16 @@ export async function GET(req: Request) {
       }
       pageToken = page.nextPageToken ?? null;
       if (pageToken) await new Promise((r) => setTimeout(r, 150));
-    } while (pageToken && Date.now() - started < 42_000);
+    } while (pageToken);
+  };
+
+  // 4 peers at a time — ~8 req/s worst case, under Quo's 10/s limit.
+  let i = offset;
+  for (; i < participants.length; i += 4) {
+    if (Date.now() - started > 42_000) break; // leave room to respond; resume via ?offset=
+    await Promise.all(participants.slice(i, i + 4).map((p) => importPeer(p)));
   }
+  i = Math.min(i, participants.length);
 
   return NextResponse.json({
     ok: true,
