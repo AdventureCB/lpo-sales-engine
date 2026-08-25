@@ -32,7 +32,7 @@ export async function GET(req: Request) {
     const enc = encodeURIComponent(num);
     const [msg, campaign] = await Promise.all([
       g(`/messaging_phone_numbers/${enc}`),
-      g(`/10dlc/phoneNumberAssignmentByPhoneNumber?phoneNumber=${enc.replace("%2B", "")}`),
+      g(`/10dlc/phoneNumberAssignmentByPhoneNumber/${enc.replace("%2B", "")}`),
     ]);
     out[`${rep.name} (${num})`] = {
       messaging: {
