@@ -27,6 +27,15 @@ export async function GET(req: Request) {
     return { status: r.status, json: await r.json().catch(() => null) };
   };
 
+  // ?task=<taskId> → report the assignment task's status + per-number results
+  // (a 202-accepted task can still fail per-number; this surfaces the reason).
+  const taskId = new URL(req.url).searchParams.get("task");
+  if (taskId) {
+    const task = await g(`/10dlc/phoneNumberAssignmentByProfile/${encodeURIComponent(taskId)}`);
+    const phones = await g(`/10dlc/phoneNumberAssignmentByProfile/${encodeURIComponent(taskId)}/phoneNumbers?page=1&recordsPerPage=50`);
+    return NextResponse.json({ ok: true, taskId, task, phones });
+  }
+
   // The account's 10DLC campaigns (expect exactly one approved) — the list
   // endpoint requires the brand id, so resolve the brand first.
   const brands = await g(`/10dlc/brand?page=1&recordsPerPage=10`);
