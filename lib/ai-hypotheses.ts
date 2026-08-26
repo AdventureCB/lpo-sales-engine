@@ -87,7 +87,17 @@ export async function buildFeatureChunk(
     .order("updated_at", { ascending: true })
     .range(offset, offset + limit - 1);
   if (!deals?.length) return { processed: 0, total: total ?? 0 };
+  const rows = await computeRowsFor(db, deals);
+  const { error } = await db.from("ai_deal_features").upsert(rows, { onConflict: "deal_id" });
+  if (error) throw new Error(error.message);
+  return { processed: rows.length, total: total ?? rows.length };
+}
 
+/** The deal-page feature vector for a batch of deal rows (any status). */
+export const DEAL_FEATURE_SELECT =
+  "id, pipedrive_deal_id, contact_id, status, value_cents, pd_add_time, created_at, updated_at, truck_model, interests, deal_sources ( name ), crm_stages ( crm_pipelines ( name ) ), crm_contacts ( phones, tz_offset, attribution )";
+
+async function computeRowsFor(db: SupabaseClient, deals: any[]): Promise<any[]> {
   const ids = deals.map((d) => d.id);
   const pdIds = deals.map((d) => d.pipedrive_deal_id).filter((n) => n != null) as number[];
   const phoneToDeals = new Map<string, string[]>();
@@ -284,9 +294,7 @@ export async function buildFeatureChunk(
     return { deal_id: d.id, status: d.status, closed_at: d.updated_at, features, outcomes, computed_at: new Date().toISOString() };
   });
 
-  const { error } = await db.from("ai_deal_features").upsert(rows, { onConflict: "deal_id" });
-  if (error) throw new Error(error.message);
-  return { processed: rows.length, total: total ?? rows.length };
+  return rows;
 }
 
 // ── Predicate evaluation ────────────────────────────────────────────────────
@@ -523,4 +531,52 @@ export async function scoreProspective(db: SupabaseClient): Promise<{ scored: nu
     updated++;
   }
   return { scored: rows.length, updated };
+}
+
+// ── Per-deal close likelihood (admin-only surface; hot-list-v2 seed) ────────
+const logit = (p: number) => Math.log(p / (1 - p));
+const sigmoid = (x: number) => 1 / (1 + Math.exp(-x));
+
+/**
+ * Indicative close-likelihood for one deal: start from the base win rate,
+ * shift log-odds for every active WON-outcome hypothesis whose cohort the
+ * deal is in (weight grows with prospectively-earned certainty; each factor
+ * and the total are clamped because overlapping hypotheses double-count).
+ * Transparent by construction — returns the contributing factors.
+ */
+export async function dealCloseScore(
+  db: SupabaseClient,
+  dealId: string
+): Promise<{ probability: number; base: number; factors: { claim: string; direction: string; shift: number; status: string }[] } | null> {
+  const { data: deal } = await db.from("crm_deals").select(DEAL_FEATURE_SELECT).eq("id", dealId).maybeSingle();
+  if (!deal) return null;
+  const [row] = await computeRowsFor(db, [deal]);
+  if (!row) return null;
+
+  const [{ data: hyps }, { count: uniN }, { count: uniWon }] = await Promise.all([
+    db.from("ai_hypotheses").select("*").in("status", ["registered", "validated"]).eq("outcome", "won"),
+    db.from("ai_deal_features").select("deal_id", { count: "exact", head: true }),
+    db.from("ai_deal_features").select("deal_id", { count: "exact", head: true }).eq("status", "won"),
+  ]);
+  const base = (uniWon ?? 480) / Math.max(1, uniN ?? 2100);
+  let lo = logit(base);
+  const factors: { claim: string; direction: string; shift: number; status: string }[] = [];
+  for (const h of hyps ?? []) {
+    if (!evalCohort(row.features, h.cohort as Cond[])) continue;
+    const b = h.backtest as any;
+    if (!b?.cohort_n) continue;
+    // add-1 smoothed rates from the backtest; certainty-weighted (0.35 floor
+    // while prospective evidence is thin).
+    const cr = (b.cohort_hits + 1) / (b.cohort_n + 2);
+    const br = (b.base_hits + 1) / (b.base_n + 2);
+    const p = h.prospective as any;
+    const dirZ = h.direction === "lower" ? -(h.prospective_z ?? 0) : h.prospective_z ?? 0;
+    const earned = p?.cohort_n >= 10 ? Math.min(1, Math.max(0, 0.5 + dirZ / 4)) : 0.35;
+    const shift = Math.max(-1.2, Math.min(1.2, (logit(cr) - logit(br)) * earned));
+    lo += shift;
+    factors.push({ claim: h.claim, direction: h.direction, shift: Math.round(shift * 100) / 100, status: h.status });
+  }
+  lo = Math.max(logit(base) - 2.5, Math.min(logit(base) + 2.5, lo));
+  factors.sort((a, b) => Math.abs(b.shift) - Math.abs(a.shift));
+  return { probability: Math.round(sigmoid(lo) * 100) / 100, base: Math.round(base * 100) / 100, factors };
 }

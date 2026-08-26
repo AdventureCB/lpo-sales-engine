@@ -13,6 +13,7 @@ import MentionInput from "./MentionInput";
 import { useRoster, ownerName } from "./useRoster";
 import { ScriptsCard } from "./ScriptsCard";
 import { CallReviewInline } from "./CallReviewCard";
+import { CloseLikelihood } from "./CloseLikelihood";
 
 interface DealData {
   deal: any;
@@ -572,7 +573,12 @@ export function DealDetailView({
     />
   ) : null;
   const adJourneyEl = data.adJourney ? <AdJourneySection journey={data.adJourney} /> : null;
-  const profileEl = <DealProfileSection profile={data.aiProfile ?? null} stale={!!data.aiProfileStale} dealId={d.id} onRefreshed={load} />;
+  const profileEl = (
+    <>
+      {d.status === "open" && <CloseLikelihood dealId={d.id} />}
+      <DealProfileSection profile={data.aiProfile ?? null} stale={!!data.aiProfileStale} dealId={d.id} onRefreshed={load} />
+    </>
+  );
   const scriptsEl = (
     <ScriptsCard
       dealId={d.id}
