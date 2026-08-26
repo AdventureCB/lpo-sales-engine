@@ -429,9 +429,36 @@ export async function POST(req: NextRequest) {
           sipLogin = ((sip?.value as any)?.login as string) ?? null;
         }
       }
-      if (sipLogin) {
+      // Busy guard: never ring a rep who's already on a live call — a second
+      // INVITE into the browser softphone corrupts the active call (8/26:
+      // Jackson's in-progress call dropped when an inbound rang). The caller
+      // falls through to the VM timer below and the miss shows in the bell.
+      let busy = false;
+      if (sipLogin && toN) {
+        const { data: live } = await db
+          .from("call_events")
+          .select("quo_call_id")
+          .neq("quo_call_id", `tx:${p.call_session_id}`)
+          .is("completed_at", null)
+          .gte("started_at", new Date(Date.now() - 2 * 3600_000).toISOString())
+          .contains("raw", { data: { object: { participants: [toN] } } })
+          .limit(1);
+        busy = Boolean(live?.length);
+        if (busy) {
+          await db.from("telnyx_event_log").insert({
+            event_type: "ring.skip.busy",
+            session_id: p.call_session_id ?? null,
+            leg_from: p.from ?? null,
+            leg_to: p.to ?? null,
+            payload: { liveCall: live![0].quo_call_id },
+          });
+        }
+      }
+      if (sipLogin && !busy) {
         const { transferCall } = await import("@/lib/telnyx");
         await transferCall(p.call_control_id, `sip:${sipLogin}@sip.telnyx.com`, { timeoutSecs: 55, clientState: "ring", from: typeof p.from === "string" ? p.from : null });
+      } else if (sipLogin) {
+        // busy — VM timer takes the call
       } else {
         console.error(`no SIP client for inbound number ${toN} — call goes straight to voicemail timer`);
       }

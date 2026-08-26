@@ -241,6 +241,7 @@ export async function ensurePhone(): Promise<any> {
         void phoneRequired().then((w) => w && ensurePhone().catch(() => {}));
       }, 5000);
     });
+    let outboundLive = false; // an outbound call the rep is actively on
     c.on("telnyx.notification", (n: any) => {
       if (n?.type !== "callUpdate" || !n.call) return;
       const call = n.call;
@@ -259,7 +260,10 @@ export async function ensurePhone(): Promise<any> {
           stopRinging();
         } else if (s === "hangup" || s === "destroy") {
           state.incoming = null;
-          state.callPhase = "none";
+          // An inbound leg dying must NOT reset the phase while an outbound
+          // call is live (a busy-rep ring being cancelled looked like the
+          // active call ending and corrupted call-phase consumers).
+          state.callPhase = outboundLive ? "talking" : "none";
           stopRinging();
         }
         emit();
@@ -267,9 +271,13 @@ export async function ensurePhone(): Promise<any> {
       }
       // Outbound phase for the activity tracker (a ringing inbound the rep
       // hasn't answered is NOT engagement, so only outbound counts as dialing).
-      if (s === "active") state.callPhase = "talking";
-      else if (s === "hangup" || s === "destroy") state.callPhase = "none";
-      else state.callPhase = "dialing"; // new/requesting/trying/early/ringing
+      if (s === "active") {
+        state.callPhase = "talking";
+        outboundLive = true;
+      } else if (s === "hangup" || s === "destroy") {
+        state.callPhase = "none";
+        outboundLive = false;
+      } else state.callPhase = "dialing"; // new/requesting/trying/early/ringing
       emit();
       outboundHandler?.(call, s);
     });
