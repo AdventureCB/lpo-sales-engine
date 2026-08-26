@@ -9,7 +9,7 @@ import { createServerClient } from "@supabase/ssr";
 // itself, loaded by anonymous store visitors — BOTH must bypass the session
 // gate (the matcher only excludes _next assets, so public/ files are matched;
 // /attr.js redirected to /login for two weeks and never ran for visitors).
-const PUBLIC_PREFIXES = ["/login", "/api/webhooks/", "/api/cron/", "/api/health", "/api/ai/", "/api/attr/", "/attr.js"];
+const PUBLIC_PREFIXES = ["/login", "/api/webhooks/", "/api/cron/", "/api/health", "/api/ai/", "/api/attr/", "/attr.js", "/api/track/"];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;

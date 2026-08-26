@@ -109,9 +109,20 @@ export interface MailAttachment {
 /** Build a raw RFC-2822 message: text/plain, +HTML alternative, +attachments. */
 function buildMime(
   from: string,
-  opts: { to: string; subject: string; body: string; html?: string; attachments?: MailAttachment[] }
+  opts: {
+    to: string;
+    subject: string;
+    body: string;
+    html?: string;
+    attachments?: MailAttachment[];
+    inReplyTo?: string | null;
+    references?: string | null;
+  }
 ): string {
   const headers = [`From: ${from}`, `To: ${opts.to}`, `Subject: ${opts.subject}`, `MIME-Version: 1.0`];
+  // RFC-2822 threading — recipients' clients group the reply into the thread.
+  if (opts.inReplyTo) headers.push(`In-Reply-To: ${opts.inReplyTo}`);
+  if (opts.references) headers.push(`References: ${opts.references}`);
   const alt = `alt_${crypto.randomUUID()}`;
   const mixed = `mix_${crypto.randomUUID()}`;
 
@@ -158,7 +169,16 @@ function buildMime(
 export async function sendGmail(
   db: SupabaseClient,
   account: any,
-  opts: { to: string; subject: string; body: string; html?: string; attachments?: MailAttachment[] }
+  opts: {
+    to: string;
+    subject: string;
+    body: string;
+    html?: string;
+    attachments?: MailAttachment[];
+    threadId?: string | null;
+    inReplyTo?: string | null;
+    references?: string | null;
+  }
 ): Promise<string> {
   const token = await freshAccessToken(db, account);
   const mime = buildMime(account.google_email, opts);
@@ -166,11 +186,38 @@ export async function sendGmail(
   const res = await fetch(`${API}/messages/send`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ raw }),
+    // threadId keeps the reply in the SENDER's own Gmail thread (only valid
+    // for messages that live in this account's mailbox).
+    body: JSON.stringify({ raw, ...(opts.threadId ? { threadId: opts.threadId } : {}) }),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`gmail send ${res.status}: ${JSON.stringify(json.error ?? {}).slice(0, 200)}`);
   return json.id as string;
+}
+
+/**
+ * Threading metadata for a message in this account's mailbox: the RFC-2822
+ * Message-ID/References headers (for recipient-side threading) + Gmail's
+ * threadId (for sender-side threading when replying from the same account).
+ */
+export async function getMessageThreadMeta(
+  db: SupabaseClient,
+  account: any,
+  messageId: string
+): Promise<{ rfcMessageId: string | null; references: string | null; threadId: string | null; subject: string | null } | null> {
+  try {
+    const token = await freshAccessToken(db, account);
+    const msg = await fetch(
+      `${API}/messages/${encodeURIComponent(messageId)}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References&metadataHeaders=Subject`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    ).then((r) => r.json());
+    if (!msg?.id) return null;
+    const headers = msg.payload?.headers ?? [];
+    const h = (name: string) => headers.find((x: any) => x.name?.toLowerCase() === name.toLowerCase())?.value ?? null;
+    return { rfcMessageId: h("Message-ID"), references: h("References"), threadId: msg.threadId ?? null, subject: h("Subject") };
+  } catch {
+    return null;
+  }
 }
 
 /** Gmail's `snippet` is HTML-entity-encoded (&#39; etc.) — decode for storage. */

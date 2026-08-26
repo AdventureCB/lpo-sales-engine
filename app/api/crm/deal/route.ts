@@ -47,14 +47,16 @@ export async function GET(req: NextRequest) {
       .or(activityFilter)
       .order("occurred_at", { ascending: false })
       .limit(150),
-    deal.pipedrive_deal_id
-      ? db
-          .from("call_events")
-          .select("quo_call_id, direction, started_at, duration_s, classification, disposition, transcript:raw->>transcript, quality:raw->client_quality, vm_mp3:raw->>vm_mp3")
-          .eq("deal_id", deal.pipedrive_deal_id)
-          .order("started_at", { ascending: false })
-          .limit(25)
-      : Promise.resolve({ data: [] }),
+    db
+      .from("call_events")
+      .select("quo_call_id, direction, started_at, duration_s, classification, disposition, transcript:raw->>transcript, quality:raw->client_quality, vm_mp3:raw->>vm_mp3")
+      .or(
+        deal.pipedrive_deal_id
+          ? `crm_deal_id.eq.${deal.id},deal_id.eq.${deal.pipedrive_deal_id}`
+          : `crm_deal_id.eq.${deal.id}`
+      )
+      .order("started_at", { ascending: false })
+      .limit(25),
     db
       .from("crm_stages")
       .select("id, name, pipeline_id, crm_pipelines ( name )")
@@ -84,6 +86,19 @@ export async function GET(req: NextRequest) {
   const reviewedActs = new Set((reviewRows ?? []).map((r) => r.activity_id).filter(Boolean));
   const reviewedCalls = new Set((reviewRows ?? []).map((r) => r.quo_call_id).filter(Boolean));
 
+  // Open/click stats for tracked outbound emails, keyed by activity id.
+  const emailActIds = (activities.data ?? []).filter((a) => a.type === "email").map((a) => a.id);
+  const trackByActivity = new Map<string, { opens: number; clicks: number; lastOpenAt: string | null }>();
+  if (emailActIds.length) {
+    const { data: tracks } = await db
+      .from("email_tracking")
+      .select("activity_id, opens, clicks, last_open_at")
+      .in("activity_id", emailActIds);
+    for (const t of tracks ?? []) {
+      if (t.activity_id) trackByActivity.set(t.activity_id, { opens: t.opens, clicks: t.clicks, lastOpenAt: t.last_open_at });
+    }
+  }
+
   const timeline = [
     ...(activities.data ?? []).map((a) => ({
       id: a.id,
@@ -98,6 +113,9 @@ export async function GET(req: NextRequest) {
       // Same "real call material" bar as the AI profiler (Quo summaries live
       // in call bodies until the port; short dial stubs aren't reviewable).
       reviewable: a.type === "call" && (a.body ?? "").trim().length > 120,
+      // Inbound Gmail rows are replyable; outbound tracked rows carry stats.
+      emailDirection: a.type === "email" ? ((a as any).meta?.direction ?? null) : null,
+      track: a.type === "email" ? trackByActivity.get(a.id) ?? null : null,
       reviewed: reviewedActs.has(a.id),
     })),
     ...((calls as any).data ?? []).map((c: any) => ({

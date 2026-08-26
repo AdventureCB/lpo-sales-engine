@@ -16,7 +16,7 @@ import { CallReviewInline } from "./CallReviewCard";
 
 interface DealData {
   deal: any;
-  timeline: { id?: string; kind: string; at: string | null; title: string; body: string | null; media?: string[] | null; audio?: string | null; actor: string | null; done: boolean; due: string | null; callId?: string | null; reviewable?: boolean; reviewed?: boolean }[];
+  timeline: { id?: string; kind: string; at: string | null; title: string; body: string | null; media?: string[] | null; audio?: string | null; actor: string | null; done: boolean; due: string | null; callId?: string | null; reviewable?: boolean; reviewed?: boolean; emailDirection?: string | null; track?: { opens: number; clicks: number; lastOpenAt: string | null } | null }[];
   callStats: { dials: number; answered: number; talkS: number; inbound: number } | null;
   adInfo?: { source: string | null; campaign: string | null; channel: string | null; leadCostCents: number | null } | null;
   adJourney?: {
@@ -174,6 +174,10 @@ export function DealDetailView({
   const roster = useRoster();
   const [note, setNote] = useState("");
   const [noteTitle, setNoteTitle] = useState("");
+  // Reply-to-inbound-email prompt: set by the ↩ Reply button on an inbound
+  // email row; the CommBar opens its email composer threaded to it.
+  const [emailReply, setEmailReply] = useState<{ activityId: string; subject: string } | null>(null);
+
   // Editing an existing timeline note (✏️ on an expanded note row).
   const [noteEdit, setNoteEdit] = useState<{ id: string; title: string; body: string } | null>(null);
   const [noteDelArmed, setNoteDelArmed] = useState(false);
@@ -552,6 +556,8 @@ export function DealDetailView({
       allPhones={goodPhones.map((p) => p.e164 ?? p.value).filter(Boolean)}
       email={emails.find((e) => e.primary)?.value ?? emails[0]?.value ?? null}
       onLogged={load}
+      replyPrompt={emailReply}
+      onReplyConsumed={() => setEmailReply(null)}
     />
   );
   const klaviyoEl = emails[0]?.value ? (
@@ -1456,6 +1462,33 @@ export function DealDetailView({
                           {/* Linkify: URLs (e.g. saved-build links) become click-to-copy — the
                               FULL stored URL, no error-prone manual selection. */}
                           <Linkify text={t.body} />
+                        </div>
+                      )}
+                      {t.kind === "email" && t.track && (t.track.opens > 0 || t.track.clicks > 0) && (
+                        <div style={{ fontSize: 12, color: "var(--ok, #3aa76d)", marginTop: 2 }}>
+                          👁 Opened ×{t.track.opens}
+                          {t.track.clicks > 0 && <> · 🔗 {t.track.clicks} click{t.track.clicks === 1 ? "" : "s"}</>}
+                          {t.track.lastOpenAt && (
+                            <span style={{ color: "var(--text-3)" }}> · last {new Date(t.track.lastOpenAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                          )}
+                        </div>
+                      )}
+                      {t.kind === "email" && t.emailDirection === "inbound" && t.id && (
+                        <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 6 }}>
+                          <button
+                            className="btn ghost"
+                            style={{ padding: "2px 10px", fontSize: 12 }}
+                            onClick={() => {
+                              const base = t.title.replace(/ · \(contact\)$/, "").replace(/^📥\s*/, "").trim();
+                              setEmailReply({
+                                activityId: String(t.id),
+                                subject: /^re:/i.test(base) ? base : `Re: ${base}`,
+                              });
+                              window.scrollTo({ top: 0, behavior: "smooth" });
+                            }}
+                          >
+                            ↩ Reply
+                          </button>
                         </div>
                       )}
                       {isOpen && t.kind === "note" && t.id && !String(t.id).startsWith("sms-") && (
@@ -2675,6 +2708,8 @@ function CommBar({
   email,
   onLogged,
   hideCall,
+  replyPrompt,
+  onReplyConsumed,
 }: {
   dealId: string;
   pdDealId: number | null;
@@ -2686,6 +2721,8 @@ function CommBar({
   email: string | null;
   onLogged: () => void;
   hideCall?: boolean;
+  replyPrompt?: { activityId: string; subject: string } | null;
+  onReplyConsumed?: () => void;
 }) {
   const [channel, setChannel] = useState<CommChannel | null>(null);
   const [macros, setMacros] = useState<Macro[]>([]);
@@ -2695,12 +2732,24 @@ function CommBar({
   const [subject, setSubject] = useState("");
   const [noteTitle, setNoteTitle] = useState("");
   const [sending, setSending] = useState(false);
+  const [replyToActivityId, setReplyToActivityId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [waProfileId, setWaProfileId] = useState<string | null | "missing">(null);
   // Browser-mode call state (Telnyx singleton)
   const [callState, setCallState] = useState<string | null>(null);
   const callRef = useRef<any>(null);
+
+  // Reply button on an inbound email row → open the email composer threaded
+  // to that message.
+  useEffect(() => {
+    if (!replyPrompt) return;
+    setChannel("email");
+    setSubject(replyPrompt.subject);
+    setReplyToActivityId(replyPrompt.activityId);
+    onReplyConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replyPrompt]);
 
   // ── Disposition flow — same shape as the dialer's ──
   const dialStartedAtRef = useRef<string | null>(null);
@@ -2955,7 +3004,7 @@ function CommBar({
         r = await fetch("/api/gmail/send", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to: email, subject: subject.trim(), body: text, dealId, contactId: contact?.id, attachmentAssetIds: attachIds }),
+          body: JSON.stringify({ to: email, subject: subject.trim(), body: text, dealId, contactId: contact?.id, attachmentAssetIds: attachIds, replyToActivityId: replyToActivityId ?? undefined }),
         });
       } else if (channel === "note") {
         r = await fetch("/api/crm/deal", {
@@ -2973,6 +3022,7 @@ function CommBar({
       setSubject("");
       setNoteTitle("");
       setAttachIds([]);
+      setReplyToActivityId(null);
       setChannel(null);
       flashOk(channel === "note" ? "Note saved ✓" : "Sent ✓");
       onLogged();
