@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 /**
  * Admin ad-ROI dashboard: per-channel spend, attributed leads (new deals),
@@ -32,6 +33,19 @@ interface Report {
   };
   organicSources: Record<string, number>;
   beacon?: { lastAt: string | null; touches24h: number; linkedVisitors: number };
+  visitors?: {
+    email: string;
+    linkedAt: string;
+    contactName: string | null;
+    dealId: string | null;
+    dealTitle: string | null;
+    touches: number;
+    firstAt: string | null;
+    firstSource: string | null;
+    firstLanding: string | null;
+    lastSource: string | null;
+    lastCampaign: string | null;
+  }[];
 }
 
 const CHANNEL_LABEL: Record<string, string> = {
@@ -114,6 +128,7 @@ const bucketLabel = (key: string, bucket: string) => {
 
 export function AdRoiView() {
   const [days, setDays] = useState(30);
+  const [showVisitors, setShowVisitors] = useState(false);
   const [data, setData] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -180,9 +195,56 @@ export function AdRoiView() {
             🛰 First-party beacon: last touch <b style={{ color: stale ? "var(--crit)" : "var(--text-2)" }}>{ageLabel}</b>
             {" "}· {b.touches24h} touch{b.touches24h === 1 ? "" : "es"} in 24h · {b.linkedVisitors} linked visitor{b.linkedVisitors === 1 ? "" : "s"}
             {stale ? " — beacon may be down, check /api/attr/touch" : ""}
+            {(data?.visitors?.length ?? 0) > 0 && (
+              <>
+                {" "}·{" "}
+                <button
+                  onClick={() => setShowVisitors((v) => !v)}
+                  style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--accent)", font: "inherit" }}
+                >
+                  {showVisitors ? "hide" : "show"} who
+                </button>
+              </>
+            )}
           </p>
         );
       })()}
+
+      {showVisitors && (data?.visitors?.length ?? 0) > 0 && (
+        <div style={{ overflowX: "auto", marginBottom: 16 }}>
+          <table className="data-table" style={{ fontSize: 13 }}>
+            <thead>
+              <tr>
+                <th>Linked</th><th>Who</th><th>Deal</th><th>Touches</th><th>First touch</th><th>Landing</th><th>Last paid source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data!.visitors!.map((v, i) => (
+                <tr key={i}>
+                  <td style={{ whiteSpace: "nowrap" }}>{new Date(v.linkedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</td>
+                  <td>{v.contactName ?? v.email}</td>
+                  <td>
+                    {v.dealId ? (
+                      <Link href={`/crm/deal/${v.dealId}`} style={{ color: "var(--accent)" }}>{v.dealTitle ?? "deal"}</Link>
+                    ) : (
+                      <span style={{ color: "var(--text-3)" }}>—</span>
+                    )}
+                  </td>
+                  <td>{v.touches}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    {v.firstSource ?? <span style={{ color: "var(--text-3)" }}>organic/direct</span>}
+                    {v.firstAt ? <span style={{ color: "var(--text-3)" }}> · {new Date(v.firstAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span> : null}
+                  </td>
+                  <td style={{ maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={v.firstLanding ?? undefined}>
+                    {v.firstLanding ? v.firstLanding.replace(/^https?:\/\/[^/]+/, "") : "—"}
+                  </td>
+                  <td>{v.lastSource ?? "—"}{v.lastCampaign ? <span style={{ color: "var(--text-3)" }}> · {v.lastCampaign}</span> : null}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {t && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 18 }}>

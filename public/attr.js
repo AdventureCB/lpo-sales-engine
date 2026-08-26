@@ -112,6 +112,43 @@
     } catch (e) {}
   })();
 
+  // First-party identity capture: any email submitted anywhere on the page
+  // (builder save, newsletter, checkout forms) links this browser's touch
+  // history to the person DIRECTLY — Klaviyo's anonymous-profile merge only
+  // sticks when the identify goes through Klaviyo JS, which the builder
+  // doesn't do. Fire-and-forget; deduped per email.
+  (function captureIdentity() {
+    if (!vid) return;
+    function send(email) {
+      try {
+        if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return;
+        var key = "lpo_attr_ident";
+        try { if (localStorage.getItem(key) === email) return; localStorage.setItem(key, email); } catch (e) {}
+        fetch("https://lpo-sales-engine.vercel.app/api/attr/identify", {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: JSON.stringify({ vid: vid, email: email }),
+          keepalive: true,
+        }).catch(function () {});
+      } catch (e) {}
+    }
+    function fromField(t) {
+      try {
+        if (t && t.matches && t.matches('input[type="email"], input[name*="email" i], input[autocomplete="email"]') && t.value) {
+          send(t.value.trim().toLowerCase());
+        }
+      } catch (e) {}
+    }
+    document.addEventListener("submit", function (ev) {
+      try {
+        var f = ev.target;
+        var inp = f && f.querySelector && f.querySelector('input[type="email"], input[name*="email" i], input[autocomplete="email"]');
+        if (inp && inp.value) send(inp.value.trim().toLowerCase());
+      } catch (e) {}
+    }, true);
+    document.addEventListener("focusout", function (ev) { fromField(ev.target); }, true);
+  })();
+
   // Identity propagates even WITHOUT campaign params (direct/organic
   // visitors): the vid alone lets the server link this browser's history
   // when they later identify (builder save, survey, checkout). Only bail

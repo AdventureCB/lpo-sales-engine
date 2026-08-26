@@ -86,6 +86,56 @@ export async function linkVisitor(
   return !error;
 }
 
+/**
+ * Merge a linked visitor's beaconed touch history (web_touches via
+ * web_visitor_links) onto the contact found by email. Covers identities
+ * captured first-party (/api/attr/identify) where Klaviyo props are absent.
+ */
+export async function mergeFromVisitorLink(
+  db: SupabaseClient,
+  email: string | null | undefined
+): Promise<boolean> {
+  const norm = email?.trim().toLowerCase();
+  if (!norm) return false;
+  const { data: link } = await db
+    .from("web_visitor_links")
+    .select("visitor_id")
+    .eq("email", norm)
+    .order("linked_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!link) return false;
+  const { data: rows } = await db
+    .from("web_touches")
+    .select("at, source, medium, campaign, content, term, gclid, gbraid, wbraid, fbclid, msclkid, ttclid, landing, referrer")
+    .eq("visitor_id", link.visitor_id)
+    .order("at", { ascending: true })
+    .limit(50);
+  if (!rows?.length) return false;
+  const toTouch = (t: any): Touch => ({
+    ...(t.at ? { at: t.at } : {}),
+    ...(t.source ? { source: t.source } : {}),
+    ...(t.medium ? { medium: t.medium } : {}),
+    ...(t.campaign ? { campaign: t.campaign } : {}),
+    ...(t.content ? { content: t.content } : {}),
+    ...(t.term ? { term: t.term } : {}),
+    ...(t.gclid ? { gclid: t.gclid } : {}),
+    ...(t.gbraid ? { gbraid: t.gbraid } : {}),
+    ...(t.wbraid ? { wbraid: t.wbraid } : {}),
+    ...(t.fbclid ? { fbclid: t.fbclid } : {}),
+    ...(t.msclkid ? { msclkid: t.msclkid } : {}),
+    ...(t.ttclid ? { ttclid: t.ttclid } : {}),
+    ...(t.landing ? { lp: t.landing } : {}),
+    ...(t.referrer ? { ref: t.referrer } : {}),
+  });
+  const withParams = rows.filter(
+    (t: any) => t.source || t.gclid || t.fbclid || t.gbraid || t.wbraid || t.msclkid || t.ttclid
+  );
+  const first = toTouch(rows[0]);
+  const last = toTouch(withParams[withParams.length - 1] ?? rows[rows.length - 1]);
+  return mergeContactAttribution(db, norm, { first, last });
+}
+
 /** Merge captured touches into a contact found by email. No-op when unmatched. */
 export async function mergeContactAttribution(
   db: SupabaseClient,

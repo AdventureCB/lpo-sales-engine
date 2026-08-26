@@ -69,6 +69,16 @@ export async function runKlaviyoMetricEngines(db: SupabaseClient): Promise<Recor
             await linkVisitor(db, profile.properties, ev.email);
           } catch {}
         }
+        // Fallback: no Klaviyo attr props (their anonymous-profile merge only
+        // sticks for Klaviyo-JS identifies) — the /api/attr/identify beacon
+        // may have linked this email first-party at form submit. Merge the
+        // linked browser's touch history onto the contact.
+        if (ev.email) {
+          try {
+            const { mergeFromVisitorLink } = await import("./attribution");
+            await mergeFromVisitorLink(db, ev.email);
+          } catch {}
+        }
         const evPhone = typeof ev.meta?.phone_number === "string" ? (ev.meta.phone_number as string) : null;
         const link = typeof ev.meta?.configuration_url === "string" ? (ev.meta.configuration_url as string) : null;
         const res = await processIntake(db, src, {

@@ -1389,7 +1389,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                 )}
                 {inCall && (
                   <div className="callstate" style={{ display: "flex" }}>
-                    <span className="dot" /> {fmtClock(callSec)} — in call via Quo
+                    <span className="dot" /> {fmtClock(callSec)} — in call{dialMethod === "browser" ? "" : " via Quo"}
                   </div>
                 )}
               </div>
