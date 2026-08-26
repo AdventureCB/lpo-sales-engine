@@ -403,8 +403,16 @@ export async function extractProfile(
   const newTranscripts = priorAt ? inputs.transcripts.filter((t) => t.at > priorAt) : inputs.transcripts;
   const transcriptsToSend = prior && newTranscripts.length ? newTranscripts : inputs.transcripts;
 
+  // Steering: validated+approved pathway patterns this deal matches guide
+  // the next_action (empty unless the master toggle is on).
+  const { steeringForDeal } = await import("./ai-hypotheses");
+  const steer = await steeringForDeal(db, dealId).catch(() => ({ patterns: [] as string[], themeBoosts: {} }));
+
   const userParts = [
     `# DEAL\n${inputs.header}`,
+    steer.patterns.length
+      ? `\n# PROVEN PATHWAY PATTERNS (validated on real closed-deal outcomes for deals like this — align next_action with them where relevant; never override rep corrections)\n${steer.patterns.map((x) => `- ${x}`).join("\n")}`
+      : "",
     `\n# AD INTERACTIONS (source / medium / campaign / content / ad-id)\n${inputs.adText}`,
     `\n# ENGAGEMENT SIGNALS\n${inputs.signalText}`,
     `\n# CALL HISTORY (outcome counts — see Definitions)\n${inputs.callText}`,

@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { callClaudeTool, logAiUsage } from "./ai";
+import { steeringForDeal } from "./ai-hypotheses";
 import { loadAiConfig, monthToDateSpendCents } from "./ai-profiler";
 import { gatherDealInputs } from "./ai-profiler-engine";
 
@@ -207,6 +208,7 @@ export async function generateCallScript(
     const { data: rp } = await db.from("rep_call_patterns").select("patterns").eq("rep", opts.repName).maybeSingle();
     repFocus = ((rp?.patterns as any)?.coaching_focus as string | undefined) ?? null;
   }
+  const steer = await steeringForDeal(db, dealId).catch(() => ({ patterns: [], themeBoosts: {} }));
 
   const call = await callClaudeTool({
     tier: cfg.models.call_script ?? "haiku",
@@ -219,6 +221,9 @@ export async function generateCallScript(
     ].filter(Boolean).join("\n\n"),
     user: [
       repFocus ? `# REP COACHING FOCUS (from their reviewed calls — structure the outline to reinforce it)\n${repFocus.replace(/\*/g, "")}` : "",
+      steer.patterns.length
+        ? `# PROVEN PATTERNS (validated on real deal outcomes for deals like this — weave the psychology into the outline's existing sections; NEVER restructure or drop StoryBrand)\n${steer.patterns.map((x) => `- ${x}`).join("\n")}`
+        : "",
       `# BUYER PROFILE\n${ctx.profileText}`,
       `\n# DEAL\n${ctx.inputs.header}`,
       `\n# SIGNALS\n${ctx.inputs.signalText}`,
@@ -306,6 +311,7 @@ export async function generateDraft(
   if (!(await budgetOk(db, cfg.monthly_budget_cents))) return { ok: false, reason: "monthly AI budget reached" };
 
   const commContext = await buildCommContext(db);
+  const steer = await steeringForDeal(db, dealId).catch(() => ({ patterns: [], themeBoosts: {} }));
   const call = await callClaudeTool({
     tier: cfg.models.drafts ?? "sonnet",
     systemCached: [
@@ -319,6 +325,9 @@ export async function generateDraft(
       `Rep sending: ${repName ?? "the rep"}`,
       theme ? `\n# THEME (the rep chose this angle — follow it)\n${theme.name}: ${theme.prompt_direction}` : "",
       direction ? `\n# REP DIRECTION (specific ask for this draft — honor it exactly)\n${direction.slice(0, 400)}` : "",
+      steer.patterns.length
+        ? `\n# PROVEN PATTERNS (validated on real deal outcomes for deals like this — let them shape angle and emphasis; theme/rules/consent still govern)\n${steer.patterns.map((x) => `- ${x}`).join("\n")}`
+        : "",
       `\n# BUYER PROFILE\n${ctx.profileText}`,
       `\n# DEAL\n${ctx.inputs.header}`,
       `\n# SIGNALS\n${ctx.inputs.signalText}`,
@@ -431,6 +440,11 @@ export async function suggestThemes(db: SupabaseClient, dealId: string) {
   if (/call|schedule|phone|talk/.test(hay)) bump("schedule", 2);
   if (/object|concern|hesita|spouse|wife|husband|think about/.test(hay)) bump("objection", 3);
   if ((deal?.value_cents ?? 0) >= 700_000) bump("financing", 1);
+
+  // Steering: validated+approved theme hypotheses outrank the heuristics
+  // (empty unless the master toggle is on).
+  const steer = await steeringForDeal(db, dealId).catch(() => ({ patterns: [], themeBoosts: {} as Record<string, number> }));
+  for (const [k, cert] of Object.entries(steer.themeBoosts)) bump(k, 5 + cert / 25);
 
   const ranked = [...themes].sort((a, b) => score[b.key] - score[a.key] || a.sort_order - b.sort_order);
   return ranked.map((t, i) => ({ key: t.key, name: t.name, intent: t.intent, channels: t.channels, suggested: i === 0 && score[t.key] > 0 }));

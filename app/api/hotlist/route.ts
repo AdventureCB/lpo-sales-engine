@@ -22,7 +22,10 @@ export async function GET() {
 
   let flagsQuery = db
     .from("hot_flags")
-    .select("id, deal_id, reason, signals, deal_title, owner_name, person_phone, flagged_at, cleared_at, cooldown_until")
+    .select("id, deal_id, reason, signals, deal_title, owner_name, person_phone, flagged_at, cleared_at, cooldown_until, close_score")
+    // close_score is stamped only while steering is ON — null-safe ordering
+    // means the toggle alone flips between v2 (readiness) and v1 (recency).
+    .order("close_score", { ascending: false, nullsFirst: false })
     .order("flagged_at", { ascending: false })
     .limit(50);
   if (ownerFilter) flagsQuery = flagsQuery.eq("owner_pipedrive_id", ownerFilter);

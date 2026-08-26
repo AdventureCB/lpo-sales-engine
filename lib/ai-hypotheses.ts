@@ -580,3 +580,103 @@ export async function dealCloseScore(
   factors.sort((a, b) => Math.abs(b.shift) - Math.abs(a.shift));
   return { probability: Math.round(sigmoid(lo) * 100) / 100, base: Math.round(base * 100) / 100, factors };
 }
+
+// ── Steering (Kyle's practical-psychology layer; master toggle default OFF) ─
+/**
+ * The validated+approved patterns this deal matches, for prompt injection —
+ * plus theme boosts derived from theme-feature cohorts. Empty unless
+ * cfg.steering_enabled AND a hypothesis passes BOTH gates (statistically
+ * validated + human_approved). Retired hypotheses drop out automatically.
+ */
+export async function steeringForDeal(
+  db: SupabaseClient,
+  dealId: string,
+  cap = 3
+): Promise<{ patterns: string[]; themeBoosts: Record<string, number> }> {
+  const empty = { patterns: [], themeBoosts: {} as Record<string, number> };
+  const cfg = await loadAiConfig(db);
+  if (!cfg.steering_enabled) return empty;
+  const { data: hyps } = await db
+    .from("ai_hypotheses")
+    .select("claim, cohort, outcome, direction, prospective, prospective_z")
+    .eq("status", "validated")
+    .eq("human_approved", true);
+  if (!hyps?.length) return empty;
+
+  const { data: deal } = await db.from("crm_deals").select(DEAL_FEATURE_SELECT).eq("id", dealId).maybeSingle();
+  if (!deal) return empty;
+  const [row] = await computeRowsFor(db, [deal]);
+  if (!row) return empty;
+
+  const matched = hyps
+    .filter((h) => evalCohort(row.features, h.cohort as Cond[]))
+    .map((h) => {
+      const dirZ = h.direction === "lower" ? -(h.prospective_z ?? 0) : h.prospective_z ?? 0;
+      const cert = Math.round((1 / (1 + Math.exp(-1.702 * (dirZ / 2)))) * 100);
+      return { ...h, cert };
+    })
+    .sort((a, b) => b.cert - a.cert);
+
+  const themeBoosts: Record<string, number> = {};
+  for (const h of matched) {
+    if (h.direction !== "higher") continue;
+    for (const c of h.cohort as Cond[]) {
+      if ((c.feature === "first_theme" || c.feature === "second_theme") && c.op === "eq" && typeof c.value === "string") {
+        themeBoosts[c.value] = Math.max(themeBoosts[c.value] ?? 0, h.cert);
+      }
+      if (c.feature === "theme_financing" && c.op === "eq") themeBoosts.financing = Math.max(themeBoosts.financing ?? 0, h.cert);
+      if (c.feature === "theme_breakup" && c.op === "eq") themeBoosts.breakup = Math.max(themeBoosts.breakup ?? 0, h.cert);
+    }
+  }
+  return {
+    patterns: matched.slice(0, cap).map((h) => `${h.claim} (${h.cert}% certain on post-registration closes; outcome: ${h.outcome})`),
+    themeBoosts,
+  };
+}
+
+/**
+ * Stamp hypothesis-driven close likelihood onto ACTIVE hot flags (nightly,
+ * steering-gated). hot_flags.deal_id is the internal deal number — real PD
+ * id or synthetic — so the crm_deals join always resolves.
+ */
+export async function stampHotFlagScores(db: SupabaseClient): Promise<{ stamped: number }> {
+  const cfg = await loadAiConfig(db);
+  if (!cfg.steering_enabled) return { stamped: 0 };
+  const { data: flags } = await db.from("hot_flags").select("id, deal_id").is("cleared_at", null).limit(150);
+  if (!flags?.length) return { stamped: 0 };
+  const { data: deals } = await db
+    .from("crm_deals")
+    .select(DEAL_FEATURE_SELECT)
+    .in("pipedrive_deal_id", flags.map((f) => f.deal_id));
+  if (!deals?.length) return { stamped: 0 };
+  const rows = await computeRowsFor(db, deals);
+  const featByPd = new Map(deals.map((d: any, i) => [d.pipedrive_deal_id, rows.find((r) => r.deal_id === d.id)]));
+
+  const [{ data: hyps }, { count: uniN }, { count: uniWon }] = await Promise.all([
+    db.from("ai_hypotheses").select("*").in("status", ["registered", "validated"]).eq("outcome", "won"),
+    db.from("ai_deal_features").select("deal_id", { count: "exact", head: true }),
+    db.from("ai_deal_features").select("deal_id", { count: "exact", head: true }).eq("status", "won"),
+  ]);
+  const base = (uniWon ?? 480) / Math.max(1, uniN ?? 2100);
+  let stamped = 0;
+  for (const f of flags) {
+    const row = featByPd.get(f.deal_id);
+    if (!row) continue;
+    let lo = logit(base);
+    for (const h of hyps ?? []) {
+      if (!evalCohort(row.features, h.cohort as Cond[])) continue;
+      const b = h.backtest as any;
+      if (!b?.cohort_n) continue;
+      const cr = (b.cohort_hits + 1) / (b.cohort_n + 2);
+      const br = (b.base_hits + 1) / (b.base_n + 2);
+      const p = h.prospective as any;
+      const dirZ = h.direction === "lower" ? -(h.prospective_z ?? 0) : h.prospective_z ?? 0;
+      const earned = p?.cohort_n >= 10 ? Math.min(1, Math.max(0, 0.5 + dirZ / 4)) : 0.35;
+      lo += Math.max(-1.2, Math.min(1.2, (logit(cr) - logit(br)) * earned));
+    }
+    lo = Math.max(logit(base) - 2.5, Math.min(logit(base) + 2.5, lo));
+    await db.from("hot_flags").update({ close_score: Math.round(sigmoid(lo) * 100) / 100 }).eq("id", f.id);
+    stamped++;
+  }
+  return { stamped };
+}

@@ -48,6 +48,7 @@ export type AiProfilerConfig = {
   debounce_hours: number; // don't re-run a deal more often than this
   monthly_budget_cents: number; // soft cap; engine pauses new runs past it
   lazy_only: boolean; // true = only profile a deal when opened/requested (no backfill sweep)
+  steering_enabled: boolean; // master switch: validated+approved hypotheses steer scripts/drafts/next-actions/hot-list
   // Model routing per task
   models: { extract: ModelTier; revalidate: ModelTier; deepdive: ModelTier; critic: ModelTier; call_script: ModelTier; drafts: ModelTier; review: ModelTier };
 };
@@ -61,6 +62,7 @@ export const DEFAULT_AI_CONFIG: AiProfilerConfig = {
   debounce_hours: 24,
   monthly_budget_cents: 2000, // $20/mo soft cap
   lazy_only: true, // profile on deal-open; no upfront backfill burn
+  steering_enabled: false, // OFF until Kyle flips it on the 🔬 dashboard
   // call_script runs per dial-cycle preload → cheap tier; drafts are
   // customer-facing prose on manual request → quality tier.
   models: { extract: "haiku", revalidate: "haiku", deepdive: "sonnet", critic: "sonnet", call_script: "haiku", drafts: "sonnet", review: "sonnet" },

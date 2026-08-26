@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isAuthorizedCron } from "@/lib/cron";
-import { buildFeatureChunk, runHypothesisGeneration, scoreProspective } from "@/lib/ai-hypotheses";
+import { buildFeatureChunk, runHypothesisGeneration, scoreProspective, stampHotFlagScores } from "@/lib/ai-hypotheses";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,7 +48,8 @@ export async function GET(req: Request) {
     const { count } = await db.from("ai_deal_features").select("deal_id", { count: "exact", head: true });
     await buildFeatureChunk(db, Math.max(0, (count ?? 0) - 20));
     const r = await scoreProspective(db);
-    return NextResponse.json({ ok: true, mode, ...r });
+    const hot = await stampHotFlagScores(db).catch(() => ({ stamped: 0 }));
+    return NextResponse.json({ ok: true, mode, ...r, hotStamped: hot.stamped });
   }
 
   return NextResponse.json({ error: "unknown mode" }, { status: 400 });

@@ -47,7 +47,7 @@ function certainty(h: Hyp): { pct: number; n: number } {
 }
 
 export function HypothesesView() {
-  const [data, setData] = useState<{ hypotheses: Hyp[]; snapshot: { deals: number; at: string | null } } | null>(null);
+  const [data, setData] = useState<{ hypotheses: Hyp[]; snapshot: { deals: number; at: string | null }; steeringEnabled?: boolean } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [showDead, setShowDead] = useState(false);
@@ -60,14 +60,14 @@ export function HypothesesView() {
   }, []);
   useEffect(load, [load]);
 
-  const post = async (op: string, id?: string) => {
+  const post = async (op: string, id?: string, on?: boolean) => {
     setBusy(op + (id ?? ""));
     setErr(null);
     try {
       const r = await fetch("/api/admin/hypotheses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ op, id }),
+        body: JSON.stringify({ op, id, on }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || d.error) throw new Error(d.error ?? `HTTP ${r.status}`);
@@ -90,6 +90,18 @@ export function HypothesesView() {
           {data ? `${data.snapshot.deals.toLocaleString()} closed deals in the snapshot` : "…"}
         </span>
         <span style={{ flex: 1 }} />
+        <label
+          style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer", userSelect: "none", padding: "4px 10px", borderRadius: 8, border: "1px solid var(--border-soft)", background: data?.steeringEnabled ? "rgba(58,167,109,.12)" : "var(--bg-2)" }}
+          title="Master switch: when ON, validated + approved hypotheses steer scripts, drafts, next actions, and hot-list ranking. OFF = the engine only observes."
+        >
+          <input
+            type="checkbox"
+            checked={Boolean(data?.steeringEnabled)}
+            disabled={busy !== null}
+            onChange={(e) => post("steering", undefined, e.target.checked)}
+          />
+          <b style={{ color: data?.steeringEnabled ? "#3aa76d" : "var(--text-3)" }}>Steering {data?.steeringEnabled ? "ON" : "OFF"}</b>
+        </label>
         <button className="btn ghost" disabled={busy !== null} onClick={() => post("score")}>
           {busy === "score" ? "Scoring…" : "⚖ Score now"}
         </button>
@@ -100,8 +112,8 @@ export function HypothesesView() {
       <p className="viewsub" style={{ marginTop: 6 }}>
         The AI proposes falsifiable pathway-to-outcome claims over every closed deal. Backtest survivors are
         <b> registered</b>, then judged only on deals that close <i>afterward</i> — fitting history is easy, predicting
-        the future is the test. <b>Approve</b> marks a hypothesis eligible to steer scripts/drafts/next-actions once
-        that layer ships; nothing rep-facing happens without it.
+        the future is the test. A hypothesis steers scripts, drafts, next actions, and hot-list ranking ONLY when it is
+        ✅ validated <i>and</i> 👍 approved <i>and</i> the master Steering switch is on.
       </p>
       {err && <p className="viewsub" style={{ color: "var(--crit)" }}>{err}</p>}
 

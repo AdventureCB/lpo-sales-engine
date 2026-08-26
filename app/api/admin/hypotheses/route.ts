@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
-import { runHypothesisGeneration, scoreProspective, buildFeatureChunk } from "@/lib/ai-hypotheses";
+import { runHypothesisGeneration, scoreProspective, buildFeatureChunk, stampHotFlagScores } from "@/lib/ai-hypotheses";
+import { loadAiConfig, saveAiConfig } from "@/lib/ai-profiler";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -16,20 +17,32 @@ export async function GET() {
     db.from("ai_deal_features").select("deal_id", { count: "exact", head: true }),
     db.from("ai_deal_features").select("computed_at").order("computed_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
-  return NextResponse.json({ hypotheses: hyps ?? [], snapshot: { deals: featN ?? 0, at: latest?.computed_at ?? null } });
+  const cfg = await loadAiConfig(db);
+  return NextResponse.json({
+    hypotheses: hyps ?? [],
+    snapshot: { deals: featN ?? 0, at: latest?.computed_at ?? null },
+    steeringEnabled: cfg.steering_enabled,
+  });
 }
 
 export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user || user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
   const db = supabaseAdmin();
-  let body: { op?: string; id?: string };
+  let body: { op?: string; id?: string; on?: boolean };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
 
+  if (body.op === "steering") {
+    const on = Boolean((body as any).on);
+    await saveAiConfig(db, { steering_enabled: on });
+    if (on) await stampHotFlagScores(db).catch(() => null);
+    else await db.from("hot_flags").update({ close_score: null }).not("close_score", "is", null);
+    return NextResponse.json({ ok: true, steeringEnabled: on });
+  }
   if (body.op === "generate") {
     const r = await runHypothesisGeneration(db);
     return NextResponse.json({ ok: true, ...r });

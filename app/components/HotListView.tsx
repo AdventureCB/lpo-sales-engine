@@ -28,6 +28,7 @@ interface Flag {
   flagged_at: string;
   cleared_at: string | null;
   cooldown_until: string | null;
+  close_score?: number | null;
 }
 
 function flagStatus(f: Flag): string {
@@ -265,6 +266,14 @@ export function HotListView({ isAdmin = false }: { isAdmin?: boolean }) {
                           {expanded === f.deal_id ? "▾" : "▸"}
                         </span>
                         <b>{f.deal_title ?? `Deal #${f.deal_id}`}</b>
+                        {f.close_score != null && (
+                          <span
+                            title="AI close likelihood (validated hypotheses; hot list ranks by this while steering is on)"
+                            style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, color: f.close_score >= 0.45 ? "#3aa76d" : f.close_score >= 0.2 ? "#b58a2e" : "var(--text-3)" }}
+                          >
+                            🎯 {Math.round(f.close_score * 100)}%
+                          </span>
+                        )}
                         {f.person_phone && (
                           <div style={{ fontSize: 13, color: "var(--text-2)", marginLeft: 18 }}>
                             {f.person_phone}
