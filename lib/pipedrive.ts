@@ -69,7 +69,18 @@ export async function getOpenDealsForPerson(personId: number): Promise<Pipedrive
   }));
 }
 
+/**
+ * Synthetic deal ids (≥ 900,000,000) are internal numbers minted for native
+ * deals (migration 00112) — they don't exist in Pipedrive. Every function
+ * that takes a deal id no-ops on them so callers never need to care.
+ */
+export const SYNTHETIC_PD_ID_FLOOR = 900_000_000;
+export function isSyntheticPdId(id: number | null | undefined): boolean {
+  return id != null && id >= SYNTHETIC_PD_ID_FLOOR;
+}
+
 export async function getDeal(dealId: number): Promise<PipedriveDeal> {
+  if (isSyntheticPdId(dealId)) throw new Error(`synthetic deal id ${dealId} — not a Pipedrive deal`);
   const d = await pd(V1, `/deals/${dealId}`);
   return {
     id: d.id,
@@ -132,6 +143,7 @@ export async function createActivity(opts: {
   dueAtIso?: string | null;
   done?: boolean; // logging something that already happened
 }): Promise<number | null> {
+  if (isSyntheticPdId(opts.dealId)) return null;
   const body: Record<string, unknown> = {
     deal_id: opts.dealId,
     subject: opts.subject,
@@ -164,6 +176,7 @@ export async function updatePersonContacts(
 }
 
 export async function addDealNote(dealId: number, content: string): Promise<void> {
+  if (isSyntheticPdId(dealId)) return;
   await pd(V1, "/notes", {
     method: "POST",
     body: JSON.stringify({ deal_id: dealId, content }),
@@ -173,6 +186,7 @@ export async function addDealNote(dealId: number, content: string): Promise<void
 /** Merge `dupId` INTO `survivorId` in Pipedrive (moves activities/notes,
  * marks the duplicate merged). The correct tool for PD-origin duplicates. */
 export async function mergeDeals(dupId: number, survivorId: number): Promise<void> {
+  if (isSyntheticPdId(dupId) || isSyntheticPdId(survivorId)) return;
   await pd(V1, `/deals/${dupId}/merge`, {
     method: "PUT",
     body: JSON.stringify({ merge_with_id: survivorId }),
@@ -197,6 +211,7 @@ export async function updateDealStage(
   dealId: number,
   fields: { stage_id?: number; status?: string; owner_id?: number; lost_reason?: string; title?: string; value?: number }
 ): Promise<void> {
+  if (isSyntheticPdId(dealId)) return;
   const body: Record<string, unknown> = {};
   if (fields.stage_id) body.stage_id = fields.stage_id;
   if (fields.status) body.status = fields.status;
@@ -209,6 +224,7 @@ export async function updateDealStage(
 }
 
 export async function setDealLabels(dealId: number, labelIds: number[]): Promise<void> {
+  if (isSyntheticPdId(dealId)) return;
   await pd(V2, `/deals/${dealId}`, {
     method: "PATCH",
     body: JSON.stringify({ label_ids: labelIds }),
@@ -336,6 +352,7 @@ export interface DealActivity {
 
 /** Most recent activities on a deal (done or upcoming), newest first. */
 export async function getDealActivities(dealId: number, limit = 3): Promise<DealActivity[]> {
+  if (isSyntheticPdId(dealId)) return [];
   const data = await pd(V2, "/activities", {
     params: {
       deal_id: String(dealId),
@@ -357,6 +374,7 @@ export async function getDealActivities(dealId: number, limit = 3): Promise<Deal
 
 /** Latest notes on a deal (for the lead card). */
 export async function getDealNotes(dealId: number, limit = 2): Promise<string[]> {
+  if (isSyntheticPdId(dealId)) return [];
   const data = await pd(V1, "/notes", {
     params: { deal_id: String(dealId), limit: String(limit), sort: "add_time DESC" },
   });
@@ -417,6 +435,7 @@ export async function createDueTodayActivity(opts: {
   subject: string;
   note?: string;
 }): Promise<void> {
+  if (isSyntheticPdId(opts.dealId)) return;
   await pd(V1, "/activities", {
     method: "POST",
     body: JSON.stringify({

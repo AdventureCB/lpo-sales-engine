@@ -38,6 +38,10 @@ export async function enqueuePdSync(
   payload: Record<string, unknown>
 ): Promise<void> {
   if (!envOptional("PIPEDRIVE_API_TOKEN")) return; // post-cutover: no-op
+  // Synthetic deal ids (≥900M, migration 00112) are internal-only — never
+  // enqueue writes for deals that don't exist in Pipedrive.
+  const did = (payload as any).dealId ?? (payload as any).deal_id;
+  if (typeof did === "number" && did >= 900_000_000) return;
   const { error } = await db.from("pd_sync_queue").insert({ kind, payload });
   if (error) console.error(`pd-sync enqueue ${kind} failed`, error.message);
 }

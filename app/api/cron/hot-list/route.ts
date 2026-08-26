@@ -6,10 +6,10 @@ import { getMetricIds, getEventsForMetric, metricSlug } from "@/lib/klaviyo";
 import {
   getHotLabelId,
   getDeal,
-  getPersonsByIds,
   setDealLabels,
   createDueTodayActivity,
   getRecentSentThreads,
+  isSyntheticPdId,
 } from "@/lib/pipedrive";
 import { normalizePhone, normalizeEmail } from "@/lib/identity";
 import { evaluateDeal, DEFAULT_RULES, type HotRules } from "@/lib/hotlist";
@@ -70,7 +70,11 @@ export async function GET(req: Request) {
   const hasPipedrive = Boolean(envOptional("PIPEDRIVE_API_TOKEN"));
 
   // ── 1. Score and flag ─────────────────────────────────────────────────────
-  if (hasPipedrive) {
+  // NATIVE reads (PD exit Phase 0): deal/contact facts come from crm_deals/
+  // crm_contacts — synthetic ids (00112) make native deals scoreable too.
+  // Pipedrive label/activity side-effects remain best-effort while the token
+  // lives and are skipped automatically for synthetic ids.
+  {
     try {
       // Aggregates computed in Postgres — one round-trip, regardless of how
       // many events the window holds.
@@ -94,7 +98,7 @@ export async function GET(req: Request) {
         if (!data || data.length < 1000) break;
       }
 
-      const hotLabelId = await getHotLabelId().catch(() => null);
+      const hotLabelId = hasPipedrive ? await getHotLabelId().catch(() => null) : null;
       let flagged = 0;
       let deferred = 0;
       for (const c of (candidates ?? []) as Array<{
@@ -121,26 +125,37 @@ export async function GET(req: Request) {
           continue;
         }
 
-        const deal = await getDeal(dealId).catch(() => null);
-        if (!deal || deal.status !== "open") continue;
+        const { data: nd } = await db
+          .from("crm_deals")
+          .select("id, title, status, owner_pipedrive_id, contact_id")
+          .eq("pipedrive_deal_id", dealId)
+          .maybeSingle();
+        if (!nd || nd.status !== "open") continue;
 
         let personPhone: string | null = null;
-        if (deal.person_id) {
-          const persons = await getPersonsByIds([deal.person_id]).catch(() => null);
-          personPhone = normalizePhone(persons?.get(deal.person_id)?.phone);
-        }
+        let ownerName: string | null = null;
+        // Pool-avatar translation (24723797 → null) is defensive here — the
+        // mirror already nulls it, but a stray value must never resurrect.
+        const ownerId = nd.owner_pipedrive_id === 24723797 ? null : nd.owner_pipedrive_id ?? null;
+        const [{ data: contact }, { data: ownerRep }] = await Promise.all([
+          nd.contact_id
+            ? db.from("crm_contacts").select("phones").eq("id", nd.contact_id).maybeSingle()
+            : Promise.resolve({ data: null as any }),
+          ownerId != null
+            ? db.from("reps").select("name").eq("pipedrive_user_id", ownerId).maybeSingle()
+            : Promise.resolve({ data: null as any }),
+        ]);
+        const rawPhone = ((contact?.phones as any[]) ?? []).map((p) => p?.e164 ?? p?.value).find(Boolean) ?? null;
+        personPhone = normalizePhone(rawPhone);
+        ownerName = (ownerRep as any)?.name ?? null;
 
-        // Cainen's PD account only FRONTS the ownerless pool (PD requires an
-        // owner) — in the app those deals are unassigned. Same translation as
-        // the mirror, or the hot list resurrects him as owner.
-        const isPoolAvatar = deal.owner_id === 24723797;
         const { error } = await db.from("hot_flags").insert({
           deal_id: dealId,
           reason: verdict.reason,
           signals: verdict.signals,
-          deal_title: deal.title,
-          owner_name: isPoolAvatar ? null : deal.owner_name ?? null,
-          owner_pipedrive_id: isPoolAvatar ? null : deal.owner_id ?? null,
+          deal_title: nd.title,
+          owner_name: ownerName,
+          owner_pipedrive_id: ownerId,
           person_phone: personPhone,
           cooldown_until: new Date(
             now.getTime() + rules.cooldown_days * 24 * 3600_000
@@ -150,19 +165,39 @@ export async function GET(req: Request) {
         if (error?.code === "23505") continue;
         if (error) throw new Error(error.message);
 
-        // Pipedrive side-effects are best-effort — a failure there must not
-        // roll back the flag (the dashboard still shows it).
-        try {
-          if (hotLabelId && !deal.label_ids.includes(hotLabelId)) {
-            await setDealLabels(dealId, [...deal.label_ids, hotLabelId]);
+        // Side-effects are best-effort — a failure must not roll back the
+        // flag (the dashboard still shows it). PD label/activity while the
+        // token lives and the deal is real (lib no-ops synthetic ids); the
+        // due-today task lands NATIVELY when PD can't take it (mirrored PD
+        // activities would double up, so it's one or the other).
+        const pdReachable = hasPipedrive && !isSyntheticPdId(dealId);
+        if (pdReachable) {
+          try {
+            const deal = await getDeal(dealId).catch(() => null);
+            if (deal && hotLabelId && !deal.label_ids.includes(hotLabelId)) {
+              await setDealLabels(dealId, [...deal.label_ids, hotLabelId]);
+            }
+            await createDueTodayActivity({
+              dealId,
+              ownerId: ownerId ?? 24723797,
+              subject: `Hot: ${verdict.reason} — call today`,
+            });
+          } catch (e) {
+            console.error(`pipedrive side-effects failed for deal ${dealId}`, e);
           }
-          await createDueTodayActivity({
-            dealId,
-            ownerId: deal.owner_id,
+        } else {
+          await db.from("crm_activities").insert({
+            pd_key: `hotflag:${dealId}:${now.toISOString().slice(0, 10)}`,
+            deal_id: nd.id,
+            contact_id: nd.contact_id,
+            type: "task",
             subject: `Hot: ${verdict.reason} — call today`,
+            due_at: now.toISOString(),
+            occurred_at: now.toISOString(),
+            meta: { hot_flag: true },
+          }).then(({ error: e }) => {
+            if (e && e.code !== "23505") console.error("native hot task failed", e);
           });
-        } catch (e) {
-          console.error(`pipedrive side-effects failed for deal ${dealId}`, e);
         }
         {
           const { enqueueEvent } = await import("@/lib/automations");
@@ -182,12 +217,10 @@ export async function GET(req: Request) {
       console.error("scoring failed", e);
       summary.scoring = { error: e instanceof Error ? e.message : String(e) };
     }
-  } else {
-    summary.scoring = "skipped: PIPEDRIVE_API_TOKEN not set";
   }
 
   // ── 2. Quiet-clear (bounded batch) ────────────────────────────────────────
-  if (hasPipedrive && remaining() > 15_000) {
+  if (remaining() > 15_000) {
     try {
       const quietCutoff = new Date(
         now.getTime() - rules.quiet_clear_days * 24 * 3600_000
@@ -199,7 +232,7 @@ export async function GET(req: Request) {
         .lt("flagged_at", quietCutoff)
         .order("flagged_at", { ascending: true })
         .limit(MAX_QUIET_CLEARS_PER_SWEEP);
-      const hotLabelId = await getHotLabelId().catch(() => null);
+      const hotLabelId = hasPipedrive ? await getHotLabelId().catch(() => null) : null;
       let cleared = 0;
       for (const flag of staleFlags ?? []) {
         if (remaining() < 10_000) break;
@@ -210,7 +243,7 @@ export async function GET(req: Request) {
           .gte("occurred_at", quietCutoff);
         if ((count ?? 0) > 0) continue;
         await db.from("hot_flags").update({ cleared_at: now.toISOString() }).eq("id", flag.id);
-        if (hotLabelId) {
+        if (hotLabelId && hasPipedrive && !isSyntheticPdId(flag.deal_id)) {
           try {
             const deal = await getDeal(flag.deal_id);
             if (deal.label_ids.includes(hotLabelId)) {
