@@ -36,8 +36,9 @@ export const FEATURES: Record<string, string> = {
   eng_opens: "lifetime marketing email opens (engagement signals)",
   eng_clicks: "lifetime marketing email clicks",
   eng_types: "distinct engagement signal types",
-  dials: "total call attempts",
-  conversations: "calls classified as real conversations",
+  era: 'data era by close date: "pre_app" (closed before 2026-07, sparse call/comms capture) | "app" — condition on this to avoid era artifacts',
+  dials: "total call attempts (call events + logged call activities)",
+  conversations: "calls classified as real conversations (webhook-era calls only — sparse for pre_app)",
   talk_min: "total talk minutes",
   hours_to_first_call: "hours from deal creation to first outbound call (null = never called)",
   first_call_conversation: "boolean — the FIRST call was a real conversation",
@@ -153,17 +154,30 @@ export async function buildFeatureChunk(
     const closed = Date.parse(d.updated_at);
     const calls = (callsByDeal.get(d.id) ?? []).sort((a, b) => (a.started_at < b.started_at ? -1 : 1));
     const outCalls = calls.filter((c) => c.direction === "outgoing");
-    const firstCall = outCalls[0] ?? null;
     const convo = (c: any) => c.classification === "conversation" || (c.duration_s ?? 0) >= 120;
     const dealActs = actsByDeal.get(d.id) ?? [];
+    // Pre-webhook history: calls exist only as PD-mirrored call ACTIVITIES.
+    // Count them toward dials/first-call timing, deduped against call events
+    // logged within 5 minutes.
+    const eventTimes = calls.map((c) => Date.parse(c.started_at)).filter(Number.isFinite);
+    const callActs = dealActs.filter(
+      (a) =>
+        a.type === "call" &&
+        a.occurred_at &&
+        !eventTimes.some((t) => Math.abs(t - Date.parse(a.occurred_at)) < 5 * 60_000)
+    );
+    const allCallTimes = [...outCalls.map((c) => Date.parse(c.started_at)), ...callActs.map((a: any) => Date.parse(a.occurred_at))]
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b);
+    const firstCallTs = allCallTimes[0] ?? null;
+    const firstCall = outCalls[0] ?? null;
     const emailsOut = dealActs.filter((a) => a.type === "email" && (a.meta?.direction ?? "outbound") !== "inbound");
     const emailsIn = dealActs.filter((a) => a.type === "email" && a.meta?.direction === "inbound");
     const textsOut = dealActs.filter((a) => a.type === "sms");
     const inboundSms = inboundByDeal.get(d.id) ?? [];
     const firstOutTs = Math.min(
-      ...[firstCall?.started_at, emailsOut[0]?.occurred_at, textsOut[0]?.occurred_at]
-        .filter(Boolean)
-        .map((t: any) => Date.parse(t)),
+      ...[emailsOut[0]?.occurred_at, textsOut[0]?.occurred_at].filter(Boolean).map((t: any) => Date.parse(t)),
+      firstCallTs ?? Infinity,
       Infinity
     );
     const inboundTimes = [...inboundSms.map((t) => Date.parse(t)), ...emailsIn.map((a: any) => Date.parse(a.occurred_at))].filter(
@@ -197,10 +211,11 @@ export async function buildFeatureChunk(
       eng_opens: eng?.opens ?? 0,
       eng_clicks: eng?.clicks ?? 0,
       eng_types: eng?.types.size ?? 0,
-      dials: outCalls.length,
+      era: closed < Date.parse("2026-07-01") ? "pre_app" : "app",
+      dials: outCalls.length + callActs.length,
       conversations: calls.filter(convo).length,
       talk_min: Math.round(calls.reduce((s, c) => s + (c.duration_s ?? 0), 0) / 60),
-      hours_to_first_call: firstCall ? Math.max(0, Math.round((Date.parse(firstCall.started_at) - created) / 3600_000)) : null,
+      hours_to_first_call: firstCallTs != null ? Math.max(0, Math.round((firstCallTs - created) / 3600_000)) : null,
       first_call_conversation: firstCall ? convo(firstCall) : false,
       emails_out: emailsOut.length,
       texts_out: textsOut.length,
