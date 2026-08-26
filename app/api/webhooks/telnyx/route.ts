@@ -356,7 +356,7 @@ export async function POST(req: NextRequest) {
   // disposition, transcript, cost) — lifecycle upserts must merge, not replace.
   const { data: prior } = await db
     .from("call_events")
-    .select("raw, answered_at")
+    .select("raw, answered_at, rep_id")
     .eq("quo_call_id", `tx:${p.call_session_id}`)
     .maybeSingle();
   // Direction from the NUMBERS, not the leg label: inbound calls produce a
@@ -364,10 +364,14 @@ export async function POST(req: NextRequest) {
   // though it's the same inbound call.
   const { normalizePhone } = await import("@/lib/identity");
   const ourNumbers = new Set<string>();
-  const { data: repNums } = await db.from("reps").select("telnyx_number").not("telnyx_number", "is", null);
+  const repByNumber = new Map<string, string>();
+  const { data: repNums } = await db.from("reps").select("id, telnyx_number").not("telnyx_number", "is", null);
   for (const r of repNums ?? []) {
     const n = normalizePhone(r.telnyx_number);
-    if (n) ourNumbers.add(n);
+    if (n) {
+      ourNumbers.add(n);
+      repByNumber.set(n, r.id as string);
+    }
   }
   const { data: txState } = await db.from("crm_sync_state").select("value").eq("key", "telnyx").maybeSingle();
   const defaultNum = normalizePhone((txState?.value as any)?.callerNumber);
@@ -383,8 +387,16 @@ export async function POST(req: NextRequest) {
       : prior?.answered_at ?? null
     : answered;
 
+  // Attribute the call to the rep whose Telnyx number is on it — engagement
+  // and inbound-talk tracking key on rep_id, and inbound calls have no
+  // disposition step to stamp it later. Never clobber an existing value.
+  const lifecycleRepId =
+    (prior?.rep_id as string | null) ??
+    (isIncoming ? (toN ? repByNumber.get(toN) ?? null : null) : fromN ? repByNumber.get(fromN) ?? null : null);
+
   const row: Record<string, unknown> = {
     quo_call_id: `tx:${p.call_session_id}`,
+    rep_id: lifecycleRepId,
     direction: isIncoming ? "incoming" : "outgoing",
     status: type.replace("call.", ""),
     started_at: p.start_time ?? event?.data?.occurred_at ?? null,
