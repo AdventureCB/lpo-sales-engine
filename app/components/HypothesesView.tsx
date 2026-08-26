@@ -29,6 +29,23 @@ const STATUS_BADGE: Record<string, { label: string; color: string }> = {
 
 const pct = (h: number, n: number) => (n ? `${((h / n) * 100).toFixed(1)}%` : "—");
 
+// Φ(z) — standard normal CDF via erf approximation (Abramowitz-Stegun).
+function phi(z: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const d = 0.3989423 * Math.exp((-z * z) / 2);
+  const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  return z > 0 ? 1 - p : p;
+}
+
+/** Certainty the FUTURE agrees with the claim, from prospective evidence only. */
+function certainty(h: Hyp): { pct: number; n: number } {
+  const z = h.prospective_z;
+  const n = h.prospective.cohort_n;
+  if (z == null || n === 0) return { pct: 0, n: 0 };
+  const dirZ = h.direction === "lower" ? -z : z;
+  return { pct: Math.round(phi(dirZ) * 100), n };
+}
+
 export function HypothesesView() {
   const [data, setData] = useState<{ hypotheses: Hyp[]; snapshot: { deals: number; at: string | null } } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -119,6 +136,22 @@ export function HypothesesView() {
               <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 4 }}>
                 cohort: {h.cohort.map((c) => `${c.feature} ${c.op}${c.value !== undefined ? ` ${JSON.stringify(c.value)}` : ""}`).join(" AND ")}
               </div>
+              {!["rejected", "retired"].includes(h.status) && (() => {
+                const c = certainty(h);
+                const thin = c.n < 10;
+                const color = thin ? "var(--text-3)" : c.pct >= 90 ? "#3aa76d" : c.pct >= 60 ? "#b58a2e" : "#c05555";
+                return (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 7, maxWidth: 420 }}>
+                    <span style={{ fontSize: 11.5, color: "var(--text-3)", whiteSpace: "nowrap" }}>certainty</span>
+                    <div style={{ flex: 1, height: 7, borderRadius: 4, background: "var(--bg-2)", border: "1px solid var(--border-soft)", overflow: "hidden" }}>
+                      <div style={{ width: `${c.n === 0 ? 0 : c.pct}%`, height: "100%", background: color, opacity: thin ? 0.45 : 1 }} />
+                    </div>
+                    <span style={{ fontSize: 11.5, color: thin ? "var(--text-3)" : color, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+                      {c.n === 0 ? "awaiting closes" : `${c.pct}%${thin ? ` · only ${c.n} closes` : ""}`}
+                    </span>
+                  </div>
+                );
+              })()}
               {!["rejected", "retired"].includes(h.status) && (
                 <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                   <button
