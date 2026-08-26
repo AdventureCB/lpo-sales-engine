@@ -60,6 +60,11 @@ export async function GET(req: NextRequest) {
       classification: c.classification,
       quality: (c.raw as any)?.client_quality ?? null,
       hasTranscript: Boolean((c.raw as any)?.transcript),
+      // Voicemail playback + inline transcript — the call log must stand on
+      // its own for calls with no linked deal (no timeline to fall back to).
+      vm: Boolean((c.raw as any)?.vm) || c.classification === "voicemail",
+      vmUrl: ((c.raw as any)?.vm_mp3 as string | undefined) ?? null,
+      transcript: (c.raw as any)?.transcript ? String((c.raw as any).transcript).slice(0, 4000) : null,
     };
   });
 

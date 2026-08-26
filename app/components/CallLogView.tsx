@@ -19,6 +19,9 @@ interface CallEntry {
   classification: string | null;
   quality: { avg_loss_pct?: number; max_jitter_ms?: number } | null;
   hasTranscript: boolean;
+  vm: boolean;
+  vmUrl: string | null;
+  transcript: string | null;
 }
 
 type Filter = "all" | "missed" | "incoming" | "outgoing";
@@ -51,6 +54,7 @@ export function CallLogView() {
   const [calls, setCalls] = useState<CallEntry[] | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [error, setError] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -108,51 +112,97 @@ export function CallLogView() {
         {calls !== null && shown.length === 0 && (
           <div className="viewsub" style={{ padding: 16, marginBottom: 0 }}>No calls match.</div>
         )}
-        {shown.map((c, i) => (
-          <div
-            key={c.id}
-            onClick={() => c.crmDealId && router.push(`/crm/deal/${c.crmDealId}`)}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "34px 1.4fr 1fr 90px 1fr 130px",
-              gap: 10,
-              alignItems: "center",
-              padding: "11px 16px",
-              borderBottom: i < shown.length - 1 ? "1px solid var(--border-soft)" : "none",
-              cursor: c.crmDealId ? "pointer" : "default",
-              fontSize: 14.5,
-            }}
-            title={c.crmDealId ? `Open deal: ${c.dealTitle}` : undefined}
-          >
-            <span style={{ fontSize: 16 }}>
-              {c.missed ? "📵" : c.direction === "incoming" ? "↙️" : "↗️"}
-            </span>
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              <b style={{ color: c.missed ? "var(--crit)" : "var(--text-1)" }}>
-                {c.contactName ?? c.peer ?? "Unknown"}
-              </b>
-              {c.contactName && c.peer && (
-                <span style={{ color: "var(--text-3)", marginLeft: 8, fontSize: 13 }}>{c.peer}</span>
+        {shown.map((c, i) => {
+          const expandable = Boolean(c.vmUrl || c.transcript);
+          const open = openId === c.id;
+          return (
+            <div key={c.id} style={{ borderBottom: i < shown.length - 1 ? "1px solid var(--border-soft)" : "none" }}>
+              <div
+                onClick={() => {
+                  if (expandable) setOpenId(open ? null : c.id);
+                  else if (c.crmDealId) router.push(`/crm/deal/${c.crmDealId}`);
+                }}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "34px 1.4fr 1fr 90px 1fr 130px",
+                  gap: 10,
+                  alignItems: "center",
+                  padding: "11px 16px",
+                  cursor: expandable || c.crmDealId ? "pointer" : "default",
+                  fontSize: 14.5,
+                }}
+                title={expandable ? (open ? "Collapse" : c.vm ? "Play voicemail / read transcript" : "Read transcript") : c.crmDealId ? `Open deal: ${c.dealTitle}` : undefined}
+              >
+                <span style={{ fontSize: 16 }}>
+                  {c.vm ? "📼" : c.missed ? "📵" : c.direction === "incoming" ? "↙️" : "↗️"}
+                </span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <b style={{ color: c.missed ? "var(--crit)" : "var(--text-1)" }}>
+                    {c.contactName ?? c.peer ?? "Unknown"}
+                  </b>
+                  {c.contactName && c.peer && (
+                    <span style={{ color: "var(--text-3)", marginLeft: 8, fontSize: 13 }}>{c.peer}</span>
+                  )}
+                </span>
+                <span style={{ color: "var(--text-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {c.rep ?? "—"}
+                </span>
+                <span style={{ color: "var(--text-2)", fontVariantNumeric: "tabular-nums" }}>
+                  {c.missed && !c.vm ? "missed" : fmtDur(c.durationS)}
+                </span>
+                <span style={{ color: "var(--text-3)", fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {c.disposition
+                    ? DISPO_LABEL[c.disposition] ?? c.disposition
+                    : c.classification ?? c.status ?? ""}
+                  {c.vmUrl && " · 🔊"}
+                  {c.hasTranscript && " · 📝"}
+                  {c.quality?.avg_loss_pct != null && ` · 📶 ${c.quality.avg_loss_pct}%`}
+                  {expandable && <span style={{ marginLeft: 6 }}>{open ? "▾" : "▸"}</span>}
+                </span>
+                <span style={{ color: "var(--text-3)", fontSize: 13.5, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                  {fmtWhen(c.at)}
+                </span>
+              </div>
+              {open && (
+                <div style={{ padding: "0 16px 14px 60px", display: "grid", gap: 10 }}>
+                  {c.vmUrl && (
+                    // eslint-disable-next-line jsx-a11y/media-has-caption
+                    <audio controls preload="none" src={c.vmUrl} style={{ width: "100%", maxWidth: 480, height: 36 }} />
+                  )}
+                  {c.transcript && (
+                    <div
+                      style={{
+                        whiteSpace: "pre-wrap",
+                        fontSize: 13.5,
+                        color: "var(--text-2)",
+                        background: "var(--bg-2)",
+                        border: "1px solid var(--border-soft)",
+                        borderRadius: 8,
+                        padding: "10px 12px",
+                        maxHeight: 260,
+                        overflowY: "auto",
+                      }}
+                    >
+                      {c.transcript}
+                    </div>
+                  )}
+                  {c.crmDealId && (
+                    <button
+                      className="btn ghost"
+                      style={{ justifySelf: "start" }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        router.push(`/crm/deal/${c.crmDealId}`);
+                      }}
+                    >
+                      Open deal: {c.dealTitle ?? "→"}
+                    </button>
+                  )}
+                </div>
               )}
-            </span>
-            <span style={{ color: "var(--text-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {c.rep ?? "—"}
-            </span>
-            <span style={{ color: "var(--text-2)", fontVariantNumeric: "tabular-nums" }}>
-              {c.missed ? "missed" : fmtDur(c.durationS)}
-            </span>
-            <span style={{ color: "var(--text-3)", fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {c.disposition
-                ? DISPO_LABEL[c.disposition] ?? c.disposition
-                : c.classification ?? c.status ?? ""}
-              {c.hasTranscript && " · 📝"}
-              {c.quality?.avg_loss_pct != null && ` · 📶 ${c.quality.avg_loss_pct}%`}
-            </span>
-            <span style={{ color: "var(--text-3)", fontSize: 13.5, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-              {fmtWhen(c.at)}
-            </span>
-          </div>
-        ))}
+            </div>
+          );
+        })}
       </div>
     </>
   );
