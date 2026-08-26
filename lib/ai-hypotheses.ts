@@ -49,6 +49,19 @@ export const FEATURES: Record<string, string> = {
   replied: "boolean — buyer ever replied after our first outbound",
   archetype: "dominant AI-profile archetype key, or null if unprofiled",
   profile_conf: "AI profile overall confidence 0-1, or null",
+  // Coaching + comms-theme features (data starts 8/20 — near-zero pre_app
+  // coverage; hypotheses on these prove themselves prospectively).
+  reviewed_calls: "number of ⚖-reviewed calls on the deal",
+  sb_guide: 'best verdict for StoryBrand "Guide positioning" across reviewed calls: hit|partial|missed|null',
+  sb_problem: 'best verdict for "Problem articulation": hit|partial|missed|null',
+  sb_plan: 'best verdict for "Simple plan": hit|partial|missed|null',
+  sb_cta: 'best verdict for "Clear CTA": hit|partial|missed|null',
+  sb_discovery: 'best verdict for "Discovery": hit|partial|missed|null',
+  themes_used: "distinct AI draft themes actually used/sent on the deal",
+  first_theme: "first theme used (quick_nudge|build_followup|financing|schedule|objection|recap|reengage|breakup) or null",
+  second_theme: "second distinct theme used, or null — order claims compose first_theme + second_theme",
+  theme_financing: "boolean — financing theme used at any point",
+  theme_breakup: "boolean — breakup theme used at any point",
 };
 export const OPS = ["eq", "neq", "gte", "lte", "in", "notnull"] as const;
 export const OUTCOMES = ["won", "fast_close", "replied_48h"] as const;
@@ -87,7 +100,7 @@ export async function buildFeatureChunk(
   const phones = [...phoneToDeals.keys()];
 
   const CALL_COLS_LITE = "quo_call_id, crm_deal_id, deal_id, direction, started_at, duration_s, classification";
-  const [callsA, callsB, callsC, callsD, acts, inSms, engs, profs] = await Promise.all([
+  const [callsA, callsB, callsC, callsD, acts, inSms, engs, profs, reviews, drafts] = await Promise.all([
     db.from("call_events").select(CALL_COLS_LITE).in("crm_deal_id", ids),
     pdIds.length
       ? db.from("call_events").select(CALL_COLS_LITE).in("deal_id", pdIds)
@@ -108,6 +121,8 @@ export async function buildFeatureChunk(
       ? db.from("engagement_events").select("pipedrive_deal_id, type").in("pipedrive_deal_id", pdIds)
       : Promise.resolve({ data: [] as any[] }),
     db.from("deal_profiles").select("deal_id, archetypes, overall_confidence").in("deal_id", ids),
+    db.from("call_reviews").select("deal_id, created_at, scorecard:review->scorecard").in("deal_id", ids),
+    db.from("draft_events").select("deal_id, theme_key, generated_at, used_at, sent_activity_id").in("deal_id", ids).order("generated_at", { ascending: true }),
   ]);
 
   const pdToId = new Map(deals.map((d) => [d.pipedrive_deal_id, d.id]));
@@ -148,6 +163,31 @@ export async function buildFeatureChunk(
     engByDeal.set(did, agg);
   }
   const profByDeal = new Map((profs.data ?? []).map((p) => [p.deal_id, p]));
+
+  // ⚖ review scorecards: best verdict per StoryBrand principle per deal.
+  const RANK: Record<string, number> = { missed: 1, partial: 2, hit: 3 };
+  const sbByDeal = new Map<string, { n: number; best: Record<string, string> }>();
+  for (const r of (reviews as any).data ?? []) {
+    const agg = sbByDeal.get(r.deal_id) ?? { n: 0, best: {} };
+    agg.n++;
+    for (const item of (Array.isArray(r.scorecard) ? r.scorecard : []) as any[]) {
+      const key = String(item.principle ?? "").toLowerCase();
+      const v = String(item.verdict ?? "").toLowerCase();
+      if (!RANK[v]) continue;
+      const slot = key.includes("guide") ? "guide" : key.includes("problem") ? "problem" : key.includes("plan") ? "plan" : key.includes("cta") ? "cta" : key.includes("discovery") ? "discovery" : null;
+      if (!slot) continue;
+      if (!agg.best[slot] || RANK[v] > RANK[agg.best[slot]]) agg.best[slot] = v;
+    }
+    sbByDeal.set(r.deal_id, agg);
+  }
+  // Themes actually used (used-click or send linkage), in first-use order.
+  const themesByDeal = new Map<string, string[]>();
+  for (const ev of (drafts as any).data ?? []) {
+    if (!ev.used_at && !ev.sent_activity_id) continue;
+    const seq = themesByDeal.get(ev.deal_id) ?? [];
+    if (ev.theme_key && !seq.includes(ev.theme_key)) seq.push(ev.theme_key);
+    themesByDeal.set(ev.deal_id, seq);
+  }
 
   const rows = deals.map((d: any) => {
     const created = Date.parse(d.pd_add_time ?? d.created_at);
@@ -224,6 +264,17 @@ export async function buildFeatureChunk(
       replied: firstReply != null,
       archetype: dominant?.key ?? null,
       profile_conf: prof?.overall_confidence ?? null,
+      reviewed_calls: sbByDeal.get(d.id)?.n ?? 0,
+      sb_guide: sbByDeal.get(d.id)?.best.guide ?? null,
+      sb_problem: sbByDeal.get(d.id)?.best.problem ?? null,
+      sb_plan: sbByDeal.get(d.id)?.best.plan ?? null,
+      sb_cta: sbByDeal.get(d.id)?.best.cta ?? null,
+      sb_discovery: sbByDeal.get(d.id)?.best.discovery ?? null,
+      themes_used: (themesByDeal.get(d.id) ?? []).length,
+      first_theme: themesByDeal.get(d.id)?.[0] ?? null,
+      second_theme: themesByDeal.get(d.id)?.[1] ?? null,
+      theme_financing: (themesByDeal.get(d.id) ?? []).includes("financing"),
+      theme_breakup: (themesByDeal.get(d.id) ?? []).includes("breakup"),
     };
     const outcomes = {
       won: d.status === "won",
@@ -362,6 +413,8 @@ export async function runHypothesisGeneration(db: SupabaseClient): Promise<{ pro
     `Win rate by created_dow: ${rollup(rows, "created_dow", "won")}`,
     `replied_48h rate by hours_to_first_touch: ${rollup(rows.filter((r) => r.features.hours_to_first_touch != null), "hours_to_first_touch", "replied_48h", numBucket([1, 4, 24, 72]))}`,
     `fast_close rate by source: ${rollup(rows, "source", "fast_close")}`,
+    `Win rate by sb_plan (StoryBrand Simple-plan verdict, reviewed calls only): ${rollup(rows.filter((r) => r.features.sb_plan != null), "sb_plan", "won") || "no data yet"}`,
+    `Win rate by first_theme (draft themes, data starts 8/20): ${rollup(rows.filter((r) => r.features.first_theme != null), "first_theme", "won") || "no data yet"}`,
   ].join("\n");
 
   const catalog = Object.entries(FEATURES).map(([k, v]) => `- ${k}: ${v}`).join("\n");
