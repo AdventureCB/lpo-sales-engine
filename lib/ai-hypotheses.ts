@@ -85,10 +85,19 @@ export async function buildFeatureChunk(
   }
   const phones = [...phoneToDeals.keys()];
 
-  const [callsA, callsB, acts, inSms, engs, profs] = await Promise.all([
-    db.from("call_events").select("quo_call_id, crm_deal_id, deal_id, direction, started_at, duration_s, classification").in("crm_deal_id", ids),
+  const CALL_COLS_LITE = "quo_call_id, crm_deal_id, deal_id, direction, started_at, duration_s, classification";
+  const [callsA, callsB, callsC, callsD, acts, inSms, engs, profs] = await Promise.all([
+    db.from("call_events").select(CALL_COLS_LITE).in("crm_deal_id", ids),
     pdIds.length
-      ? db.from("call_events").select("quo_call_id, crm_deal_id, deal_id, direction, started_at, duration_s, classification").in("deal_id", pdIds)
+      ? db.from("call_events").select(CALL_COLS_LITE).in("deal_id", pdIds)
+      : Promise.resolve({ data: [] as any[] }),
+    // Historical Quo calls are PERSON-linked, not deal-linked — match by the
+    // contact's phone in the participants array (from = [0], to = [1]).
+    phones.length
+      ? db.from("call_events").select(`${CALL_COLS_LITE}, p0:raw->data->object->participants->>0`).in("raw->data->object->participants->>0", phones)
+      : Promise.resolve({ data: [] as any[] }),
+    phones.length
+      ? db.from("call_events").select(`${CALL_COLS_LITE}, p1:raw->data->object->participants->>1`).in("raw->data->object->participants->>1", phones)
       : Promise.resolve({ data: [] as any[] }),
     db.from("crm_activities").select("deal_id, type, occurred_at, meta").in("deal_id", ids),
     phones.length
@@ -101,15 +110,23 @@ export async function buildFeatureChunk(
   ]);
 
   const pdToId = new Map(deals.map((d) => [d.pipedrive_deal_id, d.id]));
+  const idSet = new Set(ids);
   const callsByDeal = new Map<string, any[]>();
   const seenCalls = new Set<string>();
-  for (const c of [...(callsA.data ?? []), ...((callsB as any).data ?? [])]) {
-    const did = (c.crm_deal_id as string) ?? pdToId.get(c.deal_id);
-    if (!did || !ids.includes(did)) continue;
+  const addCall = (did: string | undefined | null, c: any) => {
+    if (!did || !idSet.has(did)) return;
     const k = `${did}:${c.quo_call_id}`;
-    if (seenCalls.has(k)) continue;
+    if (seenCalls.has(k)) return;
     seenCalls.add(k);
     callsByDeal.set(did, [...(callsByDeal.get(did) ?? []), c]);
+  };
+  for (const c of [...(callsA.data ?? []), ...((callsB as any).data ?? [])]) {
+    addCall((c.crm_deal_id as string) ?? pdToId.get(c.deal_id), c);
+  }
+  for (const c of [...((callsC as any).data ?? []), ...((callsD as any).data ?? [])]) {
+    for (const ph of [(c as any).p0, (c as any).p1].filter(Boolean)) {
+      for (const did of phoneToDeals.get(normalizePhone(ph) ?? ph) ?? []) addCall(did, c);
+    }
   }
   const actsByDeal = new Map<string, any[]>();
   for (const a of acts.data ?? []) actsByDeal.set(a.deal_id, [...(actsByDeal.get(a.deal_id) ?? []), a]);
