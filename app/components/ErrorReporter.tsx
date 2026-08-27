@@ -34,7 +34,15 @@ export function ErrorReporter() {
     };
     window.addEventListener("error", onErr);
     window.addEventListener("unhandledrejection", onRej);
+    // 30s of healthy runtime clears the auto-reload budget, so the next
+    // network burst gets its 3 fresh retries.
+    const healthy = setTimeout(() => {
+      try {
+        sessionStorage.removeItem("chunk-reloaded");
+      } catch {}
+    }, 30_000);
     return () => {
+      clearTimeout(healthy);
       window.removeEventListener("error", onErr);
       window.removeEventListener("unhandledrejection", onRej);
     };

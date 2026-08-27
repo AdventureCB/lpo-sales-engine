@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { reportClientError } from "./components/ErrorReporter";
 
 /**
@@ -9,16 +9,26 @@ import { reportClientError } from "./components/ErrorReporter";
  * back without force-quitting the companion.
  */
 export default function Error({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+  const [retrying, setRetrying] = useState(false);
   useEffect(() => {
     reportClientError("boundary", error.message ?? "unknown", error.stack);
-    // Stale-deploy chunk misses (old client asking for pruned chunks after a
-    // push) heal with one reload — do it automatically, once, so reps never
-    // see this page for that case.
-    if (/chunk|dynamically imported module|import\(\)/i.test(`${error.name} ${error.message}`)) {
+    // Two auto-heal cases, both network-shaped:
+    // 1. Stale-deploy chunk misses (old client asking for pruned chunks).
+    // 2. "Load failed" — WebKit's fetch/import network error, seen on flaky
+    //    wifi (8/27: Jackson). One immediate reload can't help if the network
+    //    is still down, so retry up to 3× with a 4s pause and show
+    //    "reconnecting" instead of the crash screen.
+    const networkShaped = /chunk|dynamically imported module|import\(\)|load failed|failed to fetch|network/i.test(
+      `${error.name} ${error.message}`
+    );
+    if (networkShaped) {
       try {
-        if (!sessionStorage.getItem("chunk-reloaded")) {
-          sessionStorage.setItem("chunk-reloaded", "1");
-          window.location.reload();
+        const n = Number(sessionStorage.getItem("chunk-reloaded") ?? 0);
+        if (n < 3) {
+          sessionStorage.setItem("chunk-reloaded", String(n + 1));
+          setRetrying(true);
+          setTimeout(() => window.location.reload(), n === 0 ? 300 : 4000);
+          return;
         }
       } catch {}
     } else {
@@ -27,6 +37,26 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
       } catch {}
     }
   }, [error]);
+
+  if (retrying) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 12,
+          background: "var(--surface-1, #0f1115)",
+          color: "var(--text-1, #e7e9ec)",
+        }}
+      >
+        <div style={{ fontSize: 32 }}>📶</div>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>Connection hiccup — reconnecting…</div>
+      </div>
+    );
+  }
 
   return (
     <div
