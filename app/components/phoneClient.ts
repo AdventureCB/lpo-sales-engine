@@ -272,16 +272,38 @@ export async function ensurePhone(): Promise<any> {
     const { token, login, password, callerNumber } = await r.json();
     state.callerNumber = callerNumber ?? null;
     const { TelnyxRTC } = await import("@telnyx/webrtc");
+    // Tear down any previous instance FIRST — a replaced client keeps its own
+    // internal reconnect machinery alive and zombie instances accumulate
+    // until the webview drowns (8/27: near-unresponsive companions after
+    // hours of socket flapping).
+    if (client) {
+      try {
+        client.disconnect();
+      } catch {}
+      client = null;
+    }
     // SIP login (per-rep, receives inbound) when provisioned; token otherwise.
     const c = login ? new TelnyxRTC({ login, password }) : new TelnyxRTC({ login_token: token });
     client = c;
     c.remoteElement = "telnyx-audio";
     c.on("telnyx.error", (e: any) => {
+      if (client !== c) return; // stale instance — its events are noise
       console.error("telnyx error", e);
       state.conn = `error: ${e?.message ?? "unknown"}`;
       emit();
     });
     c.on("telnyx.socket.close", () => {
+      // A superseded instance closing must NOT trigger another reconnect —
+      // that's the zombie multiplication path. Fully kill it and bail.
+      if (client !== c) {
+        try {
+          c.disconnect();
+        } catch {}
+        return;
+      }
+      try {
+        c.disconnect();
+      } catch {}
       state.conn = "reconnecting…";
       readyPromise = null;
       client = null;
