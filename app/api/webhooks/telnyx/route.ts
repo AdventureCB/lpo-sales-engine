@@ -237,10 +237,10 @@ export async function POST(req: NextRequest) {
           console.error("vm audio greeting failed — falling back to TTS", e);
         }
       }
-      if (!played) speakCall(p.call_control_id, greeting, "vm").catch((e) => console.error("vm speak", e));
+      if (!played) await speakCall(p.call_control_id, greeting, "vm").catch((e) => console.error("vm speak", e));
     } else {
       const { startRecording } = await import("@/lib/telnyx");
-      startRecording(p.call_control_id).catch((e) => console.error("record_start", e));
+      await startRecording(p.call_control_id).catch((e) => console.error("record_start", e));
     }
   }
 
@@ -248,7 +248,10 @@ export async function POST(req: NextRequest) {
   if (type === "call.playback.ended") {
     if (vmState && p.call_control_id) {
       const { startRecording } = await import("@/lib/telnyx");
-      startRecording(p.call_control_id, { beep: true, clientState: "vm" }).catch((e) => console.error("vm record", e));
+      // AWAITED: fire-and-forget here raced the serverless freeze — the
+      // record-start request was killed with the lambda and voicemails were
+      // silently never recorded (8/27).
+      await startRecording(p.call_control_id, { beep: true, clientState: "vm" }).catch((e) => console.error("vm record", e));
     }
     return NextResponse.json({ ok: true }); // playback events aren't call lifecycle
   }
@@ -257,7 +260,10 @@ export async function POST(req: NextRequest) {
   if (type === "call.speak.ended") {
     if (vmState && p.call_control_id) {
       const { startRecording } = await import("@/lib/telnyx");
-      startRecording(p.call_control_id, { beep: true, clientState: "vm" }).catch((e) => console.error("vm record", e));
+      // AWAITED: fire-and-forget here raced the serverless freeze — the
+      // record-start request was killed with the lambda and voicemails were
+      // silently never recorded (8/27).
+      await startRecording(p.call_control_id, { beep: true, clientState: "vm" }).catch((e) => console.error("vm record", e));
     }
     return NextResponse.json({ ok: true }); // speak events aren't call lifecycle
   }
