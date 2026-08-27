@@ -33,9 +33,23 @@ export async function middleware(req: NextRequest) {
     }
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // The auth check runs on EVERY authenticated request — a hung Supabase
+  // Auth call must never become a user-facing 504 (MIDDLEWARE_INVOCATION_
+  // TIMEOUT, seen 8/27), and a slow one must not tax every page load.
+  // Fail OPEN after 4s: every route re-checks the session server-side
+  // (getSessionUser), so passing through without a refresh is safe — an
+  // actually-unauthenticated request still 401s at the route.
+  let user: unknown = null;
+  try {
+    const result = (await Promise.race([
+      supabase.auth.getUser(),
+      new Promise((resolve) => setTimeout(() => resolve("timeout"), 4000)),
+    ])) as { data?: { user?: unknown } } | "timeout";
+    if (result === "timeout") return res;
+    user = result?.data?.user ?? null;
+  } catch {
+    return res; // auth service error — fail open, routes re-check
+  }
 
   if (!user) {
     // OAuth legs (Gmail, Klaviyo) are browser navigations, not fetches —
