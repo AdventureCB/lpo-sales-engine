@@ -209,8 +209,57 @@ export async function phoneRequired(): Promise<boolean> {
   }
 }
 
+// ── Single-registration guard ───────────────────────────────────────────────
+// Post-port every window of a rep shares ONE SIP login; two live
+// registrations flap forever (Telnyx kicks the older one, it reconnects,
+// kicks the newer…). Exactly one window per browser owns the phone —
+// localStorage lock with a heartbeat, PageLock-style. A window that loses
+// the race watches for the owner to go away and takes over.
+const PHONE_TAB_ID = Math.random().toString(36).slice(2);
+const OWNER_KEY = "lpo:phone-owner";
+let ownerHeartbeat: ReturnType<typeof setInterval> | null = null;
+let ownerWatch: ReturnType<typeof setInterval> | null = null;
+function phoneOwnedElsewhere(): boolean {
+  try {
+    const rec = JSON.parse(localStorage.getItem(OWNER_KEY) ?? "null");
+    return Boolean(rec && rec.id !== PHONE_TAB_ID && Date.now() - rec.at < 10_000);
+  } catch {
+    return false;
+  }
+}
+function claimPhoneOwner() {
+  try {
+    localStorage.setItem(OWNER_KEY, JSON.stringify({ id: PHONE_TAB_ID, at: Date.now() }));
+  } catch {}
+}
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", () => {
+    try {
+      const rec = JSON.parse(localStorage.getItem(OWNER_KEY) ?? "null");
+      if (rec?.id === PHONE_TAB_ID) localStorage.removeItem(OWNER_KEY);
+    } catch {}
+  });
+}
+// Reconnect backoff: 5s doubling to 60s; reset on a successful registration.
+let reconnectFails = 0;
+
 export async function ensurePhone(): Promise<any> {
   if (isAuxWindow()) throw new Error("Phone lives in your main window — dial from there");
+  if (phoneOwnedElsewhere()) {
+    state.conn = "phone active in another window";
+    emit();
+    // Watch for the owning window to close, then take over.
+    ownerWatch ??= setInterval(() => {
+      if (!phoneOwnedElsewhere()) {
+        if (ownerWatch) clearInterval(ownerWatch);
+        ownerWatch = null;
+        void phoneRequired().then((w) => w && ensurePhone().catch(() => {}));
+      }
+    }, 8000);
+    throw new Error("Phone is active in another window — dial from there");
+  }
+  claimPhoneOwner();
+  ownerHeartbeat ??= setInterval(claimPhoneOwner, 4000);
   if (readyPromise) return readyPromise;
   state.conn = "connecting…";
   emit();
@@ -237,9 +286,10 @@ export async function ensurePhone(): Promise<any> {
       readyPromise = null;
       client = null;
       emit();
+      const delay = Math.min(5000 * 2 ** Math.min(reconnectFails++, 4), 60_000);
       setTimeout(() => {
         void phoneRequired().then((w) => w && ensurePhone().catch(() => {}));
-      }, 5000);
+      }, delay);
     });
     let outboundLive = false; // an outbound call the rep is actively on
     c.on("telnyx.notification", (n: any) => {
@@ -285,6 +335,7 @@ export async function ensurePhone(): Promise<any> {
       const t = setTimeout(() => reject(new Error("Telnyx connection timed out")), 15_000);
       c.on("telnyx.ready", () => {
         clearTimeout(t);
+        reconnectFails = 0;
         state.conn = "ready";
         emit();
         resolve();
