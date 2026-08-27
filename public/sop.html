@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light dark">
+<title>Sales Rep SOP — LPO Companion App</title>
+<style>
+  :root {
+    --ground: #F7F7F4;
+    --card: #FFFFFF;
+    --ink: #20241F;
+    --ink-2: #555A4F;
+    --ink-3: #8A8F83;
+    --rule: #E3E2DB;
+    --accent: #2F6B4F;
+    --accent-soft: #EAF2EC;
+    --warn: #8A5A18;
+    --warn-soft: #F7EEDD;
+    --kbd-bg: #EFEFEA;
+    --kbd-edge: #D8D8CF;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #14171A;
+      --card: #1B1F23;
+      --ink: #E8EAE4;
+      --ink-2: #A9AEA1;
+      --ink-3: #767B70;
+      --rule: #2C3136;
+      --accent: #5FA983;
+      --accent-soft: #1E2B24;
+      --warn: #D9A25B;
+      --warn-soft: #2A2318;
+      --kbd-bg: #24282C;
+      --kbd-edge: #3A3F44;
+    }
+  }
+  :root[data-theme="light"] {
+    --ground: #F7F7F4; --card: #FFFFFF; --ink: #20241F; --ink-2: #555A4F; --ink-3: #8A8F83;
+    --rule: #E3E2DB; --accent: #2F6B4F; --accent-soft: #EAF2EC; --warn: #8A5A18; --warn-soft: #F7EEDD;
+    --kbd-bg: #EFEFEA; --kbd-edge: #D8D8CF;
+  }
+  :root[data-theme="dark"] {
+    --ground: #14171A; --card: #1B1F23; --ink: #E8EAE4; --ink-2: #A9AEA1; --ink-3: #767B70;
+    --rule: #2C3136; --accent: #5FA983; --accent-soft: #1E2B24; --warn: #D9A25B; --warn-soft: #2A2318;
+    --kbd-bg: #24282C; --kbd-edge: #3A3F44;
+  }
+  html { background: var(--ground); }
+  body {
+    font: 15.5px/1.65 "Avenir Next", Seravek, ui-sans-serif, system-ui, sans-serif;
+    color: var(--ink);
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 40px 22px 80px; }
+  header { border-bottom: 2px solid var(--accent); padding-bottom: 22px; margin-bottom: 26px; }
+  .eyebrow { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+  h1 { font-size: 30px; line-height: 1.2; margin: 8px 0 6px; text-wrap: balance; font-weight: 700; }
+  .sub { color: var(--ink-2); margin: 0; max-width: 60ch; }
+  nav { background: var(--card); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 18px; margin-bottom: 34px; }
+  nav b { font-size: 12.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+  nav ol { margin: 8px 0 0; padding-left: 22px; columns: 2; gap: 28px; }
+  nav li { margin: 3px 0; }
+  nav a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--rule); }
+  nav a:hover { color: var(--accent); border-color: var(--accent); }
+  section { margin: 40px 0; }
+  h2 { font-size: 21px; margin: 0 0 4px; text-wrap: balance; }
+  h2 .num { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 8px; }
+  h3 { font-size: 16px; margin: 22px 0 6px; }
+  p { margin: 10px 0; max-width: 68ch; }
+  ul, ol.steps { margin: 8px 0; padding-left: 24px; max-width: 66ch; }
+  li { margin: 5px 0; }
+  .btn-ref {
+    font: 600 13px/1 ui-monospace, "SF Mono", Menlo, monospace;
+    background: var(--kbd-bg);
+    border: 1px solid var(--kbd-edge);
+    border-bottom-width: 2px;
+    border-radius: 6px;
+    padding: 2px 7px 3px;
+    white-space: nowrap;
+  }
+  .rule-box, .tip-box {
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin: 14px 0;
+    max-width: 66ch;
+  }
+  .rule-box { background: var(--warn-soft); border-left: 4px solid var(--warn); }
+  .rule-box b:first-child { color: var(--warn); text-transform: uppercase; font-size: 12px; letter-spacing: .08em; display: block; margin-bottom: 3px; }
+  .tip-box { background: var(--accent-soft); border-left: 4px solid var(--accent); }
+  .tip-box b:first-child { color: var(--accent); text-transform: uppercase; font-size: 12px; letter-spacing: .08em; display: block; margin-bottom: 3px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; margin: 12px 0; }
+  .tablewrap { overflow-x: auto; }
+  th { text-align: left; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); padding: 6px 12px 6px 0; border-bottom: 1.5px solid var(--rule); }
+  td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  td:first-child { white-space: nowrap; font-weight: 600; }
+  footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule); color: var(--ink-3); font-size: 13px; }
+  a { color: var(--accent); }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Lone Peak Overland · Sales Team</div>
+    <h1>Companion App — Sales Rep SOP</h1>
+    <p class="sub">How to run your day in the LPO Sales Engine: calls, texts, email, deals, lists, and the AI assistant. Everything happens in the companion app — it is the single source of truth.</p>
+  </header>
+
+  <nav>
+    <b>Contents</b>
+    <ol>
+      <li><a href="#setup">First-day setup</a></li>
+      <li><a href="#rhythm">The daily rhythm</a></li>
+      <li><a href="#calling">Calling</a></li>
+      <li><a href="#texting">Texting</a></li>
+      <li><a href="#email">Email</a></li>
+      <li><a href="#deals">Working a deal</a></li>
+      <li><a href="#lists">Sprint lists &amp; hot list</a></li>
+      <li><a href="#ai">The AI assistant</a></li>
+      <li><a href="#rules">House rules</a></li>
+      <li><a href="#trouble">Troubleshooting</a></li>
+    </ol>
+  </nav>
+
+  <section id="setup">
+    <h2><span class="num">1</span>First-day setup</h2>
+    <ol class="steps">
+      <li><b>Log in</b> with your <span class="btn-ref">@lonepeakoverland.com</span> account. Stay logged in — the app keeps your session.</li>
+      <li><b>Allow the microphone</b> when prompted. Calls run through the app in your browser window — no separate phone app, no cell phone needed.</li>
+      <li><b>Connect Gmail</b> from the sidebar (<span class="btn-ref">Connect Gmail</span>). This lets you send email from the app and pulls your customer email threads onto deal timelines automatically.</li>
+      <li><b>Set your signature and ringtone</b> under <span class="btn-ref">Settings → My Profile</span>. Your signature is appended to every email you send from the app; the ringtone picker has a preview button.</li>
+      <li><b>Click anywhere once after opening the app.</b> Browsers block audio until your first click — if you never click, inbound calls ring silently.</li>
+    </ol>
+    <div class="tip-box"><b>Tip — second window</b>
+    You can open a second companion window to keep the CRM up while you dial (ask an admin to show you the aux-window link). The app prevents two windows from showing the same page, and your phone always lives in your main window — a second window will say <i>"phone active in another window,"</i> which is normal.</div>
+  </section>
+
+  <section id="rhythm">
+    <h2><span class="num">2</span>The daily rhythm</h2>
+    <ol class="steps">
+      <li><b>Check the bell</b> (top of the app): overnight voicemails, missed calls, inbound texts, @mentions, and new leads land there.</li>
+      <li><b>Check the Hot List</b>: deals showing buying signals right now. These come first — signals decay fast.</li>
+      <li><b>Generate your sprint list</b> and start dialing. Lists are built by the ranking ladder (press the <span class="btn-ref">ℹ️</span> button on the Sprint Lists page for exactly how deals are chosen and ranked).</li>
+      <li><b>Work the dialer</b> through the list. Reply to texts and emails between calls — response speed is the single strongest thing you control.</li>
+      <li><b>Log everything as you go.</b> If it isn't in the app, it didn't happen — follow-ups, notes, outcomes.</li>
+    </ol>
+    <div class="tip-box"><b>Why speed matters</b>
+    Our own closed-deal data shows deals first-called within 24 hours of arriving win at several times the base rate, and high-intent sources (Saved Builds, Abandoned Carts) close fastest. When a fresh lead appears, it outranks almost anything else you could do.</div>
+  </section>
+
+  <section id="calling">
+    <h2><span class="num">3</span>Calling</h2>
+    <h3>From the dialer</h3>
+    <ul>
+      <li>The dialer walks your sprint list deal by deal. While you review a lead, the AI pre-builds a <b>call outline</b> (StoryBrand-based: their story, your plan, discovery questions, likely objections) in the <span class="btn-ref">🗒 Scripts &amp; drafts</span> card.</li>
+      <li>Press dial, have the conversation, hang up — then pick a <b>disposition</b>: Connected, VM left, No answer, Bad number, or Callback. Add a note and a follow-up (1 week / 2 weeks / 1 month / custom date / none).</li>
+      <li>Dialer hotkeys are shown on the buttons; they automatically pause while you're typing in any text box.</li>
+    </ul>
+    <h3>From a deal page</h3>
+    <p>Press the call button on any deal. A floating panel appears bottom-right with a timer, mute, and end-call — and when you hang up it walks you through the same disposition + follow-up flow as the dialer. Never skip the disposition; it drives cooldowns, stats, and list ranking.</p>
+    <h3>Inbound calls</h3>
+    <ul>
+      <li>Calls to your number ring in the app on any page, with a banner to answer or ignore. Answering from behind another window pulls the app forward.</li>
+      <li><b>If you're already on a call</b>, a second caller goes straight to your voicemail — your live call is never interrupted. The missed call + voicemail appear in your bell; call back when you wrap.</li>
+      <li>Voicemails show up with a transcript in the bell, on the deal timeline, and in the <b>Call log</b> — press a row there to play the audio and read the transcript.</li>
+    </ul>
+    <div class="rule-box"><b>Rule</b>
+    All calls and texts go through the app. Quo is gone for sales — anything sent from old apps or a personal phone doesn't reach customers reliably and is invisible to the team.</div>
+  </section>
+
+  <section id="texting">
+    <h2><span class="num">4</span>Texting</h2>
+    <ul>
+      <li>Text from a deal page (comm bar) or the <b>Texts</b> page. Conversations open in a Messenger-style dock at the bottom of the screen.</li>
+      <li><b>Inbound texts auto-open</b> their chat and show a banner at the top of the app, whatever page you're on.</li>
+      <li>Attach photos with the <span class="btn-ref">🖼</span> button. Inbound photo/video messages show on the deal timeline (expand the entry).</li>
+      <li><b>Opt-outs are enforced.</b> If a customer texted STOP, the app blocks your send and offers a compliant opt-in request instead. Don't fight it — it's the law, and the system logs everything.</li>
+    </ul>
+  </section>
+
+  <section id="email">
+    <h2><span class="num">5</span>Email</h2>
+    <ul>
+      <li>Send from the deal page's comm bar — the email goes out from <i>your</i> Gmail with your signature and logs to the timeline instantly.</li>
+      <li><b>Reply to inbound email</b> straight from the timeline: expand an inbound email (📥) and press <span class="btn-ref">↩ Reply</span>. Your reply threads properly into the customer's inbox conversation.</li>
+      <li><b>Open &amp; click tracking</b>: sent emails show <i>"👁 Opened ×2 · 🔗 1 click"</i> on the timeline once activity arrives. Treat clicks as truth and opens as a hint — some mail apps fake opens, others hide them.</li>
+      <li>Attach files from the shared asset library; links you include are tracked automatically.</li>
+    </ul>
+  </section>
+
+  <section id="deals">
+    <h2><span class="num">6</span>Working a deal</h2>
+    <h3>The deal page is the cockpit</h3>
+    <ul>
+      <li><b>Timeline</b>: every call (with transcript once processed), text, email, note, and system event. Click entries to expand; call entries with real transcripts offer <span class="btn-ref">⚖ Review call</span> (see §8).</li>
+      <li><b>Upcoming</b>: your scheduled follow-ups. Completing them logs to the timeline.</li>
+      <li><b>Marketing signals &amp; ad journey</b>: what the buyer has been opening, clicking, and which ads brought them in — read this before you dial.</li>
+      <li><b>Saved build links</b>: click a link in the timeline to copy the complete URL — always share the full link, never retype it.</li>
+    </ul>
+    <h3>Losing a deal — use the categories</h3>
+    <p>When a deal is dead, press Lost and pick the category. This matters — each one triggers different automation:</p>
+    <div class="tablewrap"><table>
+      <tr><th>Category</th><th>What happens</th></tr>
+      <tr><td>DNC</td><td>Customer asked us to stop. Marked lost immediately and the contact is protected — the system will never call, text, or list them again. Absolute.</td></tr>
+      <tr><td>No interest</td><td>Deal is unassigned and returns to the re-prospecting pool for a future pass.</td></tr>
+      <tr><td>No contact made</td><td>Same — unassigned, back to the pool.</td></tr>
+      <tr><td>Competitor purchase</td><td>Requires the competitor's name, then marks lost. That name feeds our positioning.</td></tr>
+      <tr><td>Not qualified</td><td>Unassigned, back to the pool.</td></tr>
+      <tr><td>Duplicate</td><td>Marked lost automatically. If the <i>other</i> deal is the keeper, use ⧉ Merge instead — merge moves the whole history onto the surviving deal and deletes this one.</td></tr>
+    </table></div>
+    <div class="rule-box"><b>Rule</b>
+    DNC is sacred. If a customer says any version of "stop contacting me," category 1 — immediately, no exceptions, no one re-adds them.</div>
+  </section>
+
+  <section id="lists">
+    <h2><span class="num">7</span>Sprint lists &amp; hot list</h2>
+    <ul>
+      <li><b>Sprint lists</b> are generated fresh and ranked by the ladder (deal quality, signals, timezone fit). Checking out a list reserves those deals for you for up to 3 days — finish what you check out.</li>
+      <li><b>New reps</b>: if you don't own enough qualifying deals yet, your lists auto-fill from the unassigned pool with the same ranking rules — working them is how you build your book.</li>
+      <li>Deals you've dialed recently sit in cooldown and won't reappear immediately; snoozed deals return when their snooze ends.</li>
+      <li><b>The Hot List</b> flags deals showing live buying signals (email opens, clicks, multiple signal types in a window). A hot flag means <i>call today</i> — a task is created for you automatically.</li>
+    </ul>
+  </section>
+
+  <section id="ai">
+    <h2><span class="num">8</span>The AI assistant</h2>
+    <h3>The buyer profile</h3>
+    <ul>
+      <li>Every worked deal builds a profile below Marketing Signals: who this buyer is (archetype fit), what's known (attributes with confidence), specifics worth remembering (tags), and a suggested next action with discovery questions.</li>
+      <li><b>Correct it — that's the point.</b> Press <span class="btn-ref">✕</span> on anything wrong (wrong archetype, bad tag) and it stays gone. Press <span class="btn-ref">✎ Tell the AI</span> to state a fact you know ("wife's name is Sara, budget is firm at 9k") — the profile rebuilds instantly treating your note as truth. Your corrections outrank the AI, always.</li>
+    </ul>
+    <h3>Scripts &amp; drafts</h3>
+    <ul>
+      <li>The <span class="btn-ref">🗒 Scripts &amp; drafts</span> card writes call outlines, emails, and texts voiced like our team, tailored to this buyer. Pick a theme (⭐ marks the suggested one) or type a direction for something specific.</li>
+      <li>One click inserts a draft into the composer — <b>edit before sending</b>; you own every word that goes out.</li>
+      <li>Press <span class="btn-ref">👎</span> with a short note when a draft misses. The system literally learns your standards from this.</li>
+    </ul>
+    <h3>Call reviews</h3>
+    <p>After a real conversation, open the call on the timeline and press <span class="btn-ref">⚖ Review call</span>. You get a StoryBrand scorecard (guide positioning, problem articulation, simple plan, clear CTA, discovery), what worked, and one thing to do differently. Review your good and bad calls both — a few reviews in, the AI starts tailoring your call outlines to your specific coaching focus.</p>
+  </section>
+
+  <section id="rules">
+    <h2><span class="num">9</span>House rules</h2>
+    <ul>
+      <li><b>Everything in the app.</b> Calls, texts, email, notes. No personal phones, no outside tools — customers fall through cracks the moment work happens off-system.</li>
+      <li><b>DNC is absolute</b> (see §6).</li>
+      <li><b>Disposition every call</b> — cooldowns, lists, and your stats depend on it.</li>
+      <li><b>Log the follow-up before you move on.</b> Future-you will not remember.</li>
+      <li><b>Speed to lead beats everything.</b> Fresh leads and hot flags first, then the list.</li>
+      <li><b>Unassigned ≠ unloved.</b> Pool deals are fair game via your sprint lists; working them grows your book.</li>
+    </ul>
+  </section>
+
+  <section id="trouble">
+    <h2><span class="num">10</span>Troubleshooting</h2>
+    <div class="tablewrap"><table>
+      <tr><th>Symptom</th><th>Do this</th></tr>
+      <tr><td>App feels slow / weird</td><td>Fully quit (⌘Q) and reopen the companion. This fixes the vast majority of issues — a periodic restart is normal hygiene.</td></tr>
+      <tr><td>"Phone active in another window"</td><td>Normal — your phone lives in one window. Dial from your main window, or close it and this window takes over automatically.</td></tr>
+      <tr><td>"This page is open in another window"</td><td>Also normal — two windows can't edit the same page. Use it in the other window, or take over from the prompt.</td></tr>
+      <tr><td>Inbound calls don't ring audibly</td><td>Click anywhere in the app once (browsers mute audio until first interaction). Check your ringtone in My Profile.</td></tr>
+      <tr><td>Can't send a text (blocked)</td><td>The customer opted out. Use the opt-in request the app offers, or a different channel.</td></tr>
+      <tr><td>Black screen / "Application error"</td><td>The app auto-reloads once on its own. If it doesn't recover, quit and reopen — the crash is already reported automatically.</td></tr>
+      <tr><td>Email won't send</td><td>Reconnect Gmail from the sidebar — tokens occasionally expire.</td></tr>
+      <tr><td>Anything else</td><td>Tell Kyle with the page you were on and the time — crash telemetry usually has the details already.</td></tr>
+    </table></div>
+  </section>
+
+  <footer>
+    Lone Peak Overland · Sales Engine SOP · Questions and corrections → Kyle
+  </footer>
+</div>
+
+</body>
+</html>
