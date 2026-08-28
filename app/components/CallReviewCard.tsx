@@ -114,7 +114,7 @@ export function CallReviewInline({
         <div style={{ background: "var(--surface-2)", borderRadius: 8, padding: "10px 12px", marginTop: 8, display: "grid", gap: 8, maxWidth: 640 }}>
           {review.thin_transcript && (
             <div style={{ fontSize: 12, color: "var(--text-3)", fontStyle: "italic" }}>
-              Summary-only transcript — high-level feedback. Full transcripts (and sharper reviews) arrive after the phone port.
+              Summary-only transcript — high-level feedback. This was an older call; calls placed in the app now carry full transcripts and get sharper reviews.
             </div>
           )}
           <div style={{ fontSize: 13.5, lineHeight: 1.5, color: "var(--text-1)" }}>{em(review.snapshot)}</div>
