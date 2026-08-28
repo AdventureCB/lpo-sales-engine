@@ -725,7 +725,7 @@ export function DealDetailView({
                     setLostReason("");
                     setModal("lost");
                   },
-                  "Requires a loss reason; deal moves to Cainen for re-prospecting"
+                  "Pick a loss category — DNC & duplicate close immediately; no-interest / no-contact / not-qualified unassign back to the pool"
                 )}
                 <button
                   className="btn ghost"
@@ -1656,7 +1656,7 @@ export function DealDetailView({
                 Created {fmtWhen(d.pd_add_time ?? d.created_at)}<br />
                 Stage changed {fmtWhen(d.stage_changed_at)}<br />
                 Last activity {fmtWhen(d.last_activity_at)}<br />
-                Pipedrive #{d.pipedrive_deal_id ?? "—"}
+                Deal #{d.pipedrive_deal_id ?? "—"}
               </div>
             </>
           )}
