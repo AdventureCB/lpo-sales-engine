@@ -67,3 +67,7 @@ begin
   return n;
 end;
 $function$;
+
+-- Housekeeping: 00110 added a 3-arg ai_refresh_candidates but left the
+-- 00108 2-arg version, making unqualified calls ambiguous. Drop the old one.
+drop function if exists public.ai_refresh_candidates(integer, integer);
