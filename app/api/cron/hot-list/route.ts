@@ -384,6 +384,22 @@ export async function GET(req: Request) {
     }
   }
 
+  // ── 5b. Back-link crash-orphaned calls → deals ────────────────────────────
+  // A call whose rep never completed the disposition (app crash / closed
+  // window) keeps its transcript but no deal link → invisible on the deal
+  // page. Re-attach by the customer's phone, preferring the rep's own deal.
+  // Short window on the recurring pass — the big backfill already ran.
+  if (remaining() > 4_000) {
+    try {
+      const { data: linked } = await db.rpc("backlink_orphan_calls", {
+        p_since: new Date(now.getTime() - 3 * 86_400_000).toISOString(),
+      });
+      summary.backlinkedCalls = linked ?? 0;
+    } catch (e) {
+      console.error("call back-link failed", e);
+    }
+  }
+
   // ── 6. Recover deals for hot no-deal contacts (CRM-native) ────────────────
   // Contacts whose recent signals qualify but who have no OPEN deal: create a
   // new deal (Cainen-owned → reprospect pool) or reopen a closed one to its
