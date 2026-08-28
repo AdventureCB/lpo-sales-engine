@@ -1033,7 +1033,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
             </b>
           </>
         )}{" "}
-        · calls place through your Quo line · auto-logged to Pipedrive
+        · calls place in your browser · every call auto-logs to the deal
         {queueMeta && (queueMeta.skippedNoPhone > 0 || queueMeta.skippedOwnership > 0) && (
           <span style={{ color: "var(--text-3)" }}>
             {" "}· excluded: {queueMeta.skippedNoPhone > 0 ? `${queueMeta.skippedNoPhone} without phone` : ""}
