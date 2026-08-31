@@ -52,10 +52,43 @@ export async function GET(req: Request) {
   };
 
   // ?msgid=AC… — raw message detail from Quo (list-vs-detail media check)
+  // ?msgid=AC…&mirror=1 — also mirror that message's media (30MB cap vs the
+  // bulk importer's 12MB) and stamp it onto the existing sms_messages row
   const msgid = u.searchParams.get("msgid");
   if (msgid) {
-    const detail = await quoGet(`/messages/${encodeURIComponent(msgid)}`, {}).catch((e) => ({ error: String(e) }));
-    return NextResponse.json({ ok: true, msgid, detail });
+    const detail: any = await quoGet(`/messages/${encodeURIComponent(msgid)}`, {}).catch((e) => ({ error: String(e) }));
+    if (u.searchParams.get("mirror") !== "1") return NextResponse.json({ ok: true, msgid, detail });
+    const urls: string[] = (Array.isArray(detail?.media) ? detail.media : [])
+      .map((x: any) => (typeof x === "string" ? x : x?.url))
+      .filter(Boolean);
+    const mirrored: string[] = [];
+    for (const src of urls.slice(0, 5)) {
+      try {
+        const res = await fetch(src, { headers: { "User-Agent": "lpo-sales-engine/0.1" } });
+        if (!res.ok) continue;
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length === 0 || buf.length > 30 * 1024 * 1024) continue;
+        const ct = res.headers.get("content-type") ?? "application/octet-stream";
+        const ext = (ct.split("/")[1] ?? "bin").replace("jpeg", "jpg").split(";")[0].slice(0, 5);
+        const path = `quo-import/${crypto.randomUUID()}.${ext}`;
+        const { error } = await db.storage.from("comm-media").upload(path, buf, { contentType: ct });
+        if (error) continue;
+        const { data: signed } = await db.storage.from("comm-media").createSignedUrl(path, 10 * 365 * 24 * 3600);
+        if (signed?.signedUrl) mirrored.push(signed.signedUrl);
+      } catch {
+        /* skip file */
+      }
+    }
+    let updated = false;
+    if (mirrored.length) {
+      const { error } = await db
+        .from("sms_messages")
+        .update({ media: mirrored })
+        .eq("provider", "quo")
+        .eq("provider_message_id", msgid);
+      updated = !error;
+    }
+    return NextResponse.json({ ok: true, msgid, mediaUrls: urls.length, mirrored: mirrored.length, updated });
   }
 
   // ?convs=1 — list conversations with participant counts (group-thread probe)
