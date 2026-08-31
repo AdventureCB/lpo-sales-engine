@@ -1,9 +1,8 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { env, envOptional } from "./env";
+import { envOptional } from "./env";
 import { normalizeEmail, normalizePhone } from "./identity";
 import { getProfilePhoneByEmail } from "./klaviyo";
-import { upsertDeal, upsertContact } from "./crm-sync";
 
 /**
  * Round-robin owner rotation. Each rotation KEY keeps its own cursor —
@@ -31,35 +30,117 @@ export async function nextRoundRobinOwner(
 export interface CreateDealResult {
   created: boolean;
   skippedReason?: string;
-  pipedriveDealId?: number;
+  pipedriveDealId?: number; // internal deal number (synthetic ≥900M post-cutover)
   crmDealId?: string;
   title?: string;
   phoneEnriched?: boolean;
 }
 
-function pdClient() {
-  if (!envOptional("PIPEDRIVE_API_TOKEN")) throw new Error("Pipedrive unavailable");
-  const token = env("PIPEDRIVE_API_TOKEN");
-  return async (path: string, method = "GET", body?: unknown) => {
-    const u = new URL(`https://api.pipedrive.com/v1${path}`);
-    u.searchParams.set("api_token", token);
-    const res = await fetch(u, {
-      method,
-      headers: body ? { "Content-Type": "application/json" } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const json = await res.json().catch(() => ({}));
-    if (res.status === 429) throw new Error("Pipedrive daily budget exhausted");
-    if (!res.ok || json.success === false) throw new Error(`Pipedrive ${path} ${res.status}`);
-    return json.data;
-  };
+async function findContactByIdentity(db: SupabaseClient, email: string | null, phone: string | null) {
+  if (email) {
+    const { data } = await db
+      .from("crm_contacts")
+      .select("id, name, phones")
+      .filter("emails", "cs", JSON.stringify([{ value: email }]))
+      .limit(1)
+      .maybeSingle();
+    if (data) return data;
+  }
+  if (phone) {
+    const { data } = await db
+      .from("crm_contacts")
+      .select("id, name, phones")
+      .filter("phones", "cs", JSON.stringify([{ e164: phone }]))
+      .limit(1)
+      .maybeSingle();
+    if (data) return data;
+  }
+  return null;
+}
+
+async function openDealForContact(db: SupabaseClient, contactId: string) {
+  const { data } = await db
+    .from("crm_deals")
+    .select("id, pipedrive_deal_id, title")
+    .eq("contact_id", contactId)
+    .eq("status", "open")
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data ?? null;
+}
+
+async function createContact(
+  db: SupabaseClient,
+  args: { name: string; email: string | null; phone: string | null; source?: string | null }
+) {
+  const [first, ...rest] = args.name.split(/\s+/);
+  const { data, error } = await db
+    .from("crm_contacts")
+    .insert({
+      name: args.name,
+      first_name: first || null,
+      last_name: rest.join(" ") || null,
+      emails: args.email ? [{ value: args.email, primary: true }] : [],
+      phones: args.phone ? [{ value: args.phone, e164: args.phone, primary: true }] : [],
+      ...(args.source ? { source: args.source } : {}),
+    })
+    .select("id, name, phones")
+    .single();
+  if (error) throw new Error(`contact create failed: ${error.message}`);
+  return data;
+}
+
+/** Fill a missing phone on an existing contact; returns true if it was set. */
+async function fillContactPhone(db: SupabaseClient, contact: { id: string; phones: unknown }, phone: string) {
+  const phones = (contact.phones as any[]) ?? [];
+  if (phones.some((p) => p?.e164 || p?.value)) return false;
+  await db
+    .from("crm_contacts")
+    .update({ phones: [{ value: phone, e164: phone, primary: true }], updated_at: new Date().toISOString() })
+    .eq("id", contact.id);
+  return true;
+}
+
+async function stageUuidFromPdId(db: SupabaseClient, pipedriveStageId: number | null | undefined) {
+  if (!pipedriveStageId) return null;
+  const { data } = await db.from("crm_stages").select("id").eq("pipedrive_stage_id", pipedriveStageId).maybeSingle();
+  return data?.id ?? null;
+}
+
+async function insertDeal(
+  db: SupabaseClient,
+  args: {
+    title: string;
+    contactId: string;
+    stageId: string | null;
+    ownerPipedriveId: number | null;
+    valueCents: number | null;
+  }
+) {
+  const { data, error } = await db
+    .from("crm_deals")
+    .insert({
+      title: args.title,
+      contact_id: args.contactId,
+      stage_id: args.stageId,
+      status: "open",
+      value_cents: args.valueCents,
+      owner_pipedrive_id: args.ownerPipedriveId,
+      stage_changed_at: new Date().toISOString(),
+    })
+    .select("id, pipedrive_deal_id")
+    .single();
+  if (error) throw new Error(`deal create failed: ${error.message}`);
+  return data;
 }
 
 /**
  * Source-agnostic deal creation from an email (Klaviyo profile, Shopify
- * customer, automation signal — anything). Finds or creates the Pipedrive
- * person (system of record until cutover), enriches a missing phone from
- * Klaviyo, dedupes against open deals, mirrors immediately.
+ * customer, automation signal, a rep's manual entry). NATIVE: finds or
+ * creates the crm_contact, enriches a missing phone from Klaviyo, dedupes
+ * against open deals, and creates the deal directly in the app — the
+ * synthetic-id trigger mints the internal deal number.
  */
 export async function createDealFromEmail(
   db: SupabaseClient,
@@ -78,18 +159,12 @@ export async function createDealFromEmail(
 ): Promise<CreateDealResult> {
   const email = normalizeEmail(opts.email);
   if (!email) throw new Error("valid email required");
-  const pd = pdClient();
 
-  const search = await pd(
-    `/persons/search?term=${encodeURIComponent(email)}&fields=email&exact_match=true&limit=1`
-  );
-  let personId: number | null = search?.items?.[0]?.item?.id ?? null;
+  let contact = await findContactByIdentity(db, email, null);
 
-  if (personId && opts.skipIfOpenDeal !== false) {
-    const deals = await pd(`/persons/${personId}/deals?status=open&limit=1`);
-    if ((deals ?? []).length > 0) {
-      return { created: false, skippedReason: "open deal already exists for this person" };
-    }
+  if (contact && opts.skipIfOpenDeal !== false) {
+    const open = await openDealForContact(db, contact.id);
+    if (open) return { created: false, skippedReason: "open deal already exists for this person" };
   }
 
   let phone: string | null = normalizePhone(opts.providedPhone ?? null);
@@ -98,50 +173,33 @@ export async function createDealFromEmail(
   }
 
   const displayName = opts.name?.trim() || email.split("@")[0];
-  if (!personId) {
-    const person = await pd("/persons", "POST", {
+  if (!contact) {
+    contact = await createContact(db, {
       name: displayName,
-      email: [{ value: email, primary: true }],
-      ...(phone ? { phone: [{ value: phone, primary: true }] } : {}),
-      ...(opts.ownerPipedriveId ? { owner_id: opts.ownerPipedriveId } : {}),
+      email,
+      phone,
+      source: opts.sourceName,
     });
-    personId = person.id;
-    await upsertContact(db, person).catch(() => {});
   } else if (phone) {
-    const person = await pd(`/persons/${personId}`);
-    const hasPhone = (person.phone ?? []).some((p: any) => p.value);
-    if (!hasPhone) {
-      const updated = await pd(`/persons/${personId}`, "PUT", {
-        phone: [{ value: phone, primary: true }],
-      });
-      await upsertContact(db, updated).catch(() => {});
-    } else {
-      phone = null; // person already had one — nothing enriched
-    }
+    const filled = await fillContactPhone(db, contact, phone);
+    if (!filled) phone = null; // person already had one — nothing enriched
   }
 
   const title = opts.title?.trim() || `Saved Build - ${displayName}`;
-  const deal = await pd("/deals", "POST", {
+  const stageId = await stageUuidFromPdId(db, opts.pipedriveStageId);
+  const deal = await insertDeal(db, {
     title,
-    person_id: personId,
-    ...(opts.pipedriveStageId ? { stage_id: opts.pipedriveStageId } : {}),
-    ...(opts.ownerPipedriveId ? { user_id: opts.ownerPipedriveId } : {}),
-    ...(opts.valueCents != null ? { value: Math.round(opts.valueCents) / 100, currency: "USD" } : {}),
+    contactId: contact.id,
+    stageId,
+    ownerPipedriveId: opts.ownerPipedriveId ?? null,
+    valueCents: opts.valueCents ?? null,
   });
-  await upsertDeal(db, deal);
-  const { data: mirrored } = await db
-    .from("crm_deals")
-    .select("id")
-    .eq("pipedrive_deal_id", deal.id)
-    .maybeSingle();
-  if (mirrored && opts.sourceName) {
-    await setDealSourceByName(db, mirrored.id, opts.sourceName);
-  }
+  if (opts.sourceName) await setDealSourceByName(db, deal.id, opts.sourceName).catch(() => {});
 
   return {
     created: true,
-    pipedriveDealId: deal.id,
-    crmDealId: mirrored?.id,
+    pipedriveDealId: deal.pipedrive_deal_id,
+    crmDealId: deal.id,
     title,
     phoneEnriched: Boolean(phone),
   };
@@ -149,8 +207,8 @@ export async function createDealFromEmail(
 
 /**
  * Deal creation from a phone number — the manual-dial "no deal matched" path.
- * Finds or creates the Pipedrive person by phone; if that person already has
- * an open deal, links to it instead of creating a duplicate.
+ * NATIVE: finds or creates the crm_contact by phone; if that person already
+ * has an open deal, links to it instead of creating a duplicate.
  */
 export async function createDealFromPhone(
   db: SupabaseClient,
@@ -166,65 +224,45 @@ export async function createDealFromPhone(
 ): Promise<CreateDealResult> {
   const phone = normalizePhone(opts.phone);
   if (!phone) throw new Error("valid phone required");
-  const pd = pdClient();
+  const email = opts.email ? normalizeEmail(opts.email) : null;
 
-  const digits = phone.replace(/\D/g, "").replace(/^1/, "");
-  const search = await pd(
-    `/persons/search?term=${encodeURIComponent(digits)}&fields=phone&limit=1`
-  );
-  let personId: number | null = search?.items?.[0]?.item?.id ?? null;
+  let contact = await findContactByIdentity(db, email, phone);
 
-  if (personId) {
-    const deals = await pd(`/persons/${personId}/deals?status=open&limit=1`);
-    const open = (deals ?? [])[0];
+  if (contact) {
+    const open = await openDealForContact(db, contact.id);
     if (open) {
-      await upsertDeal(db, open);
-      const { data: mirrored } = await db
-        .from("crm_deals")
-        .select("id")
-        .eq("pipedrive_deal_id", open.id)
-        .maybeSingle();
       return {
         created: false,
         skippedReason: "linked to this person's existing open deal",
-        pipedriveDealId: open.id,
-        crmDealId: mirrored?.id,
-        title: open.title,
+        pipedriveDealId: open.pipedrive_deal_id ?? undefined,
+        crmDealId: open.id,
+        title: open.title ?? undefined,
       };
     }
   }
 
   const displayName = opts.name?.trim() || phone;
-  const email = opts.email ? normalizeEmail(opts.email) : null;
-  if (!personId) {
-    const person = await pd("/persons", "POST", {
+  if (!contact) {
+    contact = await createContact(db, {
       name: displayName,
-      phone: [{ value: phone, primary: true }],
-      ...(email ? { email: [{ value: email, primary: true }] } : {}),
-      ...(opts.ownerPipedriveId ? { owner_id: opts.ownerPipedriveId } : {}),
+      email,
+      phone,
+      source: opts.sourceName,
     });
-    personId = person.id;
-    await upsertContact(db, person).catch(() => {});
   }
 
   const title = opts.title?.trim() || `Phone Lead - ${displayName}`;
-  const deal = await pd("/deals", "POST", {
+  const stageId = await stageUuidFromPdId(db, opts.pipedriveStageId);
+  const deal = await insertDeal(db, {
     title,
-    person_id: personId,
-    ...(opts.pipedriveStageId ? { stage_id: opts.pipedriveStageId } : {}),
-    ...(opts.ownerPipedriveId ? { user_id: opts.ownerPipedriveId } : {}),
+    contactId: contact.id,
+    stageId,
+    ownerPipedriveId: opts.ownerPipedriveId ?? null,
+    valueCents: null,
   });
-  await upsertDeal(db, deal);
-  const { data: mirrored } = await db
-    .from("crm_deals")
-    .select("id")
-    .eq("pipedrive_deal_id", deal.id)
-    .maybeSingle();
-  if (mirrored && opts.sourceName) {
-    await setDealSourceByName(db, mirrored.id, opts.sourceName);
-  }
+  if (opts.sourceName) await setDealSourceByName(db, deal.id, opts.sourceName).catch(() => {});
 
-  return { created: true, pipedriveDealId: deal.id, crmDealId: mirrored?.id, title };
+  return { created: true, pipedriveDealId: deal.pipedrive_deal_id, crmDealId: deal.id, title };
 }
 
 /** Get-or-create a source by name and stamp it on a CRM deal — the
