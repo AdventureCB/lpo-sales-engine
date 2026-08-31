@@ -71,3 +71,22 @@ export async function POST(req: NextRequest) {
   }
   return NextResponse.json({ ok: true, created, alreadyHad: [...have] });
 }
+
+/**
+ * PD EXIT Phase 2: delete every webhook pointing at our mirror endpoint.
+ * The mirror goes quiet; tombstones + adopt-by-email cover any stragglers
+ * already in flight. Reversible — POST re-registers them.
+ */
+export async function DELETE(req: NextRequest) {
+  if (!authed(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const target = `${APP_URL}/api/webhooks/pipedrive`;
+  const existing = (await pdV1("/webhooks")) ?? [];
+  const ours = existing.filter((h: any) => h.subscription_url === target);
+  const deleted: string[] = [];
+  for (const h of ours) {
+    await pdV1(`/webhooks/${h.id}`, "DELETE");
+    deleted.push(`${h.event_object}:${h.event_action} (#${h.id})`);
+  }
+  const remaining = ((await pdV1("/webhooks")) ?? []).filter((h: any) => h.subscription_url === target);
+  return NextResponse.json({ ok: true, deleted, remainingOurs: remaining.length });
+}
