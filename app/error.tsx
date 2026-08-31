@@ -24,12 +24,15 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
     if (networkShaped) {
       try {
         const n = Number(sessionStorage.getItem("chunk-reloaded") ?? 0);
-        if (n < 3) {
-          sessionStorage.setItem("chunk-reloaded", String(n + 1));
-          setRetrying(true);
-          setTimeout(() => window.location.reload(), n === 0 ? 300 : 4000);
-          return;
-        }
+        sessionStorage.setItem("chunk-reloaded", String(n + 1));
+        setRetrying(true);
+        // Fast first retry, then back off — and NEVER dead-end on the crash
+        // screen while the network is out (8/31: office connection holes
+        // outlasted the old 3-retry budget). Cap the interval at 15s and
+        // keep trying until the connection returns.
+        const delay = n === 0 ? 300 : Math.min(4000 * n, 15_000);
+        setTimeout(() => window.location.reload(), delay);
+        return;
       } catch {}
     } else {
       try {
@@ -54,6 +57,15 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
       >
         <div style={{ fontSize: 32 }}>📶</div>
         <div style={{ fontSize: 15, fontWeight: 600 }}>Connection hiccup — reconnecting…</div>
+        <div style={{ fontSize: 12.5, color: "var(--text-3, #9aa0a6)" }}>
+          Waiting for your network. This retries automatically — if it persists, check your wifi.
+        </div>
+        <button
+          onClick={() => window.location.reload()}
+          style={{ padding: "6px 16px", fontSize: 13, borderRadius: 8, border: "1px solid #444", background: "transparent", color: "inherit", cursor: "pointer" }}
+        >
+          Retry now
+        </button>
       </div>
     );
   }
