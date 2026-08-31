@@ -58,9 +58,8 @@ export async function GET(req: Request) {
   if (msgid) {
     const detail: any = await quoGet(`/messages/${encodeURIComponent(msgid)}`, {}).catch((e) => ({ error: String(e) }));
     if (u.searchParams.get("mirror") !== "1") return NextResponse.json({ ok: true, msgid, detail });
-    const urls: string[] = (Array.isArray(detail?.media) ? detail.media : [])
-      .map((x: any) => (typeof x === "string" ? x : x?.url))
-      .filter(Boolean);
+    const mediaArr = Array.isArray(detail?.media) ? detail.media : Array.isArray(detail?.data?.media) ? detail.data.media : [];
+    const urls: string[] = mediaArr.map((x: any) => (typeof x === "string" ? x : x?.url)).filter(Boolean);
     const mirrored: string[] = [];
     for (const src of urls.slice(0, 5)) {
       try {
