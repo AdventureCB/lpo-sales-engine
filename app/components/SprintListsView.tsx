@@ -1,5 +1,6 @@
 "use client";
 
+import { useRoster } from "./useRoster";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { SprintLogicModal } from "./SprintLogicModal";
@@ -38,11 +39,6 @@ type ItemRow = {
   addedManually: boolean;
   disposition: string | null;
 };
-
-const REPS = [
-  { email: "parker@lonepeakoverland.com", name: "Parker" },
-  { email: "jackson@lonepeakoverland.com", name: "Jackson" },
-];
 
 const TIER_BADGE: Record<string, { label: string; color: string }> = {
   "1a": { label: "🔥 Buy intent", color: "#e8623a" },
@@ -112,7 +108,14 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [genRep, setGenRep] = useState(isAdmin ? REPS[0].email : userEmail);
+  const roster = useRoster();
+  // Admin's target-rep picker comes from the live roster; default to the first
+  // rep once it loads.
+  const repOptions = roster.active.filter((o) => o.email);
+  const [genRep, setGenRep] = useState(isAdmin ? "" : userEmail);
+  useEffect(() => {
+    if (isAdmin && !genRep && repOptions.length > 0) setGenRep(repOptions[0].email!);
+  }, [isAdmin, genRep, repOptions]);
 
   const [openId, setOpenId] = useState<string | null>(null);
   const [items, setItems] = useState<ItemRow[]>([]);
@@ -288,8 +291,8 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
         <b style={{ fontSize: 14.5 }}>Generate</b>
         {isAdmin && (
           <select className="vmsel" style={{ width: "auto" }} value={genRep} onChange={(e) => setGenRep(e.target.value)}>
-            {REPS.map((r) => (
-              <option key={r.email} value={r.email}>{r.name}</option>
+            {repOptions.map((r) => (
+              <option key={r.email} value={r.email!}>{r.name}</option>
             ))}
           </select>
         )}

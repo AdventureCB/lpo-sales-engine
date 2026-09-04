@@ -30,11 +30,11 @@ export async function GET() {
   return NextResponse.json({ sprints });
 }
 
-/** Create a sprint from selected deals (admin). */
+/** Create a sprint from selected deals. Admins pick the owner; sales reps
+ * always create for themselves. */
 export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
 
   let body: { name?: string; owner?: string; dealIds?: string[] };
   try {
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
   const name = body.name?.trim();
-  const owner = body.owner?.trim();
+  const owner = user.role === "admin" ? body.owner?.trim() : user.email;
   const dealIds = body.dealIds ?? [];
   if (!name || !owner || dealIds.length === 0 || dealIds.length > 500) {
     return NextResponse.json({ error: "name, owner, 1-500 dealIds required" }, { status: 400 });

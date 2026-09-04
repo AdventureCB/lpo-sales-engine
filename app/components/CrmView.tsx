@@ -423,7 +423,7 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
   // Deal (title) is the frozen anchor — always render it first so it can stick.
   const titleCol = rawVisible.find((c) => c.key === "title");
   const visibleCols = titleCol ? [titleCol, ...rawVisible.filter((c) => c.key !== "title")] : rawVisible;
-  const colCount = visibleCols.length + (isAdmin ? 1 : 0);
+  const colCount = visibleCols.length + 1; // +1 = bulk-select checkbox column
   const checkW = 38; // frozen checkbox column width (title sticks after it)
   const [sources, setSources] = useState<{ id: string; name: string }[]>([]);
   const [search, setSearch] = useState<string>(saved.search ?? "");
@@ -446,7 +446,9 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
       );
     } catch {}
   }, [page, pipeline, stage, status, owner, srcFilter, tzFilter, hasActivity, actAfter, actBefore, makeFilter, interestFilter, valueMin, valueMax, search, sort, dir]);
-  const [sprintOwner, setSprintOwner] = useState("parker@lonepeakoverland.com");
+  // Admin picks the sprint owner from the live roster; reps always create for
+  // themselves (server enforces it too).
+  const [sprintOwner, setSprintOwner] = useState("");
   const [sprintMsg, setSprintMsg] = useState<string | null>(null);
 
   const toggleSelect = (id: string) => {
@@ -489,7 +491,8 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
       body: JSON.stringify({ name: sprintName.trim(), owner: sprintOwner, dealIds: [...selected] }),
     }).catch(() => null);
     if (r?.ok) {
-      setSprintMsg(`✓ Sprint "${sprintName.trim()}" created for ${sprintOwner.split("@")[0]} (${selected.size} deals) — it's in their dialer now`);
+      const who = isAdmin && sprintOwner ? sprintOwner.split("@")[0] : "you";
+      setSprintMsg(`✓ Sprint "${sprintName.trim()}" created for ${who} (${selected.size} deals) — it's in ${who === "you" ? "your" : "their"} dialer now`);
       setSelected(new Set());
       setSprintName("");
     } else {
@@ -813,7 +816,7 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
         />
       </div>
 
-      {isAdmin && selected.size > 0 && (
+      {selected.size > 0 && (
         <div className="card" style={{ padding: "10px 14px", marginBottom: 14, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <b style={{ fontSize: 14.5 }}>⚡ {selected.size} selected</b>
           <input
@@ -823,29 +826,40 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
             value={sprintName}
             onChange={(e) => setSprintName(e.target.value)}
           />
-          <select className="vmsel" style={{ width: "auto" }} value={sprintOwner} onChange={(e) => setSprintOwner(e.target.value)}>
-            <option value="parker@lonepeakoverland.com">Parker</option>
-            <option value="jackson@lonepeakoverland.com">Jackson</option>
-            <option value="cainen@lonepeakoverland.com">Cainen</option>
-            <option value="kyle@lonepeakoverland.com">Kyle</option>
-          </select>
-          <button className="btn primary" style={{ padding: "8px 14px", fontSize: 14 }} onClick={createSprint} disabled={!sprintName.trim()}>
-            Create sprint
+          {isAdmin && (
+            <select className="vmsel" style={{ width: "auto" }} value={sprintOwner} onChange={(e) => setSprintOwner(e.target.value)}>
+              <option value="">Owner…</option>
+              {roster.active.filter((o) => o.email).map((o) => (
+                <option key={o.id} value={o.email!}>{o.name}</option>
+              ))}
+            </select>
+          )}
+          <button
+            className="btn primary"
+            style={{ padding: "8px 14px", fontSize: 14 }}
+            onClick={createSprint}
+            disabled={!sprintName.trim() || (isAdmin && !sprintOwner)}
+          >
+            Create sprint{isAdmin ? "" : " for me"}
           </button>
           <button className="btn ghost" style={{ padding: "8px 12px", fontSize: 14 }} onClick={() => setSelected(new Set())}>
             Clear
           </button>
-          <span style={{ color: "var(--text-3)", fontSize: 13 }}>or</span>
-          <select className="vmsel" style={{ width: "auto" }} value={assignOwner} onChange={(e) => setAssignOwner(e.target.value)}>
-            <option value="">Assign owner…</option>
-            {roster.active.map((o) => (
-              <option key={o.id} value={String(o.id)}>→ {o.name}</option>
-            ))}
-            <option value="none">→ Unassigned (pool)</option>
-          </select>
-          <button className="btn ghost" style={{ padding: "8px 14px", fontSize: 14 }} onClick={bulkAssign} disabled={!assignOwner}>
-            {assignOwner === "none" ? "Unassign" : "Assign"} {selected.size}
-          </button>
+          {isAdmin && (
+            <>
+              <span style={{ color: "var(--text-3)", fontSize: 13 }}>or</span>
+              <select className="vmsel" style={{ width: "auto" }} value={assignOwner} onChange={(e) => setAssignOwner(e.target.value)}>
+                <option value="">Assign owner…</option>
+                {roster.active.map((o) => (
+                  <option key={o.id} value={String(o.id)}>→ {o.name}</option>
+                ))}
+                <option value="none">→ Unassigned (pool)</option>
+              </select>
+              <button className="btn ghost" style={{ padding: "8px 14px", fontSize: 14 }} onClick={bulkAssign} disabled={!assignOwner}>
+                {assignOwner === "none" ? "Unassign" : "Assign"} {selected.size}
+              </button>
+            </>
+          )}
         </div>
       )}
       {sprintMsg && <div className="viewsub" style={{ color: "var(--good)" }}>{sprintMsg}</div>}
@@ -915,28 +929,26 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
         <table className="data">
           <thead>
             <tr>
-              {isAdmin && (
-                <th className="sticky-col" style={{ width: checkW, minWidth: checkW, maxWidth: checkW, left: 0 }}>
-                  <input
-                    type="checkbox"
-                    checked={deals.length > 0 && deals.every((d) => selected.has(d.id))}
-                    onChange={(e) =>
-                      setSelected((prev) => {
-                        const next = new Set(prev);
-                        deals.forEach((d) => (e.target.checked ? next.add(d.id) : next.delete(d.id)));
-                        return next;
-                      })
-                    }
-                  />
-                </th>
-              )}
+              <th className="sticky-col" style={{ width: checkW, minWidth: checkW, maxWidth: checkW, left: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={deals.length > 0 && deals.every((d) => selected.has(d.id))}
+                  onChange={(e) =>
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      deals.forEach((d) => (e.target.checked ? next.add(d.id) : next.delete(d.id)));
+                      return next;
+                    })
+                  }
+                />
+              </th>
               {visibleCols.map((col, ci) => {
                 const sticky = ci === 0 && col.key === "title";
                 return (
                   <th
                     key={col.key}
                     className={sticky ? "sticky-col" : undefined}
-                    style={{ cursor: col.sortKey ? "pointer" : "default", ...(sticky ? { left: isAdmin ? checkW : 0 } : {}) }}
+                    style={{ cursor: col.sortKey ? "pointer" : "default", ...(sticky ? { left: checkW } : {}) }}
                     onClick={() => col.sortKey && clickSort(col.sortKey)}
                   >
                     {col.label} {col.sortKey && sort === col.sortKey ? (dir === "desc" ? "↓" : "↑") : ""}
@@ -956,11 +968,9 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
             )}
             {!loading && deals.map((d) => (
               <tr key={d.id}>
-                {isAdmin && (
-                  <td className="sticky-col" style={{ left: 0 }}>
-                    <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} />
-                  </td>
-                )}
+                <td className="sticky-col" style={{ left: 0 }}>
+                  <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} />
+                </td>
                 {visibleCols.map((col, ci) => {
                   const sticky = ci === 0 && col.key === "title";
                   const cls = [sticky ? "sticky-col" : "", col.key === "value" ? "money" : ""].filter(Boolean).join(" ") || undefined;
@@ -968,7 +978,7 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
                     <td
                       key={col.key}
                       className={cls}
-                      style={{ ...(col.nowrap ? { whiteSpace: "nowrap" } : {}), ...(sticky ? { left: isAdmin ? checkW : 0 } : {}) }}
+                      style={{ ...(col.nowrap ? { whiteSpace: "nowrap" } : {}), ...(sticky ? { left: checkW } : {}) }}
                     >
                       {col.render(d)}
                     </td>
