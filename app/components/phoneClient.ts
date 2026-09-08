@@ -46,8 +46,11 @@ function primeAudio() {
   } catch {}
 }
 if (typeof window !== "undefined") {
-  window.addEventListener("pointerdown", primeAudio, { once: true });
-  window.addEventListener("keydown", primeAudio, { once: true });
+  // Persistent, not {once}: WKWebView SUSPENDS idle AudioContexts and refuses
+  // to resume them outside a user gesture — so every gesture re-primes. The
+  // calls are no-ops while the context is already running.
+  window.addEventListener("pointerdown", primeAudio);
+  window.addEventListener("keydown", primeAudio);
 }
 
 // ── Ring-time attention aids ───────────────────────────────────────────────
@@ -140,6 +143,70 @@ export function getRingtoneKind(): string {
 
 let customAudio: HTMLAudioElement | null = null;
 
+// ── HTMLAudio fallback ring ────────────────────────────────────────────────
+// When the AudioContext is suspended and a non-gesture resume() is refused
+// (Logan 9/8: ringtone PREVIEW audible — click context — but real rings
+// silent), oscillators run against a frozen clock and produce nothing.
+// <audio> elements are exempt once autoplay is allowed (call audio itself
+// proves this works gesture-free in the companion), so we synthesize the ring
+// pattern as a WAV data-URI and loop it.
+let fallbackAudio: HTMLAudioElement | null = null;
+const ringWavCache = new Map<string, string>();
+function ringWavUri(kind: string): string {
+  const hit = ringWavCache.get(kind);
+  if (hit) return hit;
+  const pattern = RING_PATTERNS[kind] ?? RING_PATTERNS.classic;
+  const rate = 8000;
+  const len = Math.round(pattern.period * rate);
+  const pcm = new Uint8Array(len).fill(128); // 8-bit unsigned silence
+  for (const [off, dur] of pattern.steps) {
+    const start = Math.round(off * rate);
+    const end = Math.min(len, Math.round((off + dur) * rate));
+    for (let i = start; i < end; i++) {
+      let v = 0;
+      for (const f of pattern.freqs) v += Math.sin((2 * Math.PI * f * i) / rate);
+      pcm[i] = 128 + Math.round((v / pattern.freqs.length) * 90);
+    }
+  }
+  const bytes = new Uint8Array(44 + len);
+  const dv = new DataView(bytes.buffer);
+  const wstr = (o: number, str: string) => {
+    for (let i = 0; i < str.length; i++) bytes[o + i] = str.charCodeAt(i);
+  };
+  wstr(0, "RIFF");
+  dv.setUint32(4, 36 + len, true);
+  wstr(8, "WAVEfmt ");
+  dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true); // PCM
+  dv.setUint16(22, 1, true); // mono
+  dv.setUint32(24, rate, true);
+  dv.setUint32(28, rate, true); // byte rate (8-bit mono)
+  dv.setUint16(32, 1, true);
+  dv.setUint16(34, 8, true);
+  wstr(36, "data");
+  dv.setUint32(40, len, true);
+  bytes.set(pcm, 44);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  const uri = `data:audio/wav;base64,${btoa(bin)}`;
+  ringWavCache.set(kind, uri);
+  return uri;
+}
+
+function startFallbackRing(kind: string) {
+  if (fallbackAudio) return;
+  try {
+    fallbackAudio = new Audio(ringWavUri(kind));
+    fallbackAudio.loop = true;
+    fallbackAudio.volume = 0.7;
+    void fallbackAudio.play().catch(() => {
+      fallbackAudio = null;
+    });
+  } catch {
+    fallbackAudio = null;
+  }
+}
+
 function startRinging(kindOverride?: string) {
   if (ring || customAudio) return;
   const kind = kindOverride ?? getRingtoneKind();
@@ -185,6 +252,11 @@ function startRinging(kindOverride?: string) {
     };
     ring = { osc1: oscs[0], osc2: oscs[1] ?? oscs[0], gain, iv: setInterval(burst, pattern.period * 1000) };
     burst();
+    // Give resume() a beat; if the context still isn't running the
+    // oscillators are silent — ring via <audio> instead.
+    setTimeout(() => {
+      if (ring && ringCtx && ringCtx.state !== "running") startFallbackRing(kind);
+    }, 350);
   } catch {}
 }
 
@@ -194,6 +266,12 @@ function stopRinging() {
       customAudio.pause();
     } catch {}
     customAudio = null;
+  }
+  if (fallbackAudio) {
+    try {
+      fallbackAudio.pause();
+    } catch {}
+    fallbackAudio = null;
   }
   if (!ring) return;
   clearInterval(ring.iv);
