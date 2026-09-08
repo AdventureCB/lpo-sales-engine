@@ -37,9 +37,87 @@ function primeAudio() {
     ringCtx = ringCtx ?? new AudioContext();
     if (ringCtx.state === "suspended") void ringCtx.resume().catch(() => {});
   } catch {}
+  // Browsers only (WKWebView has no Notification API): ask once, on a real
+  // gesture, so OS-level "Incoming call" banners can fire later.
+  try {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      void Notification.requestPermission().catch(() => {});
+    }
+  } catch {}
 }
 if (typeof window !== "undefined") {
   window.addEventListener("pointerdown", primeAudio, { once: true });
+  window.addEventListener("keydown", primeAudio, { once: true });
+}
+
+// ── Ring-time attention aids ───────────────────────────────────────────────
+// The audible ring only lives in the phone-owner window; these make a call
+// noticeable everywhere else: a cross-window broadcast (aux/non-owner windows
+// show a banner + ring via their own — likely unlocked — AudioContext), an OS
+// notification in browsers, and a flashing tab title. All ring-time only —
+// none of this touches live calls.
+export const RING_BCAST_KEY = "lpo:ring";
+let ringBcastIv: ReturnType<typeof setInterval> | null = null;
+function broadcastRing(from: string) {
+  const write = () => {
+    try {
+      localStorage.setItem(RING_BCAST_KEY, JSON.stringify({ at: Date.now(), from }));
+    } catch {}
+  };
+  write();
+  if (!ringBcastIv) ringBcastIv = setInterval(write, 3000);
+}
+function clearRingBroadcast() {
+  if (ringBcastIv) {
+    clearInterval(ringBcastIv);
+    ringBcastIv = null;
+  }
+  try {
+    localStorage.removeItem(RING_BCAST_KEY);
+  } catch {}
+}
+
+function osNotify(from: string) {
+  try {
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    const n = new Notification("📞 Incoming call", { body: from, tag: "lpo-incoming", requireInteraction: true });
+    n.onclick = () => {
+      try {
+        window.focus();
+        n.close();
+      } catch {}
+    };
+  } catch {}
+}
+
+let titleIv: ReturnType<typeof setInterval> | null = null;
+let savedTitle: string | null = null;
+function startTitleFlash(from: string) {
+  if (titleIv || typeof document === "undefined") return;
+  savedTitle = document.title;
+  let flip = false;
+  titleIv = setInterval(() => {
+    document.title = flip ? `\u{1F4DE} INCOMING \u2014 ${from}` : "\u260E\uFE0F Incoming call\u2026";
+    flip = !flip;
+  }, 900);
+}
+function stopTitleFlash() {
+  if (!titleIv) return;
+  clearInterval(titleIv);
+  titleIv = null;
+  if (savedTitle != null && typeof document !== "undefined") document.title = savedTitle;
+}
+
+/** Aux/non-owner windows mirror the owner's ring through these. */
+export function startRemoteRing() {
+  startRinging();
+}
+export function stopRemoteRing() {
+  stopRinging();
+  stopTitleFlash();
+}
+export function flashTitleRemote(from: string) {
+  startTitleFlash(from);
 }
 
 // Ring patterns — per-machine choice (localStorage "ringtone"), previewable
@@ -101,7 +179,7 @@ function startRinging(kindOverride?: string) {
       const t = ringCtx.currentTime;
       gain.gain.cancelScheduledValues(t);
       for (const [off, dur] of pattern.steps) {
-        gain.gain.setValueAtTime(0.15, t + off);
+        gain.gain.setValueAtTime(0.25, t + off);
         gain.gain.setValueAtTime(0, t + off + dur);
       }
     };
@@ -130,6 +208,8 @@ function stopRinging() {
 /** Silence the current ring WITHOUT touching the call (Ignore button). */
 export function silenceRing() {
   stopRinging();
+  clearRingBroadcast();
+  stopTitleFlash();
 }
 
 /** Short preview for the ringtone picker. */
@@ -320,8 +400,12 @@ export async function ensurePhone(): Promise<any> {
       const s = call.state;
       if (call.direction === "inbound") {
         if (s === "ringing") {
-          state.incoming = { call, from: call.options?.remoteCallerNumber ?? "unknown caller", active: false };
+          const from = call.options?.remoteCallerNumber ?? "unknown caller";
+          state.incoming = { call, from, active: false };
           startRinging();
+          broadcastRing(from);
+          osNotify(from);
+          startTitleFlash(from);
           // Companion: surface the app when a call rings while minimized/behind.
           const tauri = (window as any).__TAURI__;
           if (tauri?.core?.invoke) void tauri.core.invoke("focus_main").catch(() => {});
@@ -330,6 +414,8 @@ export async function ensurePhone(): Promise<any> {
           if (state.incoming) state.incoming = { ...state.incoming, call, active: true };
           state.callPhase = "talking"; // answered inbound = engaged
           stopRinging();
+          clearRingBroadcast();
+          stopTitleFlash();
         } else if (s === "hangup" || s === "destroy") {
           state.incoming = null;
           // An inbound leg dying must NOT reset the phase while an outbound
@@ -337,6 +423,8 @@ export async function ensurePhone(): Promise<any> {
           // active call ending and corrupted call-phase consumers).
           state.callPhase = outboundLive ? "talking" : "none";
           stopRinging();
+          clearRingBroadcast();
+          stopTitleFlash();
         }
         emit();
         return;

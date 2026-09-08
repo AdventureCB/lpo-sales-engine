@@ -11,7 +11,108 @@ import {
   isAuxWindow,
   phoneRequired,
   subscribePhone,
+  RING_BCAST_KEY,
+  startRemoteRing,
+  stopRemoteRing,
+  flashTitleRemote,
 } from "./phoneClient";
+
+/**
+ * Mirrors the phone-owner window's ring in every OTHER window (aux popouts,
+ * non-owner windows in the same browser profile). The owner broadcasts via
+ * localStorage while ringing; here we ring audibly too — this window has
+ * likely seen a user gesture, so its AudioContext is unlocked even when the
+ * owner's isn't — and show a banner. Answering happens in the owner window
+ * (the companion's main window), which the button surfaces.
+ */
+function RemoteRingBanner() {
+  const [remote, setRemote] = useState<{ from: string } | null>(null);
+  const [muted, setMuted] = useState(false);
+
+  useEffect(() => {
+    let active: { from: string } | null = null;
+    const check = () => {
+      let next: { from: string } | null = null;
+      try {
+        const raw = localStorage.getItem(RING_BCAST_KEY);
+        if (raw) {
+          const v = JSON.parse(raw) as { at: number; from: string };
+          if (Date.now() - v.at < 8000) next = { from: v.from };
+        }
+      } catch {}
+      // Only ring in windows that don't host the phone themselves.
+      if (getPhoneState().incoming) next = null;
+      if (!!next !== !!active) {
+        active = next;
+        setRemote(next);
+        setMuted(false);
+        if (next) {
+          startRemoteRing();
+          flashTitleRemote(next.from);
+        } else {
+          stopRemoteRing();
+        }
+      }
+    };
+    const iv = setInterval(check, 2000);
+    window.addEventListener("storage", check);
+    return () => {
+      clearInterval(iv);
+      window.removeEventListener("storage", check);
+      stopRemoteRing();
+    };
+  }, []);
+
+  if (!remote) return null;
+  return (
+    <div
+      style={{
+        position: "fixed",
+        top: 14,
+        left: "50%",
+        transform: "translateX(-50%)",
+        zIndex: 1100,
+        background: "var(--surface-1)",
+        border: "2px solid var(--accent)",
+        borderRadius: 12,
+        padding: "12px 18px",
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        boxShadow: "0 10px 40px rgba(0,0,0,0.5)",
+      }}
+    >
+      <span style={{ fontSize: 22 }}>📳</span>
+      <div>
+        <div style={{ fontSize: 12, color: "var(--text-3)", letterSpacing: "0.06em", textTransform: "uppercase" }}>Incoming call</div>
+        <div style={{ fontSize: 15, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{remote.from}</div>
+      </div>
+      <button
+        className="btn primary"
+        style={{ padding: "8px 16px", fontSize: 13.5 }}
+        onClick={() => {
+          const tauri = (window as any).__TAURI__;
+          if (tauri?.core?.invoke) void tauri.core.invoke("focus_main").catch(() => {});
+          else window.focus();
+        }}
+      >
+        📞 Answer in phone window
+      </button>
+      {!muted && (
+        <button
+          className="btn ghost"
+          style={{ padding: "8px 12px", fontSize: 13.5 }}
+          onClick={() => {
+            setMuted(true);
+            stopRemoteRing();
+          }}
+        >
+          🔕
+        </button>
+      )}
+    </div>
+  );
+}
 
 /**
  * Mounted in the app shell on every page: keeps the softphone connected the
@@ -76,11 +177,13 @@ export function PhoneDock() {
 
   const who = callerInfo?.name?.trim() || incoming?.from || "";
 
-  if (aux) return null;
+  // Aux windows never host the phone but DO mirror the owner's ring.
+  if (aux) return <RemoteRingBanner />;
 
   return (
     <>
       <audio id="telnyx-audio" autoPlay />
+      {!incoming && <RemoteRingBanner />}
 
       {incoming && !incoming.active && !minimized && (
         <div

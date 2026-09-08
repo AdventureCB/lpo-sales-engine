@@ -173,6 +173,17 @@ export async function provisionRepCalling(
     }
   }
 
+  // SIP-URI dial-in is DISABLED by default on new credential connections, so
+  // the inbound transfer (app → sip:login@sip.telnyx.com) dies busy in ~0.3s.
+  // Patch it here — not just in ensureInboundApp — so a rep is inbound-ready
+  // the moment their number is assigned (bit Jesse 8/31 and Logan 9/8).
+  if (connectionId) {
+    await tx(`/credential_connections/${connectionId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ sip_uri_calling_preference: "internal" }),
+    }).catch((e) => console.error(`sip_uri_calling_preference patch failed for ${connectionId}`, e));
+  }
+
   // Self-heal: the SIP login only got stored when a connection was CREATED —
   // a rep whose connection pre-existed (pilot era) has no stored login, so
   // their browser registers via token, which does NOT bind for inbound →
