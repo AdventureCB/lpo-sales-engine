@@ -103,6 +103,75 @@ function fmtDialed(digits: string) {
   return `(${n.slice(0, 3)}) ${n.slice(3, 6)}-${n.slice(6, 10)}`;
 }
 
+/** Email on file, editable in place — lives right under the name/phone in the
+ * lead card so reps can verify/fix it while on the call. Saves through the
+ * same contact ops as the deal page's Contact card. */
+function LeadEmail({ deal }: { deal: DialerDeal }) {
+  const [edit, setEdit] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const email = deal.contact?.email ?? null;
+
+  const save = async () => {
+    const v = (edit ?? "").trim();
+    setEdit(null);
+    if (!v || v === email || !deal.contact) return;
+    setBusy(true);
+    await fetch("/api/crm/contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        email
+          ? { contactId: deal.contact.id, op: "edit_email", value: email, newValue: v }
+          : { contactId: deal.contact.id, email: v }
+      ),
+    }).catch(() => null);
+    await deal.refresh();
+    setBusy(false);
+  };
+
+  if (edit !== null) {
+    return (
+      <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
+        <span style={{ fontSize: 13 }}>✉️</span>
+        <input
+          className="vmsel"
+          type="email"
+          autoFocus
+          style={{ width: 240, padding: "3px 8px", fontSize: 13 }}
+          placeholder="email@example.com"
+          value={edit}
+          disabled={busy}
+          onChange={(e) => setEdit(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void save();
+            if (e.key === "Escape") setEdit(null);
+          }}
+        />
+        <button className="btn primary" style={{ padding: "3px 10px", fontSize: 12.5 }} disabled={busy} onClick={() => void save()}>
+          Save
+        </button>
+        <button className="btn ghost" style={{ padding: "3px 8px", fontSize: 12.5 }} disabled={busy} onClick={() => setEdit(null)}>
+          Cancel
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4, fontSize: 13, color: "var(--text-2)" }}>
+      <span>✉️</span>
+      {email ? <span style={{ userSelect: "text" }}>{email}</span> : <span style={{ color: "var(--text-3)" }}>no email on file</span>}
+      <button
+        className="btn ghost"
+        style={{ padding: "1px 8px", fontSize: 12 }}
+        title={email ? "Edit email" : "Add email"}
+        onClick={() => setEdit(email ?? "")}
+      >
+        {email ? "✎" : "＋ add"}
+      </button>
+    </div>
+  );
+}
+
 export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [queues, setQueues] = useState<Queue[]>([]);
   const [activeQueue, setActiveQueue] = useState<Queue | null>(null);
@@ -1294,6 +1363,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                   <div className="lead-phone">
                     {lead.phone} · {lead.title}
                   </div>
+                  {leadDeal?.contact && <LeadEmail key={leadDeal.contact.id} deal={leadDeal} />}
                 </div>
                 <span className="chip stage">{lead.stageName}</span>
               </div>
@@ -1303,7 +1373,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                     🔥 Hot — {lead.hotReason}
                   </span>
                 )}
-                <span className="chip stage">Pipedrive ▸ deal open</span>
+                <span className="chip stage">Deal open</span>
                 {leadDeal && (
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 13.5, fontWeight: 600, color: "var(--text-2)" }} title="Deal value">
                     $
@@ -1389,7 +1459,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                 )}
                 {inCall && (
                   <div className="callstate" style={{ display: "flex" }}>
-                    <span className="dot" /> {fmtClock(callSec)} — in call{dialMethod === "browser" ? "" : " via Quo"}
+                    <span className="dot" /> {fmtClock(callSec)} — in call
                   </div>
                 )}
               </div>

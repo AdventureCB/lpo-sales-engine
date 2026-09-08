@@ -68,8 +68,11 @@ export interface DialerDeal {
   stages: { id: string; name: string; pipeline_id: string }[];
   sources: { id: string; name: string }[];
   record: { created: string | null; stageChanged: string | null; lastActivity: string | null; pdId: number | null };
+  // Primary (or first) email on file — the dialer shows/edits it in the lead card.
+  contact: { id: string; email: string | null } | null;
   saving: boolean;
   update: (fields: Record<string, unknown>) => Promise<void>;
+  refresh: () => Promise<void>;
 }
 
 const KIND_ICON: Record<string, string> = {
@@ -316,6 +319,8 @@ export function DealDetailView({
       onDeal?.(null);
       return;
     }
+    const c = d.crm_contacts;
+    const cEmails = ((c?.emails ?? []) as { value: string; primary?: boolean }[]);
     onDeal?.({
       value_cents: d.value_cents ?? null,
       pipeline_id: d.crm_stages?.pipeline_id ?? null,
@@ -330,10 +335,12 @@ export function DealDetailView({
         lastActivity: d.last_activity_at ?? null,
         pdId: d.pipedrive_deal_id ?? null,
       },
+      contact: c ? { id: c.id, email: cEmails.find((e) => e.primary)?.value ?? cEmails[0]?.value ?? null } : null,
       saving,
       update,
+      refresh: load,
     });
-  }, [embedded, data, saving, update, onDeal]);
+  }, [embedded, data, saving, update, onDeal, load]);
 
   if (error) return <div className="viewsub">Couldn’t load deal: {error}</div>;
   if (!data) return <div className="viewsub">Loading…</div>;
