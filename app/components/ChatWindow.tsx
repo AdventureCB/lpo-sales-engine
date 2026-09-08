@@ -78,6 +78,16 @@ export function ChatWindow({
   const [optedOutPrompt, setOptedOutPrompt] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const composeRef = useRef<HTMLTextAreaElement | null>(null);
+  // Auto-grow the compose box with WRAPPED height (not just explicit
+  // newlines) — long texts were scrolling out of a one-line box. Covers
+  // typing, macro inserts, and the post-send reset alike.
+  useEffect(() => {
+    const el = composeRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+  });
 
   const load = useCallback(
     () =>
@@ -340,9 +350,10 @@ export function ChatWindow({
             }}
           />
           <textarea
+            ref={composeRef}
             className="vmsel"
-            style={{ flex: 1, resize: "none", minHeight: 36, maxHeight: 110, fontFamily: "inherit", fontSize: 13.5 }}
-            rows={Math.min(4, Math.max(1, compose.split("\n").length))}
+            style={{ flex: 1, resize: "none", minHeight: 36, maxHeight: 140, overflowY: "auto", fontFamily: "inherit", fontSize: 13.5 }}
+            rows={1}
             placeholder="Type a message…"
             value={compose}
             onChange={(e) => setCompose(e.target.value)}

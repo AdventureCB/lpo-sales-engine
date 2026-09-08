@@ -127,6 +127,7 @@ const SLOT_TZ: Record<number, { offsets: number[]; sub: (off: number) => number 
 
 export type ListItem = {
   crmDealId: string;
+  contactId: string | null; // one entry per PERSON across a list (dupe deals exist)
   pipedriveDealId: number | null;
   title: string;
   personName: string | null;
@@ -447,7 +448,7 @@ async function computeLadder(
 
   const facts = await enrich(db, deals, cfg, todayLa);
 
-  const items: (ListItem & { _sub: number; _contactId: string | null })[] = [];
+  const items: (ListItem & { _sub: number })[] = [];
   for (const d of deals) {
     const off = d.crm_contacts?.tz_offset;
     if (off == null) continue;
@@ -462,6 +463,7 @@ async function computeLadder(
     if (cap > 0 && cls.tierLabel !== "1a" && f.attempts7d >= cap) continue;
     items.push({
       crmDealId: d.id,
+      contactId: d.contact_id ?? null,
       pipedriveDealId: d.pipedrive_deal_id,
       title: d.title,
       personName: d.crm_contacts?.name ?? null,
@@ -473,7 +475,6 @@ async function computeLadder(
       recencyAt: cls.recencyAt,
       flag: cls.flag ?? null,
       _sub: sub(off),
-      _contactId: d.contact_id,
     });
   }
 
@@ -492,14 +493,14 @@ async function computeLadder(
   // the first occurrence is their top-ranked deal.
   const seenContact = new Set<string>();
   const deduped = items.filter((it) => {
-    if (!it._contactId) return true;
-    if (seenContact.has(it._contactId)) return false;
-    seenContact.add(it._contactId);
+    if (!it.contactId) return true;
+    if (seenContact.has(it.contactId)) return false;
+    seenContact.add(it.contactId);
     return true;
   });
 
   const capped = cfg.cap ? deduped.slice(0, cfg.cap) : deduped;
-  return capped.map(({ _sub, _contactId, ...it }) => it);
+  return capped.map(({ _sub, ...it }) => it);
 }
 
 function blankFacts(): Facts {
@@ -528,6 +529,37 @@ export async function computeList(
 
 // ── Slot 3: carryover + stale + reprospecting pool ─────────────────────────
 
+/** Deals + contacts this rep already dialed today via Lists 1/2 — List 3 must
+ * never re-serve a person who was called this morning (9/8: a no-answer kept
+ * the deal in the stale window and it came right back on List 3). */
+async function calledTodaySets(
+  db: SupabaseClient,
+  repEmail: string,
+  forDate: string
+): Promise<{ dealIds: Set<string>; contactIds: Set<string> }> {
+  const dealIds = new Set<string>();
+  const contactIds = new Set<string>();
+  const { data: dailies } = await db
+    .from("crm_sprints")
+    .select("crm_sprint_items ( deal_id, called_at )")
+    .eq("owner", repEmail)
+    .eq("kind", "daily")
+    .eq("for_date", forDate)
+    .in("slot", [1, 2]);
+  for (const s of dailies ?? []) {
+    for (const it of (s as any).crm_sprint_items ?? []) {
+      if (it.called_at) dealIds.add(it.deal_id);
+    }
+  }
+  if (dealIds.size) {
+    for (let i = 0, ids = [...dealIds]; i < ids.length; i += 500) {
+      const { data } = await db.from("crm_deals").select("id, contact_id").in("id", ids.slice(i, i + 500));
+      for (const d of data ?? []) if (d.contact_id) contactIds.add(d.contact_id);
+    }
+  }
+  return { dealIds, contactIds };
+}
+
 async function computeList3(
   db: SupabaseClient,
   args: { repEmail: string; repPipedriveId: number; forDate: string },
@@ -535,6 +567,8 @@ async function computeList3(
 ): Promise<ListItem[]> {
   const w = cfg.windows;
   const seen = new Set<string>();
+  const seenContacts = new Set<string>();
+  const called = await calledTodaySets(db, args.repEmail, args.forDate);
   const out: ListItem[] = [];
 
   // 1) Carryover: today's undialed items from this rep's lists 1 & 2.
@@ -563,9 +597,13 @@ async function computeList3(
       if (!d || d.crm_contacts?.dnc) continue;
       const phone = primaryPhone(d.crm_contacts?.phones ?? []);
       if (!phone || seen.has(d.id)) continue;
+      // The PERSON was already dialed today via another deal → no repeat.
+      if (d.contact_id && (seenContacts.has(d.contact_id) || called.contactIds.has(d.contact_id))) continue;
       seen.add(d.id);
+      if (d.contact_id) seenContacts.add(d.contact_id);
       carry.push({
         crmDealId: d.id,
+        contactId: d.contact_id ?? null,
         pipedriveDealId: d.pipedrive_deal_id,
         title: d.title,
         personName: d.crm_contacts?.name ?? null,
@@ -617,12 +655,15 @@ async function computeList3(
     })
     .sort((a, b) => (engAt.get(b.id) ?? "").localeCompare(engAt.get(a.id) ?? ""));
   for (const d of staleDeals) {
-    if (seen.has(d.id)) continue;
+    if (seen.has(d.id) || called.dealIds.has(d.id)) continue;
+    if (d.contact_id && (seenContacts.has(d.contact_id) || called.contactIds.has(d.contact_id))) continue;
     const phone = primaryPhone(d.crm_contacts?.phones ?? []);
     if (!phone) continue;
     seen.add(d.id);
+    if (d.contact_id) seenContacts.add(d.contact_id);
     out.push({
       crmDealId: d.id,
+      contactId: d.contact_id ?? null,
       pipedriveDealId: d.pipedrive_deal_id,
       title: d.title,
       personName: d.crm_contacts?.name ?? null,
@@ -747,7 +788,10 @@ async function claimReprospect(
   args: { repEmail: string; repPipedriveId: number; forDate: string },
   cfg: SprintListConfig,
   remaining: number,
-  opts: { tzOffsets?: number[] } = {} // Lists 1/2 pool-fill: keep the slot's TZ partition
+  // tzOffsets: Lists 1/2 pool-fill keeps the slot's TZ partition.
+  // exclude: deals/contacts already on the list or dialed today — never
+  // claim (and lock for 3 days) a deal we won't serve.
+  opts: { tzOffsets?: number[]; exclude?: { dealIds: Set<string>; contactIds: Set<string> } } = {}
 ): Promise<ListItem[]> {
   // Pool = UNASSIGNED open deals (owner null). cainen_owner_pipedrive_id is a
   // legacy tunable: when set, the pool is that owner's deals instead (the
@@ -805,8 +849,13 @@ async function claimReprospect(
     return best;
   };
 
+  const excl = opts.exclude;
+  const excluded = (d: any) =>
+    !!excl && (excl.dealIds.has(d.id) || (d.contact_id && excl.contactIds.has(d.contact_id)));
+
   const toItem = (d: any): ListItem => ({
     crmDealId: d.id,
+    contactId: d.contact_id ?? null,
     pipedriveDealId: d.pipedrive_deal_id,
     title: d.title,
     personName: d.crm_contacts?.name ?? null,
@@ -823,9 +872,13 @@ async function claimReprospect(
 
   // 1) Re-include this rep's active holds (prior commitments, ignore cap) —
   // unless they've already hammered the number this week.
+  const poolContacts = new Set<string>();
   for (const id of mine) {
     const d = byId.get(id);
-    if (d && !hammered.has(id) && primaryPhone(d.crm_contacts?.phones ?? [])) items.push(toItem(d));
+    if (!d || hammered.has(id) || excluded(d) || !primaryPhone(d.crm_contacts?.phones ?? [])) continue;
+    if (d.contact_id && poolContacts.has(d.contact_id)) continue;
+    if (d.contact_id) poolContacts.add(d.contact_id);
+    items.push(toItem(d));
   }
 
   // 2) Claim new deals to fill remaining slots, ranked by marketing recency.
@@ -833,11 +886,13 @@ async function claimReprospect(
   let newSlots = Math.min(Math.max(remaining, 0), subcap) - items.length;
   if (newSlots > 0) {
     const candidates = pool
-      .filter((d) => !mine.has(d.id) && !lockedByOther.has(d.id) && !hammered.has(d.id) && primaryPhone(d.crm_contacts?.phones ?? []))
+      .filter((d) => !mine.has(d.id) && !lockedByOther.has(d.id) && !hammered.has(d.id) && !excluded(d) && primaryPhone(d.crm_contacts?.phones ?? []))
       .sort((a, b) => (signalAt(b) ?? "").localeCompare(signalAt(a) ?? ""));
     const expires = new Date(Date.now() + cfg.checkout_hold_days * 86_400_000).toISOString();
     for (const d of candidates) {
       if (newSlots <= 0) break;
+      if (d.contact_id && poolContacts.has(d.contact_id)) continue; // one deal per person
+      if (d.contact_id) poolContacts.add(d.contact_id);
       // Claim atomically: the partial-unique index rejects a double-claim.
       const { error } = await db
         .from("crm_reprospect_checkouts")
@@ -918,9 +973,12 @@ export async function generateAndSave(
   if ((args.slot === 1 || args.slot === 2) && cfg.cap && items.length < cfg.cap) {
     const pool = await claimReprospect(db, args, cfg, cfg.cap - items.length, {
       tzOffsets: SLOT_TZ[args.slot].offsets,
+      exclude: {
+        dealIds: new Set(items.map((i) => i.crmDealId)),
+        contactIds: new Set(items.map((i) => i.contactId).filter(Boolean) as string[]),
+      },
     });
-    const have = new Set(items.map((i) => i.crmDealId));
-    items = [...items, ...pool.filter((p) => !have.has(p.crmDealId))];
+    items = [...items, ...pool];
   }
 
   // List 3 appends the reprospecting pool after carryover + stale. Dedupe
@@ -928,9 +986,14 @@ export async function generateAndSave(
   // AND re-include as this rep's active holds.
   if (args.slot === 3) {
     const remaining = cfg.cap ? cfg.cap - items.length : Infinity;
-    const pool = await claimReprospect(db, args, cfg, remaining);
-    const have = new Set(items.map((i) => i.crmDealId));
-    items = [...items, ...pool.filter((p) => !have.has(p.crmDealId))];
+    const called = await calledTodaySets(db, args.repEmail, args.forDate);
+    const pool = await claimReprospect(db, args, cfg, remaining, {
+      exclude: {
+        dealIds: new Set([...items.map((i) => i.crmDealId), ...called.dealIds]),
+        contactIds: new Set([...(items.map((i) => i.contactId).filter(Boolean) as string[]), ...called.contactIds]),
+      },
+    });
+    items = [...items, ...pool];
   }
   if (cfg.cap && args.slot === 3) items = capList3(items, cfg.cap);
 

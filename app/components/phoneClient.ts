@@ -32,11 +32,25 @@ const subs = new Set<() => void>();
 let ringCtx: AudioContext | null = null;
 let ring: { osc1: OscillatorNode; osc2: OscillatorNode; gain: GainNode; iv: ReturnType<typeof setInterval> } | null = null;
 
+let keepAlive: OscillatorNode | null = null;
 function primeAudio() {
   try {
     ringCtx = ringCtx ?? new AudioContext();
     if (ringCtx.state === "suspended") void ringCtx.resume().catch(() => {});
+    // Keep-alive: a running (inaudible) source keeps WKWebView from
+    // suspending the context between gestures — the root cause of rings
+    // that were silent despite the preview working (Logan 9/8).
+    if (!keepAlive && ringCtx.state === "running") {
+      const g = ringCtx.createGain();
+      g.gain.value = 0.0001;
+      g.connect(ringCtx.destination);
+      keepAlive = ringCtx.createOscillator();
+      keepAlive.frequency.value = 30;
+      keepAlive.connect(g);
+      keepAlive.start();
+    }
   } catch {}
+  blessRingElement();
   // Browsers only (WKWebView has no Notification API): ask once, on a real
   // gesture, so OS-level "Incoming call" banners can fire later.
   try {
@@ -150,7 +164,45 @@ let customAudio: HTMLAudioElement | null = null;
 // <audio> elements are exempt once autoplay is allowed (call audio itself
 // proves this works gesture-free in the companion), so we synthesize the ring
 // pattern as a WAV data-URI and loop it.
+// Gesture-blessing: WKWebView refuses .play() on a FRESH media element
+// outside a user gesture, but remembers permission per-element once it has
+// played inside one. So on every gesture we (cheaply, once per src) play the
+// ring element muted and immediately pause it; at ring time, .play() on the
+// blessed element is allowed even with no gesture in sight.
 let fallbackAudio: HTMLAudioElement | null = null;
+let blessedSrc: string | null = null;
+function ringSrc(): string {
+  const kind = getRingtoneKind();
+  if (kind === "custom") {
+    try {
+      const data = localStorage.getItem("ringtoneData");
+      if (data) return data;
+    } catch {}
+  }
+  return ringWavUri(kind === "custom" ? "classic" : kind);
+}
+function blessRingElement() {
+  try {
+    const src = ringSrc();
+    if (blessedSrc === src) return;
+    const el = fallbackAudio ?? new Audio();
+    fallbackAudio = el;
+    el.src = src;
+    el.loop = true;
+    el.muted = true;
+    void el
+      .play()
+      .then(() => {
+        el.pause();
+        el.currentTime = 0;
+        el.muted = false;
+        blessedSrc = src;
+      })
+      .catch(() => {
+        el.muted = false;
+      });
+  } catch {}
+}
 const ringWavCache = new Map<string, string>();
 function ringWavUri(kind: string): string {
   const hit = ringWavCache.get(kind);
@@ -193,18 +245,18 @@ function ringWavUri(kind: string): string {
   return uri;
 }
 
-function startFallbackRing(kind: string) {
-  if (fallbackAudio) return;
+function startFallbackRing() {
   try {
-    fallbackAudio = new Audio(ringWavUri(kind));
-    fallbackAudio.loop = true;
+    if (!fallbackAudio) {
+      // No gesture has ever blessed an element — try cold anyway (works in
+      // browsers where autoplay is permitted).
+      fallbackAudio = new Audio(ringSrc());
+      fallbackAudio.loop = true;
+    }
     fallbackAudio.volume = 0.7;
-    void fallbackAudio.play().catch(() => {
-      fallbackAudio = null;
-    });
-  } catch {
-    fallbackAudio = null;
-  }
+    fallbackAudio.currentTime = 0;
+    void fallbackAudio.play().catch(() => {});
+  } catch {}
 }
 
 function startRinging(kindOverride?: string) {
@@ -255,7 +307,7 @@ function startRinging(kindOverride?: string) {
     // Give resume() a beat; if the context still isn't running the
     // oscillators are silent — ring via <audio> instead.
     setTimeout(() => {
-      if (ring && ringCtx && ringCtx.state !== "running") startFallbackRing(kind);
+      if (ring && ringCtx && ringCtx.state !== "running") startFallbackRing();
     }, 350);
   } catch {}
 }
@@ -270,8 +322,8 @@ function stopRinging() {
   if (fallbackAudio) {
     try {
       fallbackAudio.pause();
+      fallbackAudio.currentTime = 0;
     } catch {}
-    fallbackAudio = null;
   }
   if (!ring) return;
   clearInterval(ring.iv);
