@@ -8,7 +8,7 @@ import Link from "next/link";
  * Every call ≥5min is auto-reviewed (ai-refresh cron mode=reviews); this
  * page turns the stored scorecards into daily/weekly/monthly stats:
  * average score per StoryBrand principle, trend vs the prior period, and
- * "quality calls" (4+ of 5 principles hit). Reps see themselves; admins
+ * "quality calls" (score >= 3.5/5, partial = half credit). Reps see themselves; admins
  * also get a group comparison and can drill into any rep.
  */
 
@@ -58,14 +58,16 @@ function periodStart(p: Period, offset = 0): Date {
 function score(r: Review): number {
   return r.scorecard.reduce((s, x) => s + (VERDICT_SCORE[x.verdict] ?? 0), 0);
 }
-function hits(r: Review): number {
-  return r.scorecard.filter((x) => x.verdict === "hit").length;
+// Quality call = score ≥ 3.5/5 with partial = half credit (Kyle 9/9: strong
+// across most categories, reachable — the strict 4-clean-hits bar read 0%).
+function isQuality(r: Review): boolean {
+  return r.scorecard.length === 5 && score(r) >= 3.5;
 }
 
 interface Agg {
   count: number;
   avg: number | null; // 0-5
-  quality: number; // calls with 4+ hits
+  quality: number; // quality calls (score >= 3.5/5)
   qualityPct: number | null;
   perPrinciple: Record<string, number | null>; // avg 0-1
 }
@@ -80,7 +82,7 @@ function aggregate(rows: Review[]): Agg {
       .map((s) => VERDICT_SCORE[s!.verdict] ?? 0);
     per[p] = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
   }
-  const quality = scored.filter((r) => hits(r) >= 4).length;
+  const quality = scored.filter(isQuality).length;
   return {
     count: rows.length,
     avg: scored.length ? scored.reduce((a, r) => a + score(r), 0) / scored.length : null,
@@ -118,11 +120,103 @@ function Bar({ v }: { v: number | null }) {
   );
 }
 
+// ── Growth over time ───────────────────────────────────────────────────────
+// Weekly buckets over the 90-day window. Fixed per-rep colors (assignment by
+// sorted name — never re-colored by rank or filtering).
+const SERIES_COLORS = ["#4f7cff", "#e8623a", "#3aa76d", "#d99a2b", "#9a7be0", "#3aa0e8"];
+
+type WeekPoint = { week: string; avg: number | null; qualityPct: number | null; count: number };
+
+function weeklySeries(rows: Review[], weeks: Date[]): WeekPoint[] {
+  return weeks.map((start, i) => {
+    const end = weeks[i + 1] ?? new Date(8640000000000000);
+    const inWeek = rows.filter((r) => {
+      const t = new Date(r.at);
+      return t >= start && t < end && r.scorecard.length === 5;
+    });
+    return {
+      week: start.toLocaleDateString("en-US", { month: "numeric", day: "numeric" }),
+      avg: inWeek.length ? inWeek.reduce((a, r) => a + score(r), 0) / inWeek.length : null,
+      qualityPct: inWeek.length ? (inWeek.filter(isQuality).length / inWeek.length) * 100 : null,
+      count: inWeek.length,
+    };
+  });
+}
+
+function lastWeeks(n: number): Date[] {
+  const out: Date[] = [];
+  for (let i = n - 1; i >= 0; i--) out.push(periodStart("week", i));
+  return out;
+}
+
+function GrowthChart({ series, metric }: { series: { name: string; color: string; points: WeekPoint[] }[]; metric: "avg" | "quality" }) {
+  const W = 640;
+  const H = 170;
+  const PAD = { l: 34, r: 10, t: 10, b: 22 };
+  const max = metric === "avg" ? 5 : 100;
+  const n = series[0]?.points.length ?? 0;
+  if (!n) return null;
+  const x = (i: number) => PAD.l + (i / Math.max(n - 1, 1)) * (W - PAD.l - PAD.r);
+  const y = (v: number) => PAD.t + (1 - v / max) * (H - PAD.t - PAD.b);
+  const val = (pt: WeekPoint) => (metric === "avg" ? pt.avg : pt.qualityPct);
+  const hasAny = series.some((sr) => sr.points.some((pt) => val(pt) != null));
+  if (!hasAny) return <div style={{ color: "var(--text-3)", fontSize: 13.5 }}>Not enough data yet — the line grows as weeks accumulate.</div>;
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", maxWidth: 760, display: "block" }}>
+        {[0, 0.25, 0.5, 0.75, 1].map((f) => (
+          <g key={f}>
+            <line x1={PAD.l} x2={W - PAD.r} y1={y(f * max)} y2={y(f * max)} stroke="var(--border-soft, #2c2f35)" strokeWidth={1} />
+            <text x={PAD.l - 6} y={y(f * max) + 3.5} textAnchor="end" fontSize={9.5} fill="var(--text-3, #9aa0a6)">
+              {metric === "avg" ? (f * max).toFixed(1) : `${Math.round(f * max)}%`}
+            </text>
+          </g>
+        ))}
+        {series[0].points.map((pt, i) =>
+          i % 2 === 0 ? (
+            <text key={i} x={x(i)} y={H - 6} textAnchor="middle" fontSize={9.5} fill="var(--text-3, #9aa0a6)">
+              {pt.week}
+            </text>
+          ) : null
+        )}
+        {series.map((sr) => {
+          const pts = sr.points
+            .map((pt, i) => ({ i, v: val(pt), count: pt.count }))
+            .filter((d) => d.v != null) as { i: number; v: number; count: number }[];
+          if (!pts.length) return null;
+          const path = pts.map((d, k) => `${k === 0 ? "M" : "L"}${x(d.i).toFixed(1)},${y(d.v).toFixed(1)}`).join(" ");
+          return (
+            <g key={sr.name}>
+              <path d={path} fill="none" stroke={sr.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+              {pts.map((d) => (
+                <circle key={d.i} cx={x(d.i)} cy={y(d.v)} r={3.2} fill={sr.color}>
+                  <title>{`${sr.name} · wk of ${sr.points[d.i].week}: ${metric === "avg" ? d.v.toFixed(2) + "/5" : Math.round(d.v) + "%"} (${d.count} calls)`}</title>
+                </circle>
+              ))}
+            </g>
+          );
+        })}
+      </svg>
+      {series.length > 1 && (
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 6 }}>
+          {series.map((sr) => (
+            <span key={sr.name} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--text-2)" }}>
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: sr.color, display: "inline-block" }} />
+              {sr.name}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
   const [data, setData] = useState<{ reviews: Review[]; patterns: any[]; me: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<Period>("week");
   const [repSel, setRepSel] = useState<string | null>(null); // admin drill-down
+  const [growthMetric, setGrowthMetric] = useState<"avg" | "quality">("avg");
 
   useEffect(() => {
     fetch("/api/reviews/stats")
@@ -156,8 +250,8 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
         <h1>⚖ Call Reviews</h1>
       </div>
       <p className="viewsub">
-        Every call over 5 minutes is reviewed automatically against the StoryBrand scorecard. A <b>quality call</b> hits
-        4+ of the 5 principles — that&apos;s the number to move.
+        Every call over 5 minutes is reviewed automatically against the StoryBrand scorecard. A <b>quality call</b> scores
+        3.5+ out of 5 (a hit = 1 point, a partial = half) — that&apos;s the number to move.
       </p>
 
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
@@ -201,7 +295,7 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
           <TrendArrow cur={cur.avg} prev={prev.avg} />
         </div>
         <div className="card" style={{ padding: "14px 16px" }}>
-          <div style={{ fontSize: 12, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Quality calls (4+ hits)</div>
+          <div style={{ fontSize: 12, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Quality calls (≥3.5/5)</div>
           <div style={{ fontSize: 28, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
             {cur.quality}
             {cur.qualityPct != null && <span style={{ fontSize: 15, color: "var(--text-3)" }}> · {Math.round(cur.qualityPct)}%</span>}
@@ -228,6 +322,43 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
         {cur.count === 0 && <div style={{ color: "var(--text-3)", fontSize: 13.5 }}>No reviewed calls in this period yet.</div>}
       </div>
 
+      {/* Growth over time */}
+      <div className="card" style={{ padding: "14px 16px", marginBottom: 18 }}>
+        <div className="panel-h" style={{ marginTop: 0, display: "flex", alignItems: "center", gap: 10 }}>
+          📈 Growth — weekly, last 12 weeks
+          <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6 }}>
+            <button
+              className={`btn ${growthMetric === "avg" ? "primary" : "ghost"}`}
+              style={{ padding: "3px 10px", fontSize: 12 }}
+              onClick={() => setGrowthMetric("avg")}
+            >
+              Avg score
+            </button>
+            <button
+              className={`btn ${growthMetric === "quality" ? "primary" : "ghost"}`}
+              style={{ padding: "3px 10px", fontSize: 12 }}
+              onClick={() => setGrowthMetric("quality")}
+            >
+              Quality %
+            </button>
+          </span>
+        </div>
+        <GrowthChart
+          metric={growthMetric}
+          series={(() => {
+            const weeks = lastWeeks(12);
+            if (isAdmin && !repSel) {
+              return reps.map((rep, i) => ({
+                name: rep,
+                color: SERIES_COLORS[i % SERIES_COLORS.length],
+                points: weeklySeries(all.filter((r) => r.rep === rep), weeks),
+              }));
+            }
+            return [{ name: focusRep ?? "You", color: SERIES_COLORS[0], points: weeklySeries(mine, weeks) }];
+          })()}
+        />
+      </div>
+
       {/* Admin: group comparison */}
       {isAdmin && !repSel && reps.length > 0 && (
         <div className="card" style={{ padding: "14px 16px", marginBottom: 18, overflowX: "auto" }}>
@@ -238,7 +369,7 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
                 <th>Rep</th>
                 <th>Reviews</th>
                 <th>Avg /5</th>
-                <th>Quality</th>
+                <th title="Calls scoring ≥3.5/5 (hit=1, partial=½)">Quality</th>
                 {PRINCIPLES.map((p) => (
                   <th key={p}>{SHORT[p]}</th>
                 ))}
