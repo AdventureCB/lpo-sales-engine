@@ -459,9 +459,9 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
               </div>
               <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Leave the time blank for an all-day activity.</div>
               {!modalAct.done && (
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: edPriority ? "#d99a2b" : "var(--text-2)", cursor: "pointer", fontWeight: edPriority ? 700 : 400 }} title="Countdown banner 10 min before + popup at the scheduled time (your reminders only)">
-                  <input type="checkbox" checked={edPriority} onChange={(e) => setEdPriority(e.target.checked)} style={{ cursor: "pointer" }} />
-                  ⭐ Priority — remind me with a countdown
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: !edTime ? "var(--text-3)" : edPriority ? "#d99a2b" : "var(--text-2)", cursor: edTime ? "pointer" : "not-allowed", fontWeight: edPriority ? 700 : 400 }} title={edTime ? "Countdown banner 10 min before + popup at the scheduled time (your reminders only)" : "Set a time first — a countdown needs a clock time"}>
+                  <input type="checkbox" checked={edPriority && !!edTime} disabled={!edTime} onChange={(e) => setEdPriority(e.target.checked)} style={{ cursor: edTime ? "pointer" : "not-allowed" }} />
+                  ⭐ Priority — remind me with a countdown{!edTime ? " (needs a time)" : ""}
                 </label>
               )}
             </div>

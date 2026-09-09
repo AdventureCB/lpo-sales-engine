@@ -68,6 +68,9 @@ export function PriorityFollowupWatcher() {
 
   const live = items.filter((it) => {
     if (dismissed[it.id]) return false;
+    // All-day items (00:00Z convention) have no clock time to count down to.
+    const d = new Date(it.dueAt);
+    if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0) return false;
     const due = Date.parse(it.dueAt);
     return due - now <= LEAD_MS && now - due <= OVERDUE_MS;
   });
