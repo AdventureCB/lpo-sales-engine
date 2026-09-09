@@ -271,7 +271,7 @@ export async function POST(req: NextRequest) {
     noteTitle?: string;
     sprintSnoozeUntil?: string | null;
     ownerPipedriveId?: number | null;
-    activity?: { type: string; subject: string; dueAt?: string | null };
+    activity?: { type: string; subject: string; dueAt?: string | null; priority?: boolean };
     logActivity?: { type: string; subject: string; body?: string; occurredAt?: string };
     sourceId?: string | null;
     truckModel?: string | null;
@@ -339,7 +339,7 @@ export async function POST(req: NextRequest) {
   // Schedule an activity (call / task / meeting / email) with a due time.
   // CRM row first; Pipedrive immediately if possible, else via the outbox.
   if (body.activity) {
-    const { type, subject, dueAt } = body.activity;
+    const { type, subject, dueAt, priority } = body.activity;
     if (!["call", "task", "meeting", "email"].includes(type) || !subject?.trim()) {
       return NextResponse.json({ error: "activity type/subject invalid" }, { status: 400 });
     }
@@ -353,6 +353,8 @@ export async function POST(req: NextRequest) {
         actor: user.email,
         due_at: dueAt ?? null,
         occurred_at: new Date().toISOString(),
+        // ⭐ Priority → countdown banner + due-time popup (PriorityFollowupWatcher).
+        ...(priority && dueAt ? { meta: { priority: true } } : {}),
       })
       .select("id")
       .single();

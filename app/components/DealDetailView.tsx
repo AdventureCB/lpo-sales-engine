@@ -97,6 +97,10 @@ const FOLLOW_UP_SUBJECT: Record<string, string> = {
   bad_number: "Follow up — fix number first",
   confirmation: "Confirmation follow-up",
 };
+const todayYmd = (): string => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 const followUpAt = (days: number): string => {
   const dt = new Date();
   dt.setDate(dt.getDate() + days);
@@ -190,7 +194,8 @@ export function DealDetailView({
   const [schedType, setSchedType] = useState("call");
   const [schedSubject, setSchedSubject] = useState("");
   const [schedDate, setSchedDate] = useState("");
-  const [schedTime, setSchedTime] = useState(""); // blank = all-day (no 5pm default)
+  const [schedTime, setSchedTime] = useState("");
+  const [schedPriority, setSchedPriority] = useState(false); // blank = all-day (no 5pm default)
   const [sprintPick, setSprintPick] = useState("");
   const [titleEdit, setTitleEdit] = useState<string | null>(null);
   const [newSprintName, setNewSprintName] = useState("");
@@ -209,6 +214,8 @@ export function DealDetailView({
   const [logNoAnswer, setLogNoAnswer] = useState<string | null>(null);
   const [logNextDays, setLogNextDays] = useState<number | "custom" | null>(null);
   const [logNextCustom, setLogNextCustom] = useState("");
+  const [logNextTime, setLogNextTime] = useState(""); // blank = 09:00
+  const [logNextPriority, setLogNextPriority] = useState(false);
   const [logNextType, setLogNextType] = useState("call");
   const [logBusy, setLogBusy] = useState(false);
   const [depositFollow, setDepositFollow] = useState(false); // schedule modal opened by the Deposit flow
@@ -894,6 +901,10 @@ export function DealDetailView({
                   <input type="time" className="vmsel" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} style={{ width: 120 }} title="Leave blank for all-day" />
                 </div>
                 <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: -2 }}>Leave the time blank for an all-day activity.</div>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: schedPriority ? "#d99a2b" : "var(--text-2)", cursor: "pointer", fontWeight: schedPriority ? 700 : 400 }} title="Countdown banner 10 min before + popup at the scheduled time">
+                  <input type="checkbox" checked={schedPriority} onChange={(e) => setSchedPriority(e.target.checked)} style={{ cursor: "pointer" }} />
+                  ⭐ Priority — remind me with a countdown
+                </label>
                 <div style={{ display: "flex", gap: 8 }}>
                   <button
                     className="btn primary"
@@ -907,6 +918,7 @@ export function DealDetailView({
                           type: schedType,
                           subject: schedSubject,
                           dueAt: combineDue(schedDate, schedTime),
+                          ...(schedPriority ? { priority: true } : {}),
                         },
                         // Deposit flow: the deposit + its confirmation follow-up
                         // land together — stage moves only now.
@@ -915,6 +927,7 @@ export function DealDetailView({
                       setSchedSubject("");
                       setSchedDate("");
                       setSchedTime("");
+                      setSchedPriority(false);
                       setDepositFollow(false);
                       setModal(null);
                     }}
@@ -1022,13 +1035,40 @@ export function DealDetailView({
                         {label}
                       </button>
                     ))}
-                    <button className={`btn ${logNextDays === "custom" ? "primary" : "ghost"}`} style={{ padding: "4px 10px", fontSize: 12.5 }} onClick={() => setLogNextDays((v) => (v === "custom" ? null : "custom"))}>
+                    <button
+                      className={`btn ${logNextDays === "custom" && logNextCustom === todayYmd() ? "primary" : "ghost"}`}
+                      style={{ padding: "4px 10px", fontSize: 12.5 }}
+                      title="Same-day follow-up at a specific time"
+                      onClick={() => {
+                        if (logNextDays === "custom" && logNextCustom === todayYmd()) {
+                          setLogNextDays(null);
+                          return;
+                        }
+                        const t = new Date(Date.now() + 60 * 60_000);
+                        t.setMinutes(Math.ceil(t.getMinutes() / 15) * 15, 0, 0);
+                        setLogNextDays("custom");
+                        setLogNextCustom(todayYmd());
+                        setLogNextTime(`${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`);
+                      }}
+                    >
+                      ☀️ Today…
+                    </button>
+                    <button className={`btn ${logNextDays === "custom" && logNextCustom !== todayYmd() ? "primary" : "ghost"}`} style={{ padding: "4px 10px", fontSize: 12.5 }} onClick={() => setLogNextDays((v) => (v === "custom" ? null : "custom"))}>
                       Custom
                     </button>
                     {logNextDays === "custom" && (
-                      <input type="date" className="vmsel" style={{ width: "auto", fontSize: 12.5, padding: "4px 8px" }} value={logNextCustom} onChange={(e) => setLogNextCustom(e.target.value)} />
+                      <>
+                        <input type="date" className="vmsel" style={{ width: "auto", fontSize: 12.5, padding: "4px 8px" }} value={logNextCustom} onChange={(e) => setLogNextCustom(e.target.value)} />
+                        <input type="time" className="vmsel" style={{ width: "auto", fontSize: 12.5, padding: "4px 8px" }} value={logNextTime} onChange={(e) => setLogNextTime(e.target.value)} title="Blank = 9:00 AM" />
+                      </>
                     )}
                     {logNextDays === null && <span style={{ fontSize: 12, color: "var(--text-3)" }}>(none)</span>}
+                    {logNextDays !== null && (
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, color: logNextPriority ? "#d99a2b" : "var(--text-2)", cursor: "pointer", fontWeight: logNextPriority ? 700 : 400 }} title="Countdown banner 10 min before + popup at the scheduled time">
+                        <input type="checkbox" checked={logNextPriority} onChange={(e) => setLogNextPriority(e.target.checked)} style={{ cursor: "pointer" }} />
+                        ⭐ Priority
+                      </label>
+                    )}
                   </div>
                 </div>
 
@@ -1042,7 +1082,7 @@ export function DealDetailView({
                         const whenIso = logWhen ? new Date(logWhen).toISOString() : new Date().toISOString();
                         const dueAt =
                           logNextDays === "custom"
-                            ? (logNextCustom ? new Date(`${logNextCustom}T09:00:00`).toISOString() : null)
+                            ? (logNextCustom ? new Date(`${logNextCustom}T${logNextTime || "09:00"}:00`).toISOString() : null)
                             : logNextDays != null
                               ? followUpAt(logNextDays)
                               : null;
@@ -1066,7 +1106,7 @@ export function DealDetailView({
                               dealId: d.pipedrive_deal_id ?? undefined,
                               crmDealId: d.id,
                               note: noteText,
-                              next: dueAt ? { type: logNextType, subject: followSubject, dueAt } : undefined,
+                              next: dueAt ? { type: logNextType, subject: followSubject, dueAt, ...(logNextPriority ? { priority: true } : {}) } : undefined,
                             }),
                           });
                           if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -1081,7 +1121,7 @@ export function DealDetailView({
                             logActivity: { type: logType, subject, body: logNote.trim() || undefined, occurredAt: whenIso },
                           });
                           if (dueAt) {
-                            await update({ activity: { type: logNextType, subject: `Follow up — ${subject}`, dueAt } });
+                            await update({ activity: { type: logNextType, subject: `Follow up — ${subject}`, dueAt, ...(logNextPriority ? { priority: true } : {}) } });
                           }
                         }
                         setModal(null);
@@ -1089,6 +1129,8 @@ export function DealDetailView({
                         setLogNoAnswer(null);
                         setLogNextDays(null);
                         setLogNextCustom("");
+                        setLogNextTime("");
+                        setLogNextPriority(false);
                         setLogNote("");
                         setLogSubject("");
                       } catch {
