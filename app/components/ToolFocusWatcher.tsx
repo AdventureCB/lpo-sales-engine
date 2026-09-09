@@ -51,9 +51,21 @@ export function ToolFocusWatcher() {
       const now = Date.now();
       for (const label of [...open.keys()]) close(label, now);
     };
+    // Long focus stretches flush in 5-min chunks (close + restart) so a
+    // main-window reload mid-session can't drop the accumulated time.
+    const chunker = setInterval(() => {
+      const now = Date.now();
+      for (const [label, started] of [...open.entries()]) {
+        if (now - started >= 5 * 60_000) {
+          close(label, now);
+          open.set(label, now);
+        }
+      }
+    }, 30_000);
     window.addEventListener("beforeunload", flush);
     return () => {
       unlisten?.();
+      clearInterval(chunker);
       window.removeEventListener("beforeunload", flush);
       flush();
     };

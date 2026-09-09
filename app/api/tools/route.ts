@@ -18,7 +18,7 @@ const DEFAULTS: ToolDef[] = [
   { key: "shopify", label: "Shopify", emoji: "🛍", url: "https://admin.shopify.com" },
   { key: "clickup", label: "ClickUp", emoji: "✅", url: "https://app.clickup.com" },
   { key: "calendly", label: "Calendly", emoji: "🗓", url: "https://calendly.com/app" },
-  { key: "browser", label: "Web browser", emoji: "🌐", url: "https://www.google.com" },
+  { key: "browser", label: "Web browser", emoji: "🌐", url: "https://lpo-sales-engine.vercel.app/browser" },
   { key: "ops", label: "Lone Peak Ops", emoji: "🏔", url: "" },
 ];
 
