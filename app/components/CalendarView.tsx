@@ -421,7 +421,11 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
                     {d.toLocaleDateString([], { weekday: "short", day: "numeric" })}
                   </div>
                   {items.length === 0 && <div style={{ fontSize: 11.5, color: "var(--text-3)", padding: "0 4px" }}>—</div>}
-                  {items.map((a) => chip(a, false))}
+                  {items.filter((a) => isAllDayIso(a.dueAt)).map((a) => chip(a, false))}
+                  {items.some((a) => isAllDayIso(a.dueAt)) && items.some((a) => !isAllDayIso(a.dueAt)) && (
+                    <div style={{ height: 12 }} />
+                  )}
+                  {items.filter((a) => !isAllDayIso(a.dueAt)).map((a) => chip(a, false))}
                 </div>
               );
             })}
