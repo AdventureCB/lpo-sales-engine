@@ -33,6 +33,15 @@ interface Report {
   };
   organicSources: Record<string, number>;
   beacon?: { lastAt: string | null; touches24h: number; linkedVisitors: number };
+  funnel?: {
+    total_leads: number;
+    total_contacted: number;
+    new_leads: number;
+    new_attempted: number;
+    new_contacted: number;
+    avg_hours_first_attempt: number | null;
+    avg_hours_first_contact: number | null;
+  } | null;
   visitors?: {
     email: string;
     linkedAt: string;
@@ -184,6 +193,35 @@ export function AdRoiView() {
 
       {error && <p className="viewsub" style={{ color: "var(--crit)" }}>{error}</p>}
       {!data && !error && <p className="viewsub">Loading…</p>}
+
+      {data?.funnel && (() => {
+        const f = data.funnel;
+        const pct = (a: number, b: number) => (b > 0 ? `${Math.round((a / b) * 100)}%` : "—");
+        const hrs = (h: number | null) =>
+          h == null ? "—" : h < 24 ? `${h.toFixed(1)}h` : `${(h / 24).toFixed(1)}d`;
+        const card = (label: string, value: string, sub: string) => (
+          <div className="card" style={{ padding: "12px 14px" }}>
+            <div style={{ fontSize: 11.5, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+            <div style={{ fontSize: 24, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+            <div style={{ fontSize: 12, color: "var(--text-3)" }}>{sub}</div>
+          </div>
+        );
+        return (
+          <>
+            <div className="panel-h" style={{ marginTop: 14 }}>📞 Lead contact funnel</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 6 }}>
+              {card("Contacted / all leads", `${f.total_contacted.toLocaleString()} / ${f.total_leads.toLocaleString()}`, `all-time · ${pct(f.total_contacted, f.total_leads)}`)}
+              {card(`New leads attempted (${days}d)`, pct(f.new_attempted, f.new_leads), `${f.new_attempted} of ${f.new_leads} dialed at least once`)}
+              {card(`New leads contacted (${days}d)`, pct(f.new_contacted, f.new_leads), `${f.new_contacted} of ${f.new_leads} reached (40s+ call)`)}
+              {card("Avg time to first attempt", hrs(f.avg_hours_first_attempt), `first dial, leads from last ${days}d`)}
+              {card("Avg time to first contact", hrs(f.avg_hours_first_contact), `first 40s+ conversation`)}
+            </div>
+            <p className="viewsub" style={{ marginTop: 0 }}>
+              Attempt = first outbound dial on the deal · contact = first answered call of 40+ seconds (either direction).
+            </p>
+          </>
+        );
+      })()}
 
       {data?.beacon && (() => {
         const b = data.beacon;

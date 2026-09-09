@@ -13,7 +13,10 @@ export async function GET(req: NextRequest) {
   if (!user || user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
   const days = Math.min(Math.max(Number(new URL(req.url).searchParams.get("days") ?? 30) || 30, 7), 180);
   const db = supabaseAdmin();
-  const report = await computeLeadCost(db, days);
+  const [report, { data: funnel }] = await Promise.all([
+    computeLeadCost(db, days),
+    db.rpc("lead_contact_funnel", { p_days: days }),
+  ]);
 
   // First-party beacon freshness — the pipeline is fail-silent by design, so
   // this line is how a dead beacon gets noticed (it once 401'd for 2 weeks).
@@ -91,6 +94,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     ...report,
+    funnel: funnel ?? null,
     beacon: { lastAt: lastTouch?.created_at ?? null, touches24h: touches24h ?? 0, linkedVisitors: links ?? 0 },
     visitors,
   });
