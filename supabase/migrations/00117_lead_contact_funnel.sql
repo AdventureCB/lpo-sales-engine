@@ -34,10 +34,17 @@ with attempts as (
   group by crm_id
 ),
 contacts as (
+  -- v3 (9/9): answered+40s alone counted VOICEMAIL pickups as contacts
+  -- (outbound has no true answer event — the customer's VM "answers").
+  -- Rep disposition is ground truth: connected = contact; vm_dropped/
+  -- no_answer/bad_number = NOT a contact even if the classifier read the
+  -- greeting as a conversation; undispositioned calls trust the
+  -- transcript classifier.
   select coalesce(ce.crm_deal_id, d2.id) as crm_id, min(ce.started_at) as first_at
   from call_events ce
   left join crm_deals d2 on ce.deal_id is not null and d2.pipedrive_deal_id = ce.deal_id
-  where ce.answered_at is not null and coalesce(ce.duration_s, 0) >= 40
+  where ce.disposition = 'connected'
+     or (ce.classification = 'conversation' and (ce.disposition is null or ce.disposition = 'connected'))
   group by 1
 ),
 d as (

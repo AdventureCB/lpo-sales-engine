@@ -219,12 +219,13 @@ export function AdRoiView() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 6 }}>
               {card("Contacted / all leads", `${f.total_contacted.toLocaleString()} / ${f.total_leads.toLocaleString()}`, `all-time · ${pct(f.total_contacted, f.total_leads)}`)}
               {card(`New leads attempted (${days}d)`, pct(f.new_attempted, f.new_leads), `${f.new_attempted} of ${f.new_leads} dialed at least once`)}
-              {card(`New leads contacted (${days}d)`, pct(f.new_contacted, f.new_leads), `${f.new_contacted} of ${f.new_leads} reached (40s+ call)`)}
+              {card(`New leads contacted (${days}d)`, pct(f.new_contacted, f.new_leads), `${f.new_contacted} of ${f.new_leads} had a real conversation`)}
               {card("Avg time to first attempt", hrs(f.avg_hours_first_attempt), `first dial, leads from last ${days}d`)}
-              {card("Avg time to first contact", hrs(f.avg_hours_first_contact), `first 40s+ conversation`)}
+              {card("Avg time to first contact", hrs(f.avg_hours_first_contact), `first real conversation`)}
             </div>
             <p className="viewsub" style={{ marginTop: 0 }}>
-              Attempt = first outbound dial on the deal · contact = first answered call of 40+ seconds (either direction).
+              Attempt = first outbound dial on the deal · contact = first real conversation (rep-dispositioned connected, or
+              transcript-classified conversation — voicemail drops don&apos;t count).
             </p>
           </>
         );
