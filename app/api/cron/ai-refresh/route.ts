@@ -27,6 +27,48 @@ export async function GET(req: Request) {
   if ((await monthToDateSpendCents(db)) >= cfg.monthly_budget_cents)
     return NextResponse.json({ skipped: "monthly budget reached" });
 
+  // ── mode=reviews: auto-review every call ≥5min (Kyle 9/9 — reviews are the
+  // leading KPI, so they can't depend on the rep pressing the button). Newest
+  // first; the review cache makes re-entry free; reviewCall re-checks budget.
+  if (new URL(req.url).searchParams.get("mode") === "reviews") {
+    const started = Date.now();
+    const { reviewCall } = await import("@/lib/ai-call-review");
+    const { data: calls } = await db
+      .from("call_events")
+      .select("quo_call_id, crm_deal_id, deal_id, duration_s, transcript:raw->>transcript")
+      .gte("duration_s", 300)
+      .gte("started_at", new Date(Date.now() - 14 * 86_400_000).toISOString())
+      .not("raw->>transcript", "is", null)
+      .order("started_at", { ascending: false })
+      .limit(25);
+    const candidates = (calls ?? []).filter((c: any) => String(c.transcript ?? "").length >= 400);
+    let reviewed = 0;
+    let skipped = 0;
+    for (const c of candidates) {
+      if (reviewed >= 3 || Date.now() - started > 40_000) break;
+      const { data: existing } = await db
+        .from("call_reviews")
+        .select("id")
+        .eq("quo_call_id", c.quo_call_id)
+        .maybeSingle();
+      if (existing) continue;
+      // Resolve the deal: native uuid first, else the numeric internal id.
+      let dealId: string | null = c.crm_deal_id;
+      if (!dealId && c.deal_id) {
+        const { data: d } = await db.from("crm_deals").select("id").eq("pipedrive_deal_id", c.deal_id).maybeSingle();
+        dealId = d?.id ?? null;
+      }
+      if (!dealId) continue;
+      const res = await reviewCall(db, { dealId, quoCallId: c.quo_call_id });
+      if (res.ok && !res.cached) reviewed++;
+      else if (!res.ok) {
+        skipped++;
+        if ((res.reason ?? "").includes("budget")) break;
+      }
+    }
+    return NextResponse.json({ mode: "reviews", eligible: candidates.length, reviewed, skipped });
+  }
+
   const { data: cands } = await db.rpc("ai_refresh_candidates", {
     p_limit: PER_RUN,
     p_since_days: 7,

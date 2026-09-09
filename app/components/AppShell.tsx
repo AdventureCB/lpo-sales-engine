@@ -34,6 +34,7 @@ const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[]
       { label: "💵 Deposits", href: "/deposits" },
       { label: "📅 Calendar", href: "/calendar" },
       { label: "Scoreboard", href: "/scoreboard" },
+      { label: "⚖ Reviews", href: "/reviews" },
       { label: "Lookup", href: "/lookup" },
     ],
   },
