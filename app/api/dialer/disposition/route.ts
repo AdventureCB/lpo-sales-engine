@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     final?: boolean;
     sprintId?: string;
     crmDealId?: string;
-    next?: { type?: string; subject?: string; dueAt?: string };
+    next?: { type?: string; subject?: string; dueAt?: string; priority?: boolean };
     note?: string | null;
     quality?: { avg_loss_pct?: number; max_jitter_ms?: number; samples?: number; method?: string };
   };
@@ -119,6 +119,9 @@ export async function POST(req: NextRequest) {
         actor: user.email,
         due_at: n.dueAt,
         occurred_at: new Date().toISOString(),
+        // ⭐ Priority follow-ups drive the countdown banner + due-time popup
+        // (PriorityFollowupWatcher polls meta->priority).
+        ...(n.priority ? { meta: { priority: true } } : {}),
       })
       .select("id")
       .single();

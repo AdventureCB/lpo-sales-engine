@@ -7,6 +7,7 @@ import { NotificationBell } from "./NotificationBell";
 import { ThemeToggle } from "./ThemeToggle";
 import { ChatDock } from "./ChatDock";
 import { InboundTextWatcher } from "./InboundTextWatcher";
+import { PriorityFollowupWatcher } from "./PriorityFollowupWatcher";
 
 interface NavItem {
   label: string;
@@ -117,6 +118,7 @@ export function AppShell({
       <main>{children}</main>
       <ChatDock />
       <InboundTextWatcher />
+      <PriorityFollowupWatcher />
     </div>
   );
 }

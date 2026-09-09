@@ -784,6 +784,12 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [dispoNote, setDispoNote] = useState("");
   const [customDue, setCustomDue] = useState("");
   const [showCustomDue, setShowCustomDue] = useState(false);
+  // "call me back in an hour" flow: same-day time picker + ⭐ priority flag
+  // (priority = countdown banner 10min out + due-time popup, see
+  // PriorityFollowupWatcher).
+  const [showTodayDue, setShowTodayDue] = useState(false);
+  const [todayTime, setTodayTime] = useState("");
+  const [nextPriority, setNextPriority] = useState(false);
   // No-answer sub-reason (ignored vs VM full/not set).
   const [noAnswerReason, setNoAnswerReason] = useState<string | null>(null);
   // Default the next-step type to a call each time, not whatever was last used.
@@ -791,6 +797,9 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setPendingDispo(dispo);
     setNextType("call");
     setNoAnswerReason(null);
+    setNextPriority(false);
+    setShowTodayDue(false);
+    setTodayTime("");
   };
 
   const followUpAt = (days: number): string => {
@@ -806,6 +815,8 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setPendingDispo(null);
     setShowCustomDue(false);
     setCustomDue("");
+    setShowTodayDue(false);
+    setTodayTime("");
     setAwaitingDispo(false);
     if (dispo === "connected") setSess((s) => ({ ...s, conn: s.conn + 1, talkS: s.talkS + callSecRef.current }));
     // Confirmation calls count talk time but NOT sales connects — that
@@ -828,7 +839,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     const note = reasonLabel ? `No answer — ${reasonLabel}${noteBase ? " · " + noteBase : ""}` : noteBase || null;
     void sendDisposition(
       dispo,
-      dueAt ? { type: nextType, subject, dueAt } : null,
+      dueAt ? { type: nextType, subject, dueAt, ...(nextPriority ? { priority: true } : {}) } : null,
       note
     );
     // Instant feedback beats accurate feedback — predict locally, let the
@@ -1609,14 +1620,72 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                       <option value="email">✉️ Email</option>
                       <option value="meeting">📅 Meeting</option>
                     </select>
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        if (!showTodayDue) {
+                          // Default to the next quarter-hour at least 1h out.
+                          const d = new Date(Date.now() + 60 * 60_000);
+                          d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15, 0, 0);
+                          setTodayTime(`${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`);
+                        }
+                        setShowTodayDue((v) => !v);
+                        setShowCustomDue(false);
+                      }}
+                    >
+                      ☀️ Today…
+                    </button>
                     <button className="btn" onClick={() => completeDispo(followUpAt(7))}>1 week</button>
                     <button className="btn" onClick={() => completeDispo(followUpAt(14))}>2 weeks</button>
                     <button className="btn" onClick={() => completeDispo(followUpAt(30))}>1 month</button>
-                    <button className="btn" onClick={() => setShowCustomDue((v) => !v)}>📅 Custom…</button>
+                    <button className="btn" onClick={() => { setShowCustomDue((v) => !v); setShowTodayDue(false); }}>📅 Custom…</button>
                     <button className="btn ghost" onClick={() => completeDispo(null)}>
                       No follow-up <kbd>⏎</kbd>
                     </button>
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 13, color: nextPriority ? "#d99a2b" : "var(--text-2)", cursor: "pointer", fontWeight: nextPriority ? 700 : 400 }} title="Countdown banner 10 min before + popup at the scheduled time">
+                      <input type="checkbox" checked={nextPriority} onChange={(e) => setNextPriority(e.target.checked)} style={{ cursor: "pointer" }} />
+                      ⭐ Priority
+                    </label>
                   </div>
+                  {showTodayDue && (
+                    <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 13.5, color: "var(--text-2)" }}>Today at</span>
+                      <input
+                        type="time"
+                        className="vmsel"
+                        style={{ width: "auto" }}
+                        value={todayTime}
+                        onChange={(e) => setTodayTime(e.target.value)}
+                      />
+                      {[1, 2, 3].map((h) => (
+                        <button
+                          key={h}
+                          className="btn ghost"
+                          style={{ padding: "6px 10px", fontSize: 13 }}
+                          onClick={() => {
+                            const d = new Date(Date.now() + h * 3600_000);
+                            setTodayTime(`${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`);
+                          }}
+                        >
+                          +{h}h
+                        </button>
+                      ))}
+                      <button
+                        className="btn primary"
+                        style={{ padding: "7px 14px", fontSize: 14 }}
+                        disabled={!todayTime}
+                        onClick={() => {
+                          const [h, m] = todayTime.split(":").map(Number);
+                          const d = new Date();
+                          d.setHours(h, m, 0, 0);
+                          if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1); // past time → tomorrow
+                          completeDispo(d.toISOString());
+                        }}
+                      >
+                        Schedule{nextPriority ? " ⭐" : ""}
+                      </button>
+                    </div>
+                  )}
                   {showCustomDue && (
                     <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
                       <input
