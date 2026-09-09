@@ -18,6 +18,7 @@ rm -rf "/Applications/LPO Queue Runner.app"
 cp -R "$MOUNT/LPO Queue Runner.app" /Applications/
 hdiutil detach "$MOUNT" -quiet
 xattr -dr com.apple.quarantine "/Applications/LPO Queue Runner.app" 2>/dev/null || true
+codesign --force --deep --sign - "/Applications/LPO Queue Runner.app" 2>/dev/null || true
 echo "   ✓ installed to /Applications"
 
 # 2. BlackHole 2ch (virtual audio device)

@@ -50,6 +50,58 @@ fn open_url_window(app: tauri::AppHandle, url: String, label: String) -> Result<
 
 /// Bring the main window to the front — invoked when a call rings while the
 /// app is minimized or behind other windows.
+/// Open (or focus) a native window on an EXTERNAL tool (Gorgias, Shopify,
+/// ClickUp, Calendly, a plain browser tab…). A top-level webview ignores
+/// X-Frame-Options — the reason these can't be iframed in the app — and the
+/// shared cookie store keeps reps signed in across sessions. HTTPS only.
+/// Focus/blur/close are reported to the main window as "tool-focus" events
+/// so the web app can track per-tool engagement time.
+#[tauri::command]
+fn open_tool_window(app: tauri::AppHandle, url: String, label: String, title: String) -> Result<(), String> {
+    use tauri::Manager;
+    let parsed: tauri::Url = url.parse().map_err(|e| format!("bad url: {e}"))?;
+    if parsed.scheme() != "https" {
+        return Err("https only".into());
+    }
+    let clean: String = label.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+    let safe = format!("tool-{clean}");
+    if let Some(w) = app.get_webview_window(&safe) {
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    let app2 = app.clone();
+    app.run_on_main_thread(move || {
+        match tauri::WebviewWindowBuilder::new(&app2, &safe, tauri::WebviewUrl::External(parsed))
+            .title(&title)
+            .inner_size(1240.0, 860.0)
+            .build()
+        {
+            Ok(w) => {
+                use tauri::{Emitter, Manager};
+                let app3 = app2.clone();
+                let lbl = clean.clone();
+                // Focus telemetry: the main window's web app turns these into
+                // tool-time engagement sessions.
+                w.on_window_event(move |ev| {
+                    let focused = match ev {
+                        tauri::WindowEvent::Focused(f) => Some(*f),
+                        tauri::WindowEvent::Destroyed => Some(false),
+                        _ => None,
+                    };
+                    if let Some(f) = focused {
+                        if let Some(main) = app3.get_webview_window("main") {
+                            let _ = main.emit("tool-focus", serde_json::json!({ "label": lbl, "focused": f }));
+                        }
+                    }
+                });
+            }
+            Err(e) => eprintln!("open_tool_window build failed: {e}"),
+        }
+    })
+    .map_err(|e| format!("main thread: {e}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 fn focus_main(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
@@ -240,6 +292,7 @@ fn main() {
             audio_status,
             open_tel,
             open_url_window,
+            open_tool_window,
             app_version,
             focus_main,
             open_external,

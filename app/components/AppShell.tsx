@@ -8,6 +8,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { ChatDock } from "./ChatDock";
 import { InboundTextWatcher } from "./InboundTextWatcher";
 import { PriorityFollowupWatcher } from "./PriorityFollowupWatcher";
+import { ToolFocusWatcher } from "./ToolFocusWatcher";
 
 interface NavItem {
   label: string;
@@ -37,6 +38,7 @@ const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[]
       { label: "Scoreboard", href: "/scoreboard" },
       { label: "⚖️ Reviews", href: "/reviews" },
       { label: "Lookup", href: "/lookup" },
+      { label: "🧰 Tools", href: "/tools" },
     ],
   },
   {
@@ -119,6 +121,7 @@ export function AppShell({
       <ChatDock />
       <InboundTextWatcher />
       <PriorityFollowupWatcher />
+      <ToolFocusWatcher />
     </div>
   );
 }

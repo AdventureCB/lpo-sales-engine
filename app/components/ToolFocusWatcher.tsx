@@ -1,0 +1,62 @@
+"use client";
+
+import { useEffect } from "react";
+
+/**
+ * Turns the companion's "tool-focus" events (native tool windows opened from
+ * 🧰 Tools) into engagement sessions: focus starts a session, blur/close ends
+ * it and posts to /api/engagement/tool-sessions. Runs only in the companion
+ * main window; sub-minute noise is filtered server-side (<3s dropped).
+ */
+export function ToolFocusWatcher() {
+  useEffect(() => {
+    const t = (window as any).__TAURI__;
+    if (!t?.event?.listen) return;
+    const open = new Map<string, number>(); // label → focusedAt ms
+
+    const close = (label: string, at: number) => {
+      const started = open.get(label);
+      open.delete(label);
+      if (!started || at - started < 1000) return;
+      void fetch("/api/engagement/tool-sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tool: label,
+          focusedAt: new Date(started).toISOString(),
+          blurredAt: new Date(at).toISOString(),
+        }),
+        keepalive: true,
+      }).catch(() => {});
+    };
+
+    let unlisten: (() => void) | null = null;
+    void t.event
+      .listen("tool-focus", (ev: { payload: { label: string; focused: boolean } }) => {
+        const { label, focused } = ev.payload ?? {};
+        if (!label) return;
+        const now = Date.now();
+        if (focused) {
+          if (!open.has(label)) open.set(label, now);
+        } else {
+          close(label, now);
+        }
+      })
+      .then((u: () => void) => {
+        unlisten = u;
+      })
+      .catch(() => {});
+
+    const flush = () => {
+      const now = Date.now();
+      for (const label of [...open.keys()]) close(label, now);
+    };
+    window.addEventListener("beforeunload", flush);
+    return () => {
+      unlisten?.();
+      window.removeEventListener("beforeunload", flush);
+      flush();
+    };
+  }, []);
+  return null;
+}
