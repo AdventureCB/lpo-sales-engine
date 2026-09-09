@@ -543,8 +543,11 @@ export async function POST(req: NextRequest) {
       const { normalizePhone } = await import("@/lib/identity");
       const peer = normalizePhone(p.from);
       const update: Record<string, unknown> = {};
-      const wasVm = vmState || Boolean((prior?.raw as any)?.vm);
-      if (!answeredAt) update.classification = wasVm ? "voicemail" : "no_answer";
+      // Unanswered → "no_answer" even when VM picked up: callers who hang up
+      // during the greeting leave NO recording, and calling those rows
+      // "voicemail" put empty 📼 entries in the bell (Joyce Edwards 9/8).
+      // recording.saved upgrades to "voicemail" when a message actually lands.
+      if (!answeredAt) update.classification = "no_answer";
       if (p.to) {
         const { data: rep } = await db
           .from("reps")
