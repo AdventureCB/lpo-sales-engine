@@ -155,7 +155,14 @@ export async function prefetchDeal(opts: { dealId?: string; pdDealId?: number | 
 
 export function fmtWhen(iso: string | null) {
   if (!iso) return "—";
-  return new Date(iso).toLocaleString("en-US", {
+  // All-day convention (00:00:00Z, lib/allday): show the DATE it belongs to —
+  // rendering it as a local timestamp showed "yesterday 5pm" in PT.
+  const d = new Date(iso);
+  if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0) {
+    const [y, m, day] = iso.slice(0, 10).split("-").map(Number);
+    return `${new Date(y, m - 1, day).toLocaleDateString("en-US", { month: "short", day: "numeric" })} · all day`;
+  }
+  return d.toLocaleString("en-US", {
     timeZone: "America/Los_Angeles", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
   });
 }
@@ -903,9 +910,9 @@ export function DealDetailView({
                   <input type="time" className="vmsel" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} style={{ width: 120 }} title="Leave blank for all-day" />
                 </div>
                 <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: -2 }}>Leave the time blank for an all-day activity.</div>
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: schedPriority ? "#d99a2b" : "var(--text-2)", cursor: "pointer", fontWeight: schedPriority ? 700 : 400 }} title="Countdown banner 10 min before + popup at the scheduled time">
-                  <input type="checkbox" checked={schedPriority} onChange={(e) => setSchedPriority(e.target.checked)} style={{ cursor: "pointer" }} />
-                  ⭐ Priority — remind me with a countdown
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: !schedTime ? "var(--text-3)" : schedPriority ? "#d99a2b" : "var(--text-2)", cursor: schedTime ? "pointer" : "not-allowed", fontWeight: schedPriority ? 700 : 400 }} title={schedTime ? "Countdown banner 10 min before + popup at the scheduled time" : "Set a time first — a countdown needs a clock time"}>
+                  <input type="checkbox" checked={schedPriority && !!schedTime} disabled={!schedTime} onChange={(e) => setSchedPriority(e.target.checked)} style={{ cursor: schedTime ? "pointer" : "not-allowed" }} />
+                  ⭐ Priority — remind me with a countdown{!schedTime ? " (needs a time)" : ""}
                 </label>
                 <div style={{ display: "flex", gap: 8 }}>
                   <button
