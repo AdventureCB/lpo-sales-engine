@@ -32,23 +32,14 @@ const subs = new Set<() => void>();
 let ringCtx: AudioContext | null = null;
 let ring: { osc1: OscillatorNode; osc2: OscillatorNode; gain: GainNode; iv: ReturnType<typeof setInterval> } | null = null;
 
-let keepAlive: OscillatorNode | null = null;
 function primeAudio() {
   try {
     ringCtx = ringCtx ?? new AudioContext();
     if (ringCtx.state === "suspended") void ringCtx.resume().catch(() => {});
-    // Keep-alive: a running (inaudible) source keeps WKWebView from
-    // suspending the context between gestures — the root cause of rings
-    // that were silent despite the preview working (Logan 9/8).
-    if (!keepAlive && ringCtx.state === "running") {
-      const g = ringCtx.createGain();
-      g.gain.value = 0.0001;
-      g.connect(ringCtx.destination);
-      keepAlive = ringCtx.createOscillator();
-      keepAlive.frequency.value = 30;
-      keepAlive.connect(g);
-      keepAlive.start();
-    }
+    // (A constant near-silent keep-alive oscillator lived here briefly to
+    // prevent context suspension — audible as a faint tone on some hardware,
+    // removed 9/9. Suspension is covered instead by the gesture-blessed
+    // <audio> fallback in startRinging.)
   } catch {}
   blessRingElement();
   // Browsers only (WKWebView has no Notification API): ask once, on a real

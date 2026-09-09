@@ -63,8 +63,10 @@ const TOOL_META: Record<string, { label: string; color: string }> = {
   browser: { label: "🌐 Browser", color: "#b0894c" },
   ops: { label: "🏔 Lone Peak Ops", color: "#c96b6b" },
 };
-const toolMeta = (tool: string) =>
-  TOOL_META[tool] ?? { label: `🧰 ${tool.charAt(0).toUpperCase()}${tool.slice(1)}`, color: "#8a8fa3" };
+const toolMeta = (tool: string, cfg?: { label: string; emoji: string }) =>
+  cfg
+    ? { label: `${cfg.emoji} ${cfg.label}`, color: TOOL_META[tool]?.color ?? "#8a8fa3" }
+    : TOOL_META[tool] ?? { label: `🧰 ${tool.charAt(0).toUpperCase()}${tool.slice(1)}`, color: "#8a8fa3" };
 
 function sec(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -92,7 +94,8 @@ export function EngagementView() {
   const [date, setDate] = useState<string>(() =>
     new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())
   );
-  const [data, setData] = useState<{ kpiHours: number; reps: RepRow[]; trend: { date: string; byRep: Record<string, number> }[] } | null>(null);
+  const [data, setData] = useState<{ kpiHours: number;
+  toolLabels?: Record<string, { label: string; emoji: string }>; reps: RepRow[]; trend: { date: string; byRep: Record<string, number> }[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -163,7 +166,7 @@ export function EngagementView() {
           ...Object.entries(r.tools ?? {})
             .sort((a, b) => b[1] - a[1])
             .map(([tool, s]) => {
-              const m = toolMeta(tool);
+              const m = toolMeta(tool, data?.toolLabels?.[tool]);
               return { key: `tool:${tool}`, label: m.label, s, color: m.color };
             }),
           { key: "idle", label: "Idle", s: r.idleS, color: COLORS.idle },

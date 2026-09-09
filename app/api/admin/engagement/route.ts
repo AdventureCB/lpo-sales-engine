@@ -22,6 +22,14 @@ export async function GET(req: NextRequest) {
 
   const reps = await computeEngagement(db, date);
 
+  // Display names for tool slices — reps' custom tools have generated keys
+  // (tool57474 = Kyle's Gmail tile); label them as configured in 🧰 Tools.
+  const { data: toolCfg } = await db.from("crm_sync_state").select("value").eq("key", "tool_links").maybeSingle();
+  const toolLabels: Record<string, { label: string; emoji: string }> = {};
+  for (const t of ((toolCfg?.value as any)?.tools ?? []) as { key: string; label: string; emoji: string }[]) {
+    if (t.key && t.label) toolLabels[t.key] = { label: t.label, emoji: t.emoji ?? "🧰" };
+  }
+
   // 7-day engaged trend ending on the requested date (skip if trend=0).
   const trend: { date: string; byRep: Record<string, number> }[] = [];
   if (params.get("trend") !== "0") {
@@ -37,5 +45,5 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ date, kpiHours, reps, trend });
+  return NextResponse.json({ date, kpiHours, reps, trend, toolLabels });
 }
