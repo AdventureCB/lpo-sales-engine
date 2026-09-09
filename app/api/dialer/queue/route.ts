@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
 import { cachedQueueLeads, type OwnerScope } from "@/lib/dialer";
+import { repCalledTodayPhones } from "@/lib/sprint-lists";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,7 +30,7 @@ export async function GET(req: NextRequest) {
     const db = supabaseAdmin();
     const { data: sprint } = await db
       .from("crm_sprints")
-      .select("id, owner")
+      .select("id, owner, kind, slot, for_date")
       .eq("id", sprintId)
       .maybeSingle();
     if (!sprint) return NextResponse.json({ error: "sprint not found" }, { status: 404 });
@@ -74,7 +75,21 @@ export async function GET(req: NextRequest) {
         };
       })
       .filter(Boolean);
-    return NextResponse.json({ leads, skippedNoPhone, skippedOwnership: 0, truncated: false });
+    // List 3 is generated at 1 PM but served all afternoon: filter out
+    // people the rep has ACTUALLY called today at serve time — catches
+    // post-generation dials, deal-page dials, and inbound conversations
+    // that item-level called_at stamps never see (9/9).
+    let skippedCalledToday = 0;
+    let served = leads as any[];
+    if (sprint.kind === "daily" && sprint.slot === 3 && sprint.for_date) {
+      const touched = await repCalledTodayPhones(db, sprint.owner, sprint.for_date);
+      served = served.filter((l: any) => {
+        const hit = touched.has(String(l.phone).replace(/\D/g, "").slice(-10));
+        if (hit) skippedCalledToday++;
+        return !hit;
+      });
+    }
+    return NextResponse.json({ leads: served, skippedNoPhone, skippedOwnership: 0, truncated: false, skippedCalledToday });
   }
 
   let stageIds: number[];

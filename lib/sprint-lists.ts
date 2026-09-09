@@ -529,6 +529,37 @@ export async function computeList(
 
 // ── Slot 3: carryover + stale + reprospecting pool ─────────────────────────
 
+/** Last-10 digit set of numbers this rep DIALED (outbound) or ANSWERED
+ * (inbound) since PT day start — the ground truth for "already touched
+ * today". Sprint-item called_at stamps miss deal-page dials, redials, and
+ * inbound conversations (9/9: those people came back on List 3). */
+export async function repCalledTodayPhones(
+  db: SupabaseClient,
+  repEmail: string,
+  forDate: string
+): Promise<Set<string>> {
+  const { data: rep } = await db.from("reps").select("id, telnyx_number").eq("email", repEmail).maybeSingle();
+  if (!rep) return new Set();
+  // -08:00 = earliest PT offset; during PDT this reaches an hour further
+  // back into yesterday evening, which only over-excludes harmlessly.
+  const { data: calls } = await db
+    .from("call_events")
+    .select("direction, answered_at, raw")
+    .eq("rep_id", rep.id)
+    .gte("started_at", new Date(`${forDate}T00:00:00-08:00`).toISOString())
+    .limit(1000);
+  const out = new Set<string>();
+  const own = (rep.telnyx_number ?? "").replace(/\D/g, "").slice(-10);
+  for (const c of calls ?? []) {
+    if (c.direction === "incoming" && !c.answered_at) continue; // a missed inbound isn't a touch
+    for (const p of (((c.raw as any)?.data?.object?.participants ?? []) as string[])) {
+      const d = String(p).replace(/\D/g, "").slice(-10);
+      if (d && d.length === 10 && d !== own) out.add(d);
+    }
+  }
+  return out;
+}
+
 /** Deals + contacts this rep already dialed today via Lists 1/2 — List 3 must
  * never re-serve a person who was called this morning (9/8: a no-answer kept
  * the deal in the stale window and it came right back on List 3). */
@@ -569,6 +600,8 @@ async function computeList3(
   const seen = new Set<string>();
   const seenContacts = new Set<string>();
   const called = await calledTodaySets(db, args.repEmail, args.forDate);
+  const calledPhones = await repCalledTodayPhones(db, args.repEmail, args.forDate);
+  const touched = (phone: string | null) => !!phone && calledPhones.has(phone.replace(/\D/g, "").slice(-10));
   const out: ListItem[] = [];
 
   // 1) Carryover: today's undialed items from this rep's lists 1 & 2.
@@ -599,6 +632,7 @@ async function computeList3(
       if (!phone || seen.has(d.id)) continue;
       // The PERSON was already dialed today via another deal → no repeat.
       if (d.contact_id && (seenContacts.has(d.contact_id) || called.contactIds.has(d.contact_id))) continue;
+      if (touched(phone)) continue; // actually called today (any surface)
       seen.add(d.id);
       if (d.contact_id) seenContacts.add(d.contact_id);
       carry.push({
@@ -658,7 +692,7 @@ async function computeList3(
     if (seen.has(d.id) || called.dealIds.has(d.id)) continue;
     if (d.contact_id && (seenContacts.has(d.contact_id) || called.contactIds.has(d.contact_id))) continue;
     const phone = primaryPhone(d.crm_contacts?.phones ?? []);
-    if (!phone) continue;
+    if (!phone || touched(phone)) continue;
     seen.add(d.id);
     if (d.contact_id) seenContacts.add(d.contact_id);
     out.push({
@@ -791,7 +825,7 @@ async function claimReprospect(
   // tzOffsets: Lists 1/2 pool-fill keeps the slot's TZ partition.
   // exclude: deals/contacts already on the list or dialed today — never
   // claim (and lock for 3 days) a deal we won't serve.
-  opts: { tzOffsets?: number[]; exclude?: { dealIds: Set<string>; contactIds: Set<string> } } = {}
+  opts: { tzOffsets?: number[]; exclude?: { dealIds: Set<string>; contactIds: Set<string>; phones?: Set<string> } } = {}
 ): Promise<ListItem[]> {
   // Pool = UNASSIGNED open deals (owner null). cainen_owner_pipedrive_id is a
   // legacy tunable: when set, the pool is that owner's deals instead (the
@@ -850,8 +884,15 @@ async function claimReprospect(
   };
 
   const excl = opts.exclude;
-  const excluded = (d: any) =>
-    !!excl && (excl.dealIds.has(d.id) || (d.contact_id && excl.contactIds.has(d.contact_id)));
+  const excluded = (d: any) => {
+    if (!excl) return false;
+    if (excl.dealIds.has(d.id) || (d.contact_id && excl.contactIds.has(d.contact_id))) return true;
+    if (excl.phones) {
+      const ph = primaryPhone(d.crm_contacts?.phones ?? []);
+      if (ph && excl.phones.has(ph.replace(/\D/g, "").slice(-10))) return true;
+    }
+    return false;
+  };
 
   const toItem = (d: any): ListItem => ({
     crmDealId: d.id,
@@ -987,10 +1028,12 @@ export async function generateAndSave(
   if (args.slot === 3) {
     const remaining = cfg.cap ? cfg.cap - items.length : Infinity;
     const called = await calledTodaySets(db, args.repEmail, args.forDate);
+    const calledPhones = await repCalledTodayPhones(db, args.repEmail, args.forDate);
     const pool = await claimReprospect(db, args, cfg, remaining, {
       exclude: {
         dealIds: new Set([...items.map((i) => i.crmDealId), ...called.dealIds]),
         contactIds: new Set([...(items.map((i) => i.contactId).filter(Boolean) as string[]), ...called.contactIds]),
+        phones: calledPhones,
       },
     });
     items = [...items, ...pool];
