@@ -11,11 +11,13 @@ export const maxDuration = 60;
 export async function GET(req: NextRequest) {
   const user = await getSessionUser();
   if (!user || user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
-  const days = Math.min(Math.max(Number(new URL(req.url).searchParams.get("days") ?? 30) || 30, 7), 180);
+  const params = new URL(req.url).searchParams;
+  const days = Math.min(Math.max(Number(params.get("days") ?? 30) || 30, 7), 180);
+  const excludeHotlist = params.get("excludeHotlist") === "1";
   const db = supabaseAdmin();
   const [report, { data: funnel }] = await Promise.all([
     computeLeadCost(db, days),
-    db.rpc("lead_contact_funnel", { p_days: days }),
+    db.rpc("lead_contact_funnel", { p_days: days, p_exclude_hotlist: excludeHotlist }),
   ]);
 
   // First-party beacon freshness — the pipeline is fail-silent by design, so

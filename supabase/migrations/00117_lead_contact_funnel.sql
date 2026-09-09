@@ -6,7 +6,13 @@
 -- exclude firsts that PRE-DATE deal creation (imported history attached to
 -- later-created deals would go negative).
 
-create or replace function public.lead_contact_funnel(p_days integer)
+-- v2 (9/9): p_exclude_hotlist drops "Hot List Import"-sourced deals — the
+-- recovery engine mints them from old engagement signals, so they'd distort
+-- speed-to-lead numbers. Old 1-arg signature dropped (default would make the
+-- 1-arg call ambiguous).
+drop function if exists public.lead_contact_funnel(integer);
+
+create or replace function public.lead_contact_funnel(p_days integer, p_exclude_hotlist boolean default false)
 returns jsonb
 language sql
 stable
@@ -42,6 +48,7 @@ d as (
   from crm_deals dd
   left join attempts a on a.crm_id = dd.id
   left join contacts c on c.crm_id = dd.id
+  where not (p_exclude_hotlist and dd.source_id in (select id from deal_sources where name ilike 'hot list import'))
 ),
 rng as (
   select * from d where created_at >= now() - make_interval(days => p_days)

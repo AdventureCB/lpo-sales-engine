@@ -137,6 +137,7 @@ const bucketLabel = (key: string, bucket: string) => {
 
 export function AdRoiView() {
   const [days, setDays] = useState(30);
+  const [exclHotlist, setExclHotlist] = useState(true);
   const [showVisitors, setShowVisitors] = useState(false);
   const [data, setData] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -151,11 +152,11 @@ export function AdRoiView() {
 
   useEffect(() => {
     setError(null);
-    fetch(`/api/admin/ad-roi?days=${days}`)
+    fetch(`/api/admin/ad-roi?days=${days}&excludeHotlist=${exclHotlist ? 1 : 0}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then(setData)
       .catch((e) => setError(String(e)));
-  }, [days]);
+  }, [days, exclHotlist]);
 
   useEffect(() => {
     if (!ndStart || !ndEnd || ndStart > ndEnd) return;
@@ -208,7 +209,13 @@ export function AdRoiView() {
         );
         return (
           <>
-            <div className="panel-h" style={{ marginTop: 14 }}>📞 Lead contact funnel</div>
+            <div className="panel-h" style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 12 }}>
+              📞 Lead contact funnel
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 400, color: "var(--text-2)", cursor: "pointer", marginLeft: "auto" }}>
+                <input type="checkbox" checked={exclHotlist} onChange={(e) => setExclHotlist(e.target.checked)} style={{ cursor: "pointer" }} />
+                exclude Hot List Import deals
+              </label>
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 6 }}>
               {card("Contacted / all leads", `${f.total_contacted.toLocaleString()} / ${f.total_leads.toLocaleString()}`, `all-time · ${pct(f.total_contacted, f.total_leads)}`)}
               {card(`New leads attempted (${days}d)`, pct(f.new_attempted, f.new_leads), `${f.new_attempted} of ${f.new_leads} dialed at least once`)}
