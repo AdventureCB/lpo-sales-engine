@@ -265,8 +265,41 @@ function ringDiag(stage: string, extra: Record<string, unknown>) {
 
 function startRinging(kindOverride?: string) {
   if (ring || customAudio) return;
+  if (fallbackAudio && !fallbackAudio.paused) return;
   const kind = kindOverride ?? getRingtoneKind();
-  if (!kindOverride) ringDiag("start", { kind, ctx: ringCtx?.state ?? "none", blessed: !!blessedSrc });
+  if (!kindOverride) {
+    ringDiag("start", { kind, ctx: ringCtx?.state ?? "none", blessed: !!blessedSrc });
+    // REAL rings go media-element FIRST: AVFoundation-backed playback follows
+    // the CURRENT default output device, while a WebAudio context stays
+    // pinned to the device that was default at creation — Logan 9/9: ctx
+    // "running", blessed, and still silent after an audio factory-reset,
+    // yet the element-driven preview was audible. Oscillators remain the
+    // backup (and the preview path).
+    try {
+      if (!fallbackAudio) {
+        fallbackAudio = new Audio(ringSrc());
+        fallbackAudio.loop = true;
+      }
+      fallbackAudio.volume = 0.7;
+      fallbackAudio.currentTime = 0;
+      void fallbackAudio
+        .play()
+        .then(() => ringDiag("element-ok", {}))
+        .catch((e) => {
+          ringDiag("element-err", { err: String(e).slice(0, 120) });
+          startOscRing(kind, false);
+        });
+      return;
+    } catch (e) {
+      ringDiag("element-throw", { err: String(e).slice(0, 120) });
+      // fall through to oscillators
+    }
+  }
+  startOscRing(kind, !!kindOverride);
+}
+
+function startOscRing(kind: string, isPreview: boolean) {
+  if (ring || customAudio) return;
   try {
     if (kind === "custom") {
       let data: string | null = null;
@@ -279,7 +312,7 @@ function startRinging(kindOverride?: string) {
         customAudio.volume = 0.6;
         void customAudio.play().catch(() => {
           customAudio = null;
-          startRinging("classic"); // custom blocked/broken → default tone
+          startOscRing("classic", isPreview); // custom blocked/broken → default tone
         });
         return;
       }
@@ -312,7 +345,7 @@ function startRinging(kindOverride?: string) {
     // Give resume() a beat; if the context still isn't running the
     // oscillators are silent — ring via <audio> instead.
     setTimeout(() => {
-      if (ring && ringCtx && ringCtx.state !== "running") {
+      if (!isPreview && ring && ringCtx && ringCtx.state !== "running") {
         ringDiag("fallback", { ctx: ringCtx.state });
         startFallbackRing();
       }
