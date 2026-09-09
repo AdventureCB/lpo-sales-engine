@@ -57,7 +57,7 @@ fn open_url_window(app: tauri::AppHandle, url: String, label: String) -> Result<
 /// Focus/blur/close are reported to the main window as "tool-focus" events
 /// so the web app can track per-tool engagement time.
 #[tauri::command]
-fn open_tool_window(app: tauri::AppHandle, url: String, label: String, title: String) -> Result<(), String> {
+fn open_tool_window(app: tauri::AppHandle, url: String, label: String, title: String, group: Option<String>) -> Result<(), String> {
     use tauri::Manager;
     let parsed: tauri::Url = url.parse().map_err(|e| format!("bad url: {e}"))?;
     if parsed.scheme() != "https" {
@@ -71,10 +71,24 @@ fn open_tool_window(app: tauri::AppHandle, url: String, label: String, title: St
     }
     let app2 = app.clone();
     app.run_on_main_thread(move || {
-        match tauri::WebviewWindowBuilder::new(&app2, &safe, tauri::WebviewUrl::External(parsed))
+        let mut builder = tauri::WebviewWindowBuilder::new(&app2, &safe, tauri::WebviewUrl::External(parsed))
             .title(&title)
-            .inner_size(1240.0, 860.0)
-            .build()
+            // Real Safari UA: these are WebKit windows, but sites sniff the
+            // default wry UA string and throw "unsupported browser" banners
+            // (Gmail/ClickUp 9/9); Google can even hard-block sign-in.
+            .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15")
+            .inner_size(1240.0, 860.0);
+        // macOS native window tabbing: same identifier → windows merge into
+        // ONE tabbed window (Kyle 9/9: main app + Ops + one tools window =
+        // max 3). Ops passes no group and stays standalone.
+        #[cfg(target_os = "macos")]
+        if let Some(g) = &group {
+            let gid: String = g.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+            builder = builder.tabbing_identifier(&format!("lpo-{gid}"));
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = &group;
+        match builder.build()
         {
             Ok(w) => {
                 use tauri::{Emitter, Manager};

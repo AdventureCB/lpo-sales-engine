@@ -49,7 +49,14 @@ export function ToolsView() {
     const t = (window as any).__TAURI__;
     if (t?.core?.invoke) {
       try {
-        await t.core.invoke("open_tool_window", { url: tool.url, label: tool.key, title: tool.label });
+        // group: on companion ≥0.2.4 all tools except Ops merge into one
+        // native-tabbed window (max 3 windows total); 0.2.3 ignores it.
+        await t.core.invoke("open_tool_window", {
+          url: tool.url,
+          label: tool.key,
+          title: tool.label,
+          group: tool.key === "ops" ? null : "tools",
+        });
         return;
       } catch {
         // Older companion (no open_tool_window) → default browser.
