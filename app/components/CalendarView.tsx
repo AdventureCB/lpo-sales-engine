@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { isAllDayIso, activityDayKey, splitDue, combineDue } from "@/lib/allday";
+import { TimeSelect } from "./TimeSelect";
 import { useRoster } from "./useRoster";
 
 interface CalActivity {
@@ -459,9 +460,9 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
               <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text-3)" }}>Reschedule</div>
               <div style={{ display: "flex", gap: 8 }}>
                 <input type="date" className="vmsel" value={edDate} onChange={(e) => setEdDate(e.target.value)} onInput={(e) => setEdDate((e.target as HTMLInputElement).value)} style={{ flex: 1 }} />
-                <input type="time" className="vmsel" value={edTime} onChange={(e) => setEdTime(e.target.value)} onInput={(e) => setEdTime((e.target as HTMLInputElement).value)} style={{ width: 120 }} />
+                <TimeSelect value={edTime} onChange={setEdTime} allowEmpty style={{ width: 130 }} />
               </div>
-              <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Leave the time blank for an all-day activity.</div>
+              <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Pick &quot;All day&quot; for a no-specific-time activity.</div>
               {!modalAct.done && (
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: !edTime ? "var(--text-3)" : edPriority ? "#d99a2b" : "var(--text-2)", cursor: edTime ? "pointer" : "not-allowed", fontWeight: edPriority ? 700 : 400 }} title={edTime ? "Countdown banner 10 min before + popup at the scheduled time (your reminders only)" : "Set a time first — a countdown needs a clock time"}>
                   <input type="checkbox" checked={edPriority && !!edTime} disabled={!edTime} onChange={(e) => setEdPriority(e.target.checked)} style={{ cursor: edTime ? "pointer" : "not-allowed" }} />

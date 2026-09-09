@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { newOutboundCall, setOutboundHandler } from "./phoneClient";
 import { INTERESTS } from "./interests";
 import { combineDue, timedIso } from "@/lib/allday";
+import { TimeSelect } from "./TimeSelect";
 import { fillPlaceholders } from "@/lib/placeholders";
 import { linkifyPlain, linkifyHtml, htmlToPlain, isHtml } from "@/lib/richtext";
 import { openChat } from "./chatDockStore";
@@ -209,7 +210,6 @@ export function DealDetailView({
   // and the save went all-day (Kyle 9/9). onInput + read-the-DOM-at-save
   // makes what's visible authoritative.
   const schedDateRef = useRef<HTMLInputElement | null>(null);
-  const schedTimeRef = useRef<HTMLInputElement | null>(null);
   const [schedPriority, setSchedPriority] = useState(false); // blank = all-day (no 5pm default)
   const [sprintPick, setSprintPick] = useState("");
   const [titleEdit, setTitleEdit] = useState<string | null>(null);
@@ -913,9 +913,9 @@ export function DealDetailView({
                 />
                 <div style={{ display: "flex", gap: 8 }}>
                   <input ref={schedDateRef} type="date" className="vmsel" value={schedDate} onChange={(e) => setSchedDate(e.target.value)} onInput={(e) => setSchedDate((e.target as HTMLInputElement).value)} style={{ flex: 1 }} />
-                  <input ref={schedTimeRef} type="time" className="vmsel" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} onInput={(e) => setSchedTime((e.target as HTMLInputElement).value)} style={{ width: 120 }} title="Leave blank for all-day" />
+                  <TimeSelect value={schedTime} onChange={setSchedTime} allowEmpty style={{ width: 130 }} />
                 </div>
-                <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: -2 }}>Leave the time blank for an all-day activity.</div>
+                <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: -2 }}>Pick &quot;All day&quot; for a no-specific-time activity.</div>
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: !schedTime ? "var(--text-3)" : schedPriority ? "#d99a2b" : "var(--text-2)", cursor: schedTime ? "pointer" : "not-allowed", fontWeight: schedPriority ? 700 : 400 }} title={schedTime ? "Countdown banner 10 min before + popup at the scheduled time" : "Set a time first — a countdown needs a clock time"}>
                   <input type="checkbox" checked={schedPriority && !!schedTime} disabled={!schedTime} onChange={(e) => setSchedPriority(e.target.checked)} style={{ cursor: schedTime ? "pointer" : "not-allowed" }} />
                   ⭐ Priority — remind me with a countdown{!schedTime ? " (needs a time)" : ""}
@@ -929,7 +929,7 @@ export function DealDetailView({
                         ? orderStageId(/confirmation scheduled/i) ?? orderStageId(/deposit placed/i)
                         : undefined;
                       const dateV = schedDateRef.current?.value || schedDate;
-                      const timeV = schedTimeRef.current?.value || schedTime;
+                      const timeV = schedTime; // dropdown — can't half-commit
                       await update({
                         activity: {
                           type: schedType,
@@ -1076,7 +1076,7 @@ export function DealDetailView({
                     {logNextDays === "custom" && (
                       <>
                         <input type="date" className="vmsel" style={{ width: "auto", fontSize: 12.5, padding: "4px 8px" }} value={logNextCustom} onChange={(e) => setLogNextCustom(e.target.value)} />
-                        <input type="time" className="vmsel" style={{ width: "auto", fontSize: 12.5, padding: "4px 8px" }} value={logNextTime} onChange={(e) => setLogNextTime(e.target.value)} onInput={(e) => setLogNextTime((e.target as HTMLInputElement).value)} title="Blank = all-day" />
+                        <TimeSelect value={logNextTime} onChange={setLogNextTime} allowEmpty style={{ fontSize: 12.5, padding: "4px 8px" }} />
                       </>
                     )}
                     {logNextDays === null && <span style={{ fontSize: 12, color: "var(--text-3)" }}>(none)</span>}

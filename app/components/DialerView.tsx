@@ -6,6 +6,7 @@ import { ensurePhone, getPhoneState, newOutboundCall, setOutboundHandler, subscr
 import type { VmDrop } from "./VmPanel";
 import { DealDetailView, prefetchDeal, fmtWhen, BAND_COLOR, humanize, type AiProfile, type DialerDeal } from "./DealDetailView";
 import { timedIso } from "@/lib/allday";
+import { TimeSelect } from "./TimeSelect";
 import MentionInput from "./MentionInput";
 import { setExtraLock } from "./PageLock";
 
@@ -783,7 +784,8 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const [pendingDispo, setPendingDispo] = useState<string | null>(null);
   const [nextType, setNextType] = useState("call");
   const [dispoNote, setDispoNote] = useState("");
-  const [customDue, setCustomDue] = useState("");
+  const [customDue, setCustomDue] = useState(""); // date part (YYYY-MM-DD)
+  const [customDueTime, setCustomDueTime] = useState(""); // "" = all-day
   const [showCustomDue, setShowCustomDue] = useState(false);
   // "call me back in an hour" flow: same-day time picker + ⭐ priority flag
   // (priority = countdown banner 10min out + due-time popup, see
@@ -1661,14 +1663,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                   {showTodayDue && (
                     <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
                       <span style={{ fontSize: 13.5, color: "var(--text-2)" }}>Today at</span>
-                      <input
-                        type="time"
-                        className="vmsel"
-                        style={{ width: "auto" }}
-                        value={todayTime}
-                        onChange={(e) => setTodayTime(e.target.value)}
-                        onInput={(e) => setTodayTime((e.target as HTMLInputElement).value)}
-                      />
+                      <TimeSelect value={todayTime} onChange={setTodayTime} />
                       {[1, 2, 3].map((h) => (
                         <button
                           key={h}
@@ -1699,19 +1694,26 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                     </div>
                   )}
                   {showCustomDue && (
-                    <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
                       <input
-                        type="datetime-local"
+                        type="date"
                         className="vmsel"
                         style={{ width: "auto" }}
                         value={customDue}
                         onChange={(e) => setCustomDue(e.target.value)}
                       />
+                      <TimeSelect value={customDueTime} onChange={setCustomDueTime} allowEmpty />
                       <button
                         className="btn primary"
                         style={{ padding: "7px 14px", fontSize: 14 }}
                         disabled={!customDue}
-                        onClick={() => completeDispo(timedIso(new Date(customDue)))}
+                        onClick={() =>
+                          completeDispo(
+                            customDueTime
+                              ? timedIso(new Date(`${customDue}T${customDueTime}:00`))
+                              : `${customDue}T00:00:00.000Z`
+                          )
+                        }
                       >
                         Schedule
                       </button>
