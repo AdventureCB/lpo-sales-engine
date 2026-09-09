@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
   const { data, error } = await db
     .from("crm_activities")
     .select(
-      "id, type, subject, due_at, done_at, actor, deal_id, crm_deals ( id, title, owner_pipedrive_id, crm_contacts ( name ) )"
+      "id, type, subject, due_at, done_at, actor, deal_id, meta, crm_deals ( id, title, owner_pipedrive_id, crm_contacts ( name ) )"
     )
     .not("due_at", "is", null)
     .gte("due_at", start)
@@ -50,6 +50,7 @@ export async function GET(req: NextRequest) {
       subject: a.subject,
       dueAt: a.due_at,
       done: Boolean(a.done_at),
+      priority: Boolean(a.meta?.priority),
       actor: a.actor,
       dealId: a.crm_deals?.id ?? null,
       dealTitle: a.crm_deals?.title ?? null,

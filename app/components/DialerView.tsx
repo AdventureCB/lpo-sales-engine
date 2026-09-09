@@ -802,11 +802,13 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setTodayTime("");
   };
 
+  // Quick-date follow-ups are ALL-DAY (00:00Z convention, lib/allday) — a
+  // clock time only exists when the rep picked one (Today…/Custom).
   const followUpAt = (days: number): string => {
     const d = new Date();
     d.setDate(d.getDate() + days);
-    d.setHours(9, 0, 0, 0);
-    return d.toISOString();
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T00:00:00.000Z`;
   };
 
   const completeDispo = (dueAt: string | null) => {

@@ -11,6 +11,7 @@ interface CalActivity {
   subject: string | null;
   dueAt: string;
   done: boolean;
+  priority?: boolean;
   actor: string | null;
   dealId: string | null;
   dealTitle: string | null;
@@ -55,6 +56,7 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
   const [modalAct, setModalAct] = useState<CalActivity | null>(null);
   const [edDate, setEdDate] = useState("");
   const [edTime, setEdTime] = useState("");
+  const [edPriority, setEdPriority] = useState(false);
   // Bulk select — while on, clicking a chip toggles selection instead of
   // opening the modal.
   const [selectMode, setSelectMode] = useState(false);
@@ -87,6 +89,7 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
     const s = splitDue(a.dueAt);
     setEdDate(s.date);
     setEdTime(s.time);
+    setEdPriority(Boolean(a.priority));
     setModalAct(a);
   };
 
@@ -98,7 +101,7 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         id: modalAct.dealId,
-        editActivity: { activityId: modalAct.id, dueAt: combineDue(edDate, edTime) },
+        editActivity: { activityId: modalAct.id, dueAt: combineDue(edDate, edTime), priority: edPriority },
       }),
     }).catch(() => {});
     setSaving(false);
@@ -150,6 +153,15 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
       const list = m.get(k) ?? [];
       list.push(a);
       m.set(k, list);
+    }
+    // Within a day: all-day block first, then timed items in clock order.
+    for (const list of m.values()) {
+      list.sort((a, b) => {
+        const aAll = isAllDayIso(a.dueAt) ? 0 : 1;
+        const bAll = isAllDayIso(b.dueAt) ? 0 : 1;
+        if (aAll !== bAll) return aAll - bAll;
+        return Date.parse(a.dueAt) - Date.parse(b.dueAt);
+      });
     }
     return m;
   }, [shown]);
@@ -212,6 +224,7 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
       }}
     >
       {selectMode && <span style={{ flexShrink: 0 }}>{selected.has(a.id) ? "☑" : "☐"}</span>}
+      {a.priority && !a.done && <span style={{ flexShrink: 0 }} title="Priority">⭐</span>}
       <span style={{ flexShrink: 0 }}>{TYPE_ICON[a.type] ?? "•"}</span>
       <span style={{ color: "var(--text-3)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
         {isAllDayIso(a.dueAt) ? "All day" : fmtTime(a.dueAt)}
@@ -386,12 +399,12 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
 
       {view === "week" && (
         <div className="card" style={{ padding: 10 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
-            {weekDays.map((d) => {
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)" }}>
+            {weekDays.map((d, di) => {
               const k = dayKey(d);
               const items = byDay.get(k) ?? [];
               return (
-                <div key={k} style={{ minWidth: 0 }}>
+                <div key={k} style={{ minWidth: 0, padding: "0 6px", borderLeft: di > 0 ? "1px solid var(--border-soft, #2c2f35)" : "none" }}>
                   <div
                     onClick={() => {
                       setAnchor(d);
@@ -445,6 +458,12 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
                 <input type="time" className="vmsel" value={edTime} onChange={(e) => setEdTime(e.target.value)} style={{ width: 120 }} />
               </div>
               <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Leave the time blank for an all-day activity.</div>
+              {!modalAct.done && (
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: edPriority ? "#d99a2b" : "var(--text-2)", cursor: "pointer", fontWeight: edPriority ? 700 : 400 }} title="Countdown banner 10 min before + popup at the scheduled time (your reminders only)">
+                  <input type="checkbox" checked={edPriority} onChange={(e) => setEdPriority(e.target.checked)} style={{ cursor: "pointer" }} />
+                  ⭐ Priority — remind me with a countdown
+                </label>
+              )}
             </div>
 
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

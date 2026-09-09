@@ -101,11 +101,13 @@ const todayYmd = (): string => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
+// Quick-date follow-ups are ALL-DAY (00:00Z convention, lib/allday) — a
+// clock time only exists when the rep picked one.
 const followUpAt = (days: number): string => {
   const dt = new Date();
   dt.setDate(dt.getDate() + days);
-  dt.setHours(9, 0, 0, 0);
-  return dt.toISOString();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())}T00:00:00.000Z`;
 };
 
 // ── Prefetch cache ─────────────────────────────────────────────────────────
@@ -1059,7 +1061,7 @@ export function DealDetailView({
                     {logNextDays === "custom" && (
                       <>
                         <input type="date" className="vmsel" style={{ width: "auto", fontSize: 12.5, padding: "4px 8px" }} value={logNextCustom} onChange={(e) => setLogNextCustom(e.target.value)} />
-                        <input type="time" className="vmsel" style={{ width: "auto", fontSize: 12.5, padding: "4px 8px" }} value={logNextTime} onChange={(e) => setLogNextTime(e.target.value)} title="Blank = 9:00 AM" />
+                        <input type="time" className="vmsel" style={{ width: "auto", fontSize: 12.5, padding: "4px 8px" }} value={logNextTime} onChange={(e) => setLogNextTime(e.target.value)} title="Blank = all-day" />
                       </>
                     )}
                     {logNextDays === null && <span style={{ fontSize: 12, color: "var(--text-3)" }}>(none)</span>}
@@ -1082,7 +1084,7 @@ export function DealDetailView({
                         const whenIso = logWhen ? new Date(logWhen).toISOString() : new Date().toISOString();
                         const dueAt =
                           logNextDays === "custom"
-                            ? (logNextCustom ? new Date(`${logNextCustom}T${logNextTime || "09:00"}:00`).toISOString() : null)
+                            ? (logNextCustom ? (logNextTime ? new Date(`${logNextCustom}T${logNextTime}:00`).toISOString() : `${logNextCustom}T00:00:00.000Z`) : null)
                             : logNextDays != null
                               ? followUpAt(logNextDays)
                               : null;

@@ -277,7 +277,7 @@ export async function POST(req: NextRequest) {
     truckModel?: string | null;
     interests?: string[];
     completeActivityId?: string;
-    editActivity?: { activityId: string; subject?: string; type?: string; dueAt?: string | null; body?: string | null };
+    editActivity?: { activityId: string; subject?: string; type?: string; dueAt?: string | null; body?: string | null; priority?: boolean };
     deleteActivityId?: string;
     sprint?: { sprintId?: string; name?: string; owner?: string };
   };
@@ -500,6 +500,13 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
     if (!act) return NextResponse.json({ error: "activity not found" }, { status: 404 });
     const patch: Record<string, unknown> = {};
+    if (e.priority !== undefined) {
+      // Merge, never clobber — meta also carries mentions/media.
+      const meta = { ...((act.meta as Record<string, unknown>) ?? {}) };
+      if (e.priority) meta.priority = true;
+      else delete meta.priority;
+      patch.meta = meta;
+    }
     if (e.subject?.trim()) patch.subject = e.subject.trim();
     if (e.type && ["call", "sms", "email", "task", "note", "meeting"].includes(e.type)) patch.type = e.type;
     if (e.dueAt !== undefined) patch.due_at = e.dueAt;
