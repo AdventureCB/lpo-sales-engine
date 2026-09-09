@@ -64,6 +64,34 @@ extern "C" {
     fn CGEventSourceSecondsSinceLastEventType(state: i32, event_type: u32) -> f64;
 }
 
+/// Force a tool window into the shared tab group. tabbing_identifier alone
+/// only makes windows ELIGIBLE — actual tabbing obeys the user's macOS
+/// "Prefer tabs" setting (default: full-screen only → separate windows,
+/// Kyle 9/9). setTabbingMode:preferred + an explicit addTabbedWindow: on
+/// any existing group member makes it deterministic. Main thread only.
+#[cfg(target_os = "macos")]
+fn attach_to_tool_tab_group(app: &tauri::AppHandle, w: &tauri::WebviewWindow, own_label: &str) {
+    use objc::{msg_send, sel, sel_impl};
+    use tauri::Manager;
+    let Ok(new_ns) = w.ns_window() else { return };
+    let new_ns = new_ns as *mut objc::runtime::Object;
+    unsafe {
+        let _: () = msg_send![new_ns, setTabbingMode: 1i64]; // NSWindowTabbingModePreferred
+    }
+    for (label, other) in app.webview_windows() {
+        if label == own_label || label == "tool-ops" || !label.starts_with("tool-") {
+            continue;
+        }
+        if let Ok(ex) = other.ns_window() {
+            let ex = ex as *mut objc::runtime::Object;
+            unsafe {
+                let _: () = msg_send![ex, addTabbedWindow: new_ns ordered: 1i64]; // NSWindowAbove
+            }
+            break;
+        }
+    }
+}
+
 /// Open (or focus) a native window on an EXTERNAL tool (Gorgias, Shopify,
 /// ClickUp, Calendly, a plain browser tab…). A top-level webview ignores
 /// X-Frame-Options — the reason these can't be iframed in the app — and the
@@ -102,10 +130,17 @@ fn open_tool_window(app: tauri::AppHandle, url: String, label: String, title: St
         }
         #[cfg(not(target_os = "macos"))]
         let _ = &group;
+        let grouped = group.is_some();
         match builder.build()
         {
             Ok(w) => {
                 use tauri::{Emitter, Manager};
+                #[cfg(target_os = "macos")]
+                if grouped {
+                    attach_to_tool_tab_group(&app2, &w, &safe);
+                }
+                #[cfg(not(target_os = "macos"))]
+                let _ = grouped;
                 let app3 = app2.clone();
                 let lbl = clean.clone();
                 // Focus telemetry: the main window's web app turns these into
