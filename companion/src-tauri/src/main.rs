@@ -50,6 +50,20 @@ fn open_url_window(app: tauri::AppHandle, url: String, label: String) -> Result<
 
 /// Bring the main window to the front — invoked when a call rings while the
 /// app is minimized or behind other windows.
+// ── Tool idle detection (0.2.4) ────────────────────────────────────────────
+// Which tool window is focused right now (window events keep it current).
+// A background thread reads the SYSTEM input-idle clock; when the rep goes
+// idle ≥2min with a tool focused we emit a synthetic blur (backdated via
+// idleFor) and re-emit focus when they return — so "time in Gorgias" means
+// time actually working in Gorgias, not a focused window over lunch.
+static FOCUSED_TOOL: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGEventSourceSecondsSinceLastEventType(state: i32, event_type: u32) -> f64;
+}
+
 /// Open (or focus) a native window on an EXTERNAL tool (Gorgias, Shopify,
 /// ClickUp, Calendly, a plain browser tab…). A top-level webview ignores
 /// X-Frame-Options — the reason these can't be iframed in the app — and the
@@ -103,6 +117,13 @@ fn open_tool_window(app: tauri::AppHandle, url: String, label: String, title: St
                         _ => None,
                     };
                     if let Some(f) = focused {
+                        if let Ok(mut cur) = FOCUSED_TOOL.lock() {
+                            if f {
+                                *cur = Some(lbl.clone());
+                            } else if cur.as_deref() == Some(lbl.as_str()) {
+                                *cur = None;
+                            }
+                        }
                         if let Some(main) = app3.get_webview_window("main") {
                             let _ = main.emit("tool-focus", serde_json::json!({ "label": lbl, "focused": f }));
                         }
@@ -299,6 +320,37 @@ async fn play_vm(url: String, device: Option<String>) -> Result<(), String> {
 
 fn main() {
     tauri::Builder::default()
+        .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::{Emitter, Manager};
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let mut was_idle = false;
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(10));
+                        let idle = unsafe { CGEventSourceSecondsSinceLastEventType(0, u32::MAX) };
+                        let focused = FOCUSED_TOOL.lock().ok().and_then(|g| g.clone());
+                        let Some(main) = handle.get_webview_window("main") else { continue };
+                        if idle >= 120.0 && !was_idle {
+                            was_idle = true;
+                            if let Some(lbl) = &focused {
+                                let _ = main.emit(
+                                    "tool-focus",
+                                    serde_json::json!({ "label": lbl, "focused": false, "idleFor": idle }),
+                                );
+                            }
+                        } else if was_idle && idle < 5.0 {
+                            was_idle = false;
+                            if let Some(lbl) = &focused {
+                                let _ = main.emit("tool-focus", serde_json::json!({ "label": lbl, "focused": true }));
+                            }
+                        }
+                    }
+                });
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             play_vm,
             list_output_devices,

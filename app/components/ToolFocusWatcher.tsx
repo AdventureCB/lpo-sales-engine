@@ -32,14 +32,16 @@ export function ToolFocusWatcher() {
 
     let unlisten: (() => void) | null = null;
     void t.event
-      .listen("tool-focus", (ev: { payload: { label: string; focused: boolean } }) => {
-        const { label, focused } = ev.payload ?? {};
+      .listen("tool-focus", (ev: { payload: { label: string; focused: boolean; idleFor?: number } }) => {
+        const { label, focused, idleFor } = ev.payload ?? {};
         if (!label) return;
         const now = Date.now();
         if (focused) {
           if (!open.has(label)) open.set(label, now);
         } else {
-          close(label, now);
+          // Idle-triggered blur (companion ≥0.2.4): the rep stopped working
+          // idleFor seconds ago — end the session THERE, not at detection.
+          close(label, idleFor ? now - Math.round(idleFor * 1000) : now);
         }
       })
       .then((u: () => void) => {
