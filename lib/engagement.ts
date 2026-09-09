@@ -32,6 +32,7 @@ export interface RepEngagement {
   // Where the NON-call active time went, by surface (call-covered spans
   // subtracted so this never double-shows talk/dial time).
   surfaces: Record<string, number>;
+  tools: Record<string, number>; // native tool windows (Gorgias/Shopify/…), companion 0.2.3+
   // What they produced: rep-authored records that day.
   actions: { emails: number; texts: number; notes: number; scheduled: number };
   // Dialer micro-timings (dialer_cycle_stats).
@@ -158,6 +159,20 @@ export async function computeEngagement(db: SupabaseClient, dateStr: string): Pr
       .limit(3000),
   ]);
 
+  // Per-tool time from native tool windows (🧰 Tools) — keyed by rep email.
+  const { data: toolRows } = await db
+    .from("tool_sessions")
+    .select("rep_email, tool, duration_s")
+    .in("rep_email", emails.length ? emails : ["-"])
+    .gte("focused_at", startIso)
+    .lt("focused_at", endIso);
+  const toolsByRep = new Map<string, Record<string, number>>();
+  for (const t of toolRows ?? []) {
+    const m = toolsByRep.get(t.rep_email) ?? {};
+    m[t.tool] = (m[t.tool] ?? 0) + (t.duration_s ?? 0);
+    toolsByRep.set(t.rep_email, m);
+  }
+
   const out: RepEngagement[] = [];
   for (const rep of reps ?? []) {
     const segs: Seg[] = [];
@@ -238,6 +253,7 @@ export async function computeEngagement(db: SupabaseClient, dateStr: string): Pr
       repId: rep.id,
       name: rep.name,
       email: rep.email as string,
+      tools: toolsByRep.get(rep.email as string) ?? {},
       dialingS: Math.round(agg.dialing),
       talkingS: Math.round(agg.talking),
       inboundTalkS: Math.round(agg.inboundTalk),

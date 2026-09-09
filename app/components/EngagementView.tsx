@@ -25,6 +25,7 @@ interface RepRow {
   dials: number;
   connects: number;
   surfaces?: Record<string, number>;
+  tools?: Record<string, number>;
   actions?: { emails: number; texts: number; notes: number; scheduled: number };
   cycles?: number;
   avgViewS?: number | null;
@@ -51,6 +52,19 @@ const SURFACES: Record<string, { label: string; color: string }> = {
   "/calendar": { label: "Calendar", color: "#a29782" },
 };
 const surfaceMeta = (surf: string) => SURFACES[surf] ?? { label: surf.replace(/^\//, "") || "other", color: "#9c9285" };
+
+// Native tool windows (🧰 Tools) get their own named slices — never a
+// generic "tools" lump (Kyle 9/9). Fixed colors; unknown tools cycle grey.
+const TOOL_META: Record<string, { label: string; color: string }> = {
+  gorgias: { label: "🎧 Gorgias", color: "#5a8bd6" },
+  shopify: { label: "🛍 Shopify", color: "#7aa85a" },
+  clickup: { label: "✅ ClickUp", color: "#a06bc9" },
+  calendly: { label: "🗓 Calendly", color: "#4cb0a6" },
+  browser: { label: "🌐 Browser", color: "#b0894c" },
+  ops: { label: "🏔 Lone Peak Ops", color: "#c96b6b" },
+};
+const toolMeta = (tool: string) =>
+  TOOL_META[tool] ?? { label: `🧰 ${tool.charAt(0).toUpperCase()}${tool.slice(1)}`, color: "#8a8fa3" };
 
 function sec(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -146,6 +160,12 @@ export function EngagementView() {
                 { key: "between", label: "Between calls", s: r.betweenS, color: COLORS.between },
                 { key: "other", label: "Other work", s: r.otherS, color: COLORS.other },
               ]),
+          ...Object.entries(r.tools ?? {})
+            .sort((a, b) => b[1] - a[1])
+            .map(([tool, s]) => {
+              const m = toolMeta(tool);
+              return { key: `tool:${tool}`, label: m.label, s, color: m.color };
+            }),
           { key: "idle", label: "Idle", s: r.idleS, color: COLORS.idle },
         ];
         const total = stack.reduce((a, x) => a + x.s, 0);
