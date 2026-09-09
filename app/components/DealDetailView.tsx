@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { newOutboundCall, setOutboundHandler } from "./phoneClient";
 import { INTERESTS } from "./interests";
-import { combineDue } from "@/lib/allday";
+import { combineDue, timedIso } from "@/lib/allday";
 import { fillPlaceholders } from "@/lib/placeholders";
 import { linkifyPlain, linkifyHtml, htmlToPlain, isHtml } from "@/lib/richtext";
 import { openChat } from "./chatDockStore";
@@ -204,6 +204,12 @@ export function DealDetailView({
   const [schedSubject, setSchedSubject] = useState("");
   const [schedDate, setSchedDate] = useState("");
   const [schedTime, setSchedTime] = useState("");
+  // WKWebView's segmented time control can skip `change` until every segment
+  // (incl. AM/PM) is committed — state stayed "" while the field LOOKED set
+  // and the save went all-day (Kyle 9/9). onInput + read-the-DOM-at-save
+  // makes what's visible authoritative.
+  const schedDateRef = useRef<HTMLInputElement | null>(null);
+  const schedTimeRef = useRef<HTMLInputElement | null>(null);
   const [schedPriority, setSchedPriority] = useState(false); // blank = all-day (no 5pm default)
   const [sprintPick, setSprintPick] = useState("");
   const [titleEdit, setTitleEdit] = useState<string | null>(null);
@@ -906,8 +912,8 @@ export function DealDetailView({
                   onChange={(e) => setSchedSubject(e.target.value)}
                 />
                 <div style={{ display: "flex", gap: 8 }}>
-                  <input type="date" className="vmsel" value={schedDate} onChange={(e) => setSchedDate(e.target.value)} style={{ flex: 1 }} />
-                  <input type="time" className="vmsel" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} style={{ width: 120 }} title="Leave blank for all-day" />
+                  <input ref={schedDateRef} type="date" className="vmsel" value={schedDate} onChange={(e) => setSchedDate(e.target.value)} onInput={(e) => setSchedDate((e.target as HTMLInputElement).value)} style={{ flex: 1 }} />
+                  <input ref={schedTimeRef} type="time" className="vmsel" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} onInput={(e) => setSchedTime((e.target as HTMLInputElement).value)} style={{ width: 120 }} title="Leave blank for all-day" />
                 </div>
                 <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: -2 }}>Leave the time blank for an all-day activity.</div>
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: !schedTime ? "var(--text-3)" : schedPriority ? "#d99a2b" : "var(--text-2)", cursor: schedTime ? "pointer" : "not-allowed", fontWeight: schedPriority ? 700 : 400 }} title={schedTime ? "Countdown banner 10 min before + popup at the scheduled time" : "Set a time first — a countdown needs a clock time"}>
@@ -922,12 +928,14 @@ export function DealDetailView({
                       const confSched = depositFollow
                         ? orderStageId(/confirmation scheduled/i) ?? orderStageId(/deposit placed/i)
                         : undefined;
+                      const dateV = schedDateRef.current?.value || schedDate;
+                      const timeV = schedTimeRef.current?.value || schedTime;
                       await update({
                         activity: {
                           type: schedType,
                           subject: schedSubject,
-                          dueAt: combineDue(schedDate, schedTime),
-                          ...(schedPriority ? { priority: true } : {}),
+                          dueAt: combineDue(dateV, timeV),
+                          ...(schedPriority && timeV ? { priority: true } : {}),
                         },
                         // Deposit flow: the deposit + its confirmation follow-up
                         // land together — stage moves only now.
@@ -1068,7 +1076,7 @@ export function DealDetailView({
                     {logNextDays === "custom" && (
                       <>
                         <input type="date" className="vmsel" style={{ width: "auto", fontSize: 12.5, padding: "4px 8px" }} value={logNextCustom} onChange={(e) => setLogNextCustom(e.target.value)} />
-                        <input type="time" className="vmsel" style={{ width: "auto", fontSize: 12.5, padding: "4px 8px" }} value={logNextTime} onChange={(e) => setLogNextTime(e.target.value)} title="Blank = all-day" />
+                        <input type="time" className="vmsel" style={{ width: "auto", fontSize: 12.5, padding: "4px 8px" }} value={logNextTime} onChange={(e) => setLogNextTime(e.target.value)} onInput={(e) => setLogNextTime((e.target as HTMLInputElement).value)} title="Blank = all-day" />
                       </>
                     )}
                     {logNextDays === null && <span style={{ fontSize: 12, color: "var(--text-3)" }}>(none)</span>}
@@ -1091,14 +1099,14 @@ export function DealDetailView({
                         const whenIso = logWhen ? new Date(logWhen).toISOString() : new Date().toISOString();
                         let dueAt =
                           logNextDays === "custom"
-                            ? (logNextCustom ? (logNextTime ? new Date(`${logNextCustom}T${logNextTime}:00`).toISOString() : `${logNextCustom}T00:00:00.000Z`) : null)
+                            ? (logNextCustom ? (logNextTime ? timedIso(new Date(`${logNextCustom}T${logNextTime}:00`)) : `${logNextCustom}T00:00:00.000Z`) : null)
                             : logNextDays != null
                               ? followUpAt(logNextDays)
                               : null;
                         // ⭐ needs a clock time — priority + all-day pick → 9:00 AM.
                         if (logNextPriority && dueAt && dueAt.endsWith("T00:00:00.000Z")) {
                           const [y, mo, da] = dueAt.slice(0, 10).split("-").map(Number);
-                          dueAt = new Date(y, mo - 1, da, 9, 0, 0, 0).toISOString();
+                          dueAt = timedIso(new Date(y, mo - 1, da, 9, 0, 0, 0));
                         }
                         const reasonLabel = logDispo === "no_answer" && logNoAnswer ? (logNoAnswer === "ignored" ? "ignored" : "VM full / not set") : null;
                         const logPhone = goodPhones.find((p) => p.primary)?.e164 ?? goodPhones[0]?.e164 ?? goodPhones[0]?.value ?? null;

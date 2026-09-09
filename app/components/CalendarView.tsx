@@ -458,8 +458,8 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
             <div style={{ display: "grid", gap: 8, margin: "14px 0" }}>
               <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text-3)" }}>Reschedule</div>
               <div style={{ display: "flex", gap: 8 }}>
-                <input type="date" className="vmsel" value={edDate} onChange={(e) => setEdDate(e.target.value)} style={{ flex: 1 }} />
-                <input type="time" className="vmsel" value={edTime} onChange={(e) => setEdTime(e.target.value)} style={{ width: 120 }} />
+                <input type="date" className="vmsel" value={edDate} onChange={(e) => setEdDate(e.target.value)} onInput={(e) => setEdDate((e.target as HTMLInputElement).value)} style={{ flex: 1 }} />
+                <input type="time" className="vmsel" value={edTime} onChange={(e) => setEdTime(e.target.value)} onInput={(e) => setEdTime((e.target as HTMLInputElement).value)} style={{ width: 120 }} />
               </div>
               <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Leave the time blank for an all-day activity.</div>
               {!modalAct.done && (

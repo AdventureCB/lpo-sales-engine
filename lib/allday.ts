@@ -35,8 +35,17 @@ export function splitDue(iso: string | null | undefined): { date: string; time: 
   };
 }
 
+/** A TIMED instant that must never read as all-day: 5:00 PM PDT (4:00 PM
+ * PST) is exactly 00:00Z — the all-day sentinel — which silently turned a
+ * rep's chosen time into an all-day entry (Kyle 9/9). Nudge by 30s; every
+ * display shows hours:minutes so it's invisible. */
+export function timedIso(d: Date): string {
+  const iso = d.toISOString();
+  return iso.endsWith("T00:00:00.000Z") ? new Date(d.getTime() + 30_000).toISOString() : iso;
+}
+
 /** Combine a date + optional local time into a stored ISO (empty time = all-day). */
 export function combineDue(date: string, time: string): string | null {
   if (!date) return null;
-  return time ? new Date(`${date}T${time}`).toISOString() : allDayIso(date);
+  return time ? timedIso(new Date(`${date}T${time}`)) : allDayIso(date);
 }

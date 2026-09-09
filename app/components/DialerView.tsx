@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ensurePhone, getPhoneState, newOutboundCall, setOutboundHandler, subscribePhone } from "./phoneClient";
 import type { VmDrop } from "./VmPanel";
 import { DealDetailView, prefetchDeal, fmtWhen, BAND_COLOR, humanize, type AiProfile, type DialerDeal } from "./DealDetailView";
+import { timedIso } from "@/lib/allday";
 import MentionInput from "./MentionInput";
 import { setExtraLock } from "./PageLock";
 
@@ -819,7 +820,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     // 9:00 AM that day instead of all-day (all-day = no countdown possible).
     if (nextPriority && dueAt && dueAt.endsWith("T00:00:00.000Z")) {
       const [y, mo, da] = dueAt.slice(0, 10).split("-").map(Number);
-      dueAt = new Date(y, mo - 1, da, 9, 0, 0, 0).toISOString();
+      dueAt = timedIso(new Date(y, mo - 1, da, 9, 0, 0, 0));
     }
 
     setPendingDispo(null);
@@ -1666,6 +1667,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                         style={{ width: "auto" }}
                         value={todayTime}
                         onChange={(e) => setTodayTime(e.target.value)}
+                        onInput={(e) => setTodayTime((e.target as HTMLInputElement).value)}
                       />
                       {[1, 2, 3].map((h) => (
                         <button
@@ -1689,7 +1691,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                           const d = new Date();
                           d.setHours(h, m, 0, 0);
                           if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1); // past time → tomorrow
-                          completeDispo(d.toISOString());
+                          completeDispo(timedIso(d));
                         }}
                       >
                         Schedule{nextPriority ? " ⭐" : ""}
@@ -1709,7 +1711,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                         className="btn primary"
                         style={{ padding: "7px 14px", fontSize: 14 }}
                         disabled={!customDue}
-                        onClick={() => completeDispo(new Date(customDue).toISOString())}
+                        onClick={() => completeDispo(timedIso(new Date(customDue)))}
                       >
                         Schedule
                       </button>
