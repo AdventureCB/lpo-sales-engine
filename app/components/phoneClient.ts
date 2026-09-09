@@ -1,5 +1,7 @@
 "use client";
 
+import { reportClientError } from "./ErrorReporter";
+
 /**
  * App-wide softphone singleton. Lives at module scope, so the Telnyx
  * connection survives page navigation — inbound calls ring on any page.
@@ -246,13 +248,25 @@ function startFallbackRing() {
     }
     fallbackAudio.volume = 0.7;
     fallbackAudio.currentTime = 0;
-    void fallbackAudio.play().catch(() => {});
+    void fallbackAudio.play().catch((e) => ringDiag("fallback-err", { err: String(e).slice(0, 120) }));
+  } catch (e) {
+    ringDiag("fallback-throw", { err: String(e).slice(0, 120) });
+  }
+}
+
+/** Ring telemetry → client_errors (kind "ring-diag"): shows per machine
+ * whether a ring attempt ran, the audio-context state, and whether the
+ * fallback fired — instead of remote guessing (Logan's silent ring). */
+function ringDiag(stage: string, extra: Record<string, unknown>) {
+  try {
+    reportClientError("ring-diag", `${stage} ${JSON.stringify(extra)} @${new Date().toISOString().slice(11, 19)}`);
   } catch {}
 }
 
 function startRinging(kindOverride?: string) {
   if (ring || customAudio) return;
   const kind = kindOverride ?? getRingtoneKind();
+  if (!kindOverride) ringDiag("start", { kind, ctx: ringCtx?.state ?? "none", blessed: !!blessedSrc });
   try {
     if (kind === "custom") {
       let data: string | null = null;
@@ -298,7 +312,10 @@ function startRinging(kindOverride?: string) {
     // Give resume() a beat; if the context still isn't running the
     // oscillators are silent — ring via <audio> instead.
     setTimeout(() => {
-      if (ring && ringCtx && ringCtx.state !== "running") startFallbackRing();
+      if (ring && ringCtx && ringCtx.state !== "running") {
+        ringDiag("fallback", { ctx: ringCtx.state });
+        startFallbackRing();
+      }
     }, 350);
   } catch {}
 }
@@ -516,6 +533,11 @@ export async function ensurePhone(): Promise<any> {
     });
     let outboundLive = false; // an outbound call the rep is actively on
     c.on("telnyx.notification", (n: any) => {
+      // Superseded instances still receive events until fully dead — without
+      // this guard their INVITE/cancel cycles fired short phantom ring
+      // bursts through the shared audio path ("3 beeps every few minutes",
+      // Cainen 9/9). Same guard as error/socket.close.
+      if (client !== c) return;
       if (n?.type !== "callUpdate" || !n.call) return;
       const call = n.call;
       const s = call.state;
