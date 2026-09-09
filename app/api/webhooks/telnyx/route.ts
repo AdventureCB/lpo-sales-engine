@@ -453,12 +453,18 @@ export async function POST(req: NextRequest) {
       // falls through to the VM timer below and the miss shows in the bell.
       let busy = false;
       if (sipLogin && toN) {
+        // A "live" row must be plausibly live: answered, or dialed within the
+        // last 3 minutes. Dials REJECTED at Telnyx's concurrent-call limit
+        // never get a hangup webhook, so their rows sit open (answered_at
+        // null) and — under the old open-row-within-2h rule — marked the rep
+        // busy for hours: every inbound went straight to VM (Logan, 9/9).
         const { data: live } = await db
           .from("call_events")
           .select("quo_call_id")
           .neq("quo_call_id", `tx:${p.call_session_id}`)
           .is("completed_at", null)
           .gte("started_at", new Date(Date.now() - 2 * 3600_000).toISOString())
+          .or(`answered_at.not.is.null,started_at.gte.${new Date(Date.now() - 3 * 60_000).toISOString()}`)
           .contains("raw", { data: { object: { participants: [toN] } } })
           .limit(1);
         busy = Boolean(live?.length);
