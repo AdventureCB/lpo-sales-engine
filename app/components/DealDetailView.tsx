@@ -1082,12 +1082,17 @@ export function DealDetailView({
                       setLogBusy(true);
                       try {
                         const whenIso = logWhen ? new Date(logWhen).toISOString() : new Date().toISOString();
-                        const dueAt =
+                        let dueAt =
                           logNextDays === "custom"
                             ? (logNextCustom ? (logNextTime ? new Date(`${logNextCustom}T${logNextTime}:00`).toISOString() : `${logNextCustom}T00:00:00.000Z`) : null)
                             : logNextDays != null
                               ? followUpAt(logNextDays)
                               : null;
+                        // ⭐ needs a clock time — priority + all-day pick → 9:00 AM.
+                        if (logNextPriority && dueAt && dueAt.endsWith("T00:00:00.000Z")) {
+                          const [y, mo, da] = dueAt.slice(0, 10).split("-").map(Number);
+                          dueAt = new Date(y, mo - 1, da, 9, 0, 0, 0).toISOString();
+                        }
                         const reasonLabel = logDispo === "no_answer" && logNoAnswer ? (logNoAnswer === "ignored" ? "ignored" : "VM full / not set") : null;
                         const logPhone = goodPhones.find((p) => p.primary)?.e164 ?? goodPhones[0]?.e164 ?? goodPhones[0]?.value ?? null;
 

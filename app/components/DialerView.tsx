@@ -811,9 +811,17 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T00:00:00.000Z`;
   };
 
-  const completeDispo = (dueAt: string | null) => {
+  const completeDispo = (dueAtIn: string | null) => {
+    let dueAt = dueAtIn;
     const dispo = pendingDispo;
     if (!dispo) return;
+    // ⭐ needs a clock time: a quick-date pick with priority checked becomes
+    // 9:00 AM that day instead of all-day (all-day = no countdown possible).
+    if (nextPriority && dueAt && dueAt.endsWith("T00:00:00.000Z")) {
+      const [y, mo, da] = dueAt.slice(0, 10).split("-").map(Number);
+      dueAt = new Date(y, mo - 1, da, 9, 0, 0, 0).toISOString();
+    }
+
     setPendingDispo(null);
     setShowCustomDue(false);
     setCustomDue("");
