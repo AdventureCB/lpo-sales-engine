@@ -33,6 +33,11 @@ const SHORT: Record<string, string> = {
   Discovery: "Discovery",
 };
 const VERDICT_SCORE: Record<Verdict, number> = { hit: 1, partial: 0.5, missed: 0 };
+// The standard (Kyle 9/9): avg score < 3/5 is below standard, AND a rep must
+// keep volume within 60% of the period leader's reviewed-call count — the
+// curve stops "I got my score, I'll stop dialing" sandbagging.
+const STANDARD_AVG = 3.0;
+const VOLUME_CURVE = 0.6;
 const VERDICT_DOT: Record<Verdict, string> = { hit: "var(--good, #3aa76d)", partial: "#d99a2b", missed: "var(--crit, #c9502e)" };
 
 type Period = "day" | "week" | "month";
@@ -164,6 +169,12 @@ function GrowthChart({ series, metric }: { series: { name: string; color: string
   return (
     <div style={{ overflowX: "auto" }}>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", maxWidth: 760, display: "block" }}>
+        {metric === "avg" && (
+          <g>
+            <line x1={PAD.l} x2={W - PAD.r} y1={y(STANDARD_AVG)} y2={y(STANDARD_AVG)} stroke="var(--crit, #c9502e)" strokeWidth={1.2} strokeDasharray="5 4" opacity={0.7} />
+            <text x={W - PAD.r - 2} y={y(STANDARD_AVG) - 4} textAnchor="end" fontSize={9.5} fill="var(--crit, #c9502e)">standard {STANDARD_AVG}</text>
+          </g>
+        )}
         {[0, 0.25, 0.5, 0.75, 1].map((f) => (
           <g key={f}>
             <line x1={PAD.l} x2={W - PAD.r} y1={y(f * max)} y2={y(f * max)} stroke="var(--border-soft, #2c2f35)" strokeWidth={1} />
@@ -212,7 +223,7 @@ function GrowthChart({ series, metric }: { series: { name: string; color: string
 }
 
 export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
-  const [data, setData] = useState<{ reviews: Review[]; patterns: any[]; me: string | null } | null>(null);
+  const [data, setData] = useState<{ reviews: Review[]; patterns: any[]; me: string | null; volume: { rep: string; at: string }[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<Period>("week");
   const [repSel, setRepSel] = useState<string | null>(null); // admin drill-down
@@ -238,6 +249,34 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
     [mine, period] // eslint-disable-line react-hooks/exhaustive-deps
   );
   const patterns = (data?.patterns ?? []).find((p: any) => p.rep === focusRep) ?? (!isAdmin ? (data?.patterns ?? [])[0] : null);
+
+  // Volume curve: reviewed-call counts per rep in the current period, graded
+  // against the leader. volPct = mine/leader; below VOLUME_CURVE = flagged.
+  const volCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const v of data?.volume ?? []) {
+      if (new Date(v.at) >= curStart) counts.set(v.rep, (counts.get(v.rep) ?? 0) + 1);
+    }
+    return counts;
+  }, [data, period]); // eslint-disable-line react-hooks/exhaustive-deps
+  const volLeader = [...volCounts.entries()].sort((a, b) => b[1] - a[1])[0] ?? null;
+  const volFor = (rep: string | null): { count: number; pct: number | null } => {
+    const count = rep ? volCounts.get(rep) ?? 0 : [...volCounts.values()].reduce((a, b) => a + b, 0);
+    if (!rep || !volLeader || volLeader[1] === 0) return { count, pct: null };
+    return { count, pct: (count / volLeader[1]) * 100 };
+  };
+  const standing = (rep: string | null): { ok: boolean; reasons: string[] } | null => {
+    if (!rep) return null;
+    const a = aggregate(all.filter((r) => r.rep === rep && new Date(r.at) >= curStart));
+    const v = volFor(rep);
+    const reasons: string[] = [];
+    if (a.avg != null && a.avg < STANDARD_AVG) reasons.push(`avg ${a.avg.toFixed(1)} < ${STANDARD_AVG}`);
+    if (v.pct != null && v.pct < VOLUME_CURVE * 100 && volLeader && rep !== volLeader[0])
+      reasons.push(`volume ${v.count} vs leader ${volLeader[1]} (${Math.round(v.pct)}% < ${VOLUME_CURVE * 100}%)`);
+    if (a.count === 0 && volLeader && volLeader[1] > 0) reasons.push("no reviewed calls this period");
+    return { ok: reasons.length === 0, reasons };
+  };
+  const myStanding = standing(focusRep);
 
   if (error) return <div className="viewsub">Couldn’t load reviews: {error}</div>;
   if (!data) return <div className="viewsub">Loading…</div>;
@@ -280,6 +319,31 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
         )}
       </div>
 
+      {/* Standing banner */}
+      {myStanding && (
+        <div
+          className="card"
+          style={{
+            padding: "10px 16px",
+            marginBottom: 14,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            border: `1px solid ${myStanding.ok ? "var(--good, #3aa76d)" : "var(--crit, #c9502e)"}`,
+          }}
+        >
+          <span style={{ fontSize: 20 }}>{myStanding.ok ? "✅" : "🚨"}</span>
+          <div>
+            <b style={{ fontSize: 14.5 }}>{myStanding.ok ? "At standard" : "Below standard"}</b>
+            <span style={{ fontSize: 13, color: "var(--text-2)", marginLeft: 8 }}>
+              {myStanding.ok
+                ? `avg ≥ ${STANDARD_AVG}/5 and volume within ${Math.round(VOLUME_CURVE * 100)}% of the leader`
+                : myStanding.reasons.join(" · ")}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* KPI cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 18 }}>
         <div className="card" style={{ padding: "14px 16px" }}>
@@ -287,12 +351,17 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
           <div style={{ fontSize: 28, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{cur.count}</div>
           <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>prev: {prev.count}</div>
         </div>
-        <div className="card" style={{ padding: "14px 16px" }}>
+        <div className="card" style={{ padding: "14px 16px", ...(cur.avg != null && cur.avg < STANDARD_AVG ? { border: "1px solid var(--crit, #c9502e)" } : {}) }}>
           <div style={{ fontSize: 12, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Avg score</div>
-          <div style={{ fontSize: 28, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+          <div style={{ fontSize: 28, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: cur.avg != null && cur.avg < STANDARD_AVG ? "var(--crit, #c9502e)" : undefined }}>
             {cur.avg != null ? cur.avg.toFixed(1) : "—"}<span style={{ fontSize: 15, color: "var(--text-3)" }}> / 5</span>
           </div>
-          <TrendArrow cur={cur.avg} prev={prev.avg} />
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <TrendArrow cur={cur.avg} prev={prev.avg} />
+            {cur.avg != null && cur.avg < STANDARD_AVG && (
+              <span style={{ fontSize: 11.5, color: "var(--crit, #c9502e)", fontWeight: 700 }}>below standard (&lt;{STANDARD_AVG})</span>
+            )}
+          </div>
         </div>
         <div className="card" style={{ padding: "14px 16px" }}>
           <div style={{ fontSize: 12, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Quality calls (≥3.5/5)</div>
@@ -302,6 +371,29 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
           </div>
           <TrendArrow cur={cur.qualityPct} prev={prev.qualityPct} />
         </div>
+        {(() => {
+          const v = volFor(focusRep);
+          const below = v.pct != null && v.pct < VOLUME_CURVE * 100 && !!volLeader && focusRep !== volLeader[0];
+          return (
+            <div className="card" style={{ padding: "14px 16px", ...(below ? { border: "1px solid var(--crit, #c9502e)" } : {}) }}>
+              <div style={{ fontSize: 12, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                {focusRep ? "Volume vs leader" : "Leader volume"}
+              </div>
+              <div style={{ fontSize: 28, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: below ? "var(--crit, #c9502e)" : undefined }}>
+                {focusRep && v.pct != null ? `${Math.round(v.pct)}%` : volLeader ? volLeader[1] : "—"}
+              </div>
+              <div style={{ fontSize: 12.5, color: below ? "var(--crit, #c9502e)" : "var(--text-3)" }}>
+                {focusRep
+                  ? volLeader
+                    ? `${v.count} vs ${volLeader[1]} (${volLeader[0].split(" ")[0]})${below ? ` — below ${Math.round(VOLUME_CURVE * 100)}% curve` : ""}`
+                    : `${v.count} reviewed`
+                  : volLeader
+                    ? `${volLeader[0]} sets this period's curve`
+                    : "no reviews yet"}
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Per-principle breakdown */}
@@ -369,7 +461,9 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
                 <th>Rep</th>
                 <th>Reviews</th>
                 <th>Avg /5</th>
-                <th title="Calls scoring ≥3.5/5 (hit=1, partial=½)">Quality</th>
+                <th>Quality (≥3.5/5)</th>
+                <th title={`Reviewed calls vs the period leader — below ${Math.round(VOLUME_CURVE * 100)}% is below standard`}>Vol %</th>
+                <th>Standing</th>
                 {PRINCIPLES.map((p) => (
                   <th key={p}>{SHORT[p]}</th>
                 ))}
@@ -378,14 +472,22 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
             <tbody>
               {reps.map((rep) => {
                 const a = aggregate(all.filter((r) => r.rep === rep && new Date(r.at) >= curStart));
+                const v = volFor(rep);
+                const st = standing(rep);
                 return (
                   <tr key={rep} style={{ cursor: "pointer" }} onClick={() => setRepSel(rep)} title="Click to drill in">
                     <td style={{ fontWeight: 600 }}>{rep}</td>
                     <td style={{ fontVariantNumeric: "tabular-nums" }}>{a.count}</td>
-                    <td style={{ fontVariantNumeric: "tabular-nums" }}>{a.avg != null ? a.avg.toFixed(1) : "—"}</td>
+                    <td style={{ fontVariantNumeric: "tabular-nums", color: a.avg != null && a.avg < STANDARD_AVG ? "var(--crit, #c9502e)" : undefined, fontWeight: a.avg != null && a.avg < STANDARD_AVG ? 700 : undefined }}>
+                      {a.avg != null ? a.avg.toFixed(1) : "—"}
+                    </td>
                     <td style={{ fontVariantNumeric: "tabular-nums" }}>
                       {a.quality}{a.qualityPct != null ? ` (${Math.round(a.qualityPct)}%)` : ""}
                     </td>
+                    <td style={{ fontVariantNumeric: "tabular-nums", color: v.pct != null && v.pct < VOLUME_CURVE * 100 ? "var(--crit, #c9502e)" : undefined }}>
+                      {v.pct != null ? `${Math.round(v.pct)}%` : "—"}
+                    </td>
+                    <td title={st && !st.ok ? st.reasons.join(" · ") : undefined}>{st ? (st.ok ? "✅" : "🚨") : "—"}</td>
                     {PRINCIPLES.map((p) => (
                       <td key={p} style={{ fontVariantNumeric: "tabular-nums" }}>
                         {a.perPrinciple[p] != null ? `${Math.round(a.perPrinciple[p]! * 100)}%` : "—"}

@@ -30,9 +30,14 @@ export async function GET() {
     if (!repName) return NextResponse.json({ reviews: [], patterns: null, me: null });
     q = q.eq("rep", repName);
   }
-  const [{ data: rows }, { data: patterns }] = await Promise.all([
+  const [{ data: rows }, { data: patterns }, { data: volRows }] = await Promise.all([
     q,
     isAdmin ? db.from("rep_call_patterns").select("*") : db.from("rep_call_patterns").select("*").eq("rep", repName ?? ""),
+    // Everyone gets the whole team's review timestamps (rep + at only) — the
+    // volume curve grades each rep against the period leader's count, so a
+    // rep needs to see where the bar is even though they only see their own
+    // review contents.
+    db.from("call_reviews").select("rep, created_at").gte("created_at", since).not("rep", "is", null).limit(2000),
   ]);
 
   const reviews = (rows ?? []).map((r: any) => ({
@@ -46,5 +51,6 @@ export async function GET() {
     thin: !!r.review?.thin_transcript,
   }));
 
-  return NextResponse.json({ reviews, patterns: patterns ?? [], me: repName, isAdmin });
+  const volume = (volRows ?? []).map((v: any) => ({ rep: v.rep as string, at: v.created_at as string }));
+  return NextResponse.json({ reviews, patterns: patterns ?? [], me: repName, isAdmin, volume });
 }
