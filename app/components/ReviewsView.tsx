@@ -223,7 +223,13 @@ function GrowthChart({ series, metric }: { series: { name: string; color: string
 }
 
 export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
-  const [data, setData] = useState<{ reviews: Review[]; patterns: any[]; me: string | null; volume: { rep: string; at: string }[] } | null>(null);
+  const [data, setData] = useState<{
+    reviews: Review[];
+    patterns: any[];
+    me: string | null;
+    volume: { rep: string; at: string }[];
+    rank: { rep: string; at: string; score: number | null }[];
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<Period>("week");
   const [repSel, setRepSel] = useState<string | null>(null); // admin drill-down
@@ -237,7 +243,10 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
   }, []);
 
   const all = data?.reviews ?? [];
-  const reps = useMemo(() => [...new Set(all.map((r) => r.rep).filter(Boolean))].sort() as string[], [all]);
+  const reps = useMemo(
+    () => [...new Set((data?.rank ?? []).map((r) => r.rep).filter(Boolean))].sort() as string[],
+    [data]
+  );
   const focusRep = isAdmin ? repSel : data?.me ?? null;
   const mine = useMemo(() => (focusRep ? all.filter((r) => r.rep === focusRep) : all), [all, focusRep]);
 
@@ -267,16 +276,66 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
   };
   const standing = (rep: string | null): { ok: boolean; reasons: string[] } | null => {
     if (!rep) return null;
-    const a = aggregate(all.filter((r) => r.rep === rep && new Date(r.at) >= curStart));
+    // Team rank rows (every role gets all reps') — the full review list only
+    // holds the viewer's own reviews for non-admins.
+    const rows = (data?.rank ?? []).filter((r) => r.rep === rep && new Date(r.at) >= curStart);
+    const scored = rows.filter((r) => r.score != null) as { score: number }[];
+    const avg = scored.length ? scored.reduce((a, r) => a + r.score, 0) / scored.length : null;
     const v = volFor(rep);
     const reasons: string[] = [];
-    if (a.avg != null && a.avg < STANDARD_AVG) reasons.push(`avg ${a.avg.toFixed(1)} < ${STANDARD_AVG}`);
+    if (avg != null && avg < STANDARD_AVG) reasons.push(`avg ${avg.toFixed(1)} < ${STANDARD_AVG}`);
     if (v.pct != null && v.pct < VOLUME_CURVE * 100 && volLeader && rep !== volLeader[0])
       reasons.push(`volume ${v.count} vs leader ${volLeader[1]} (${Math.round(v.pct)}% < ${VOLUME_CURVE * 100}%)`);
-    if (a.count === 0 && volLeader && volLeader[1] > 0) reasons.push("no reviewed calls this period");
+    if (rows.length === 0 && volLeader && volLeader[1] > 0) reasons.push("no reviewed calls this period");
     return { ok: reasons.length === 0, reasons };
   };
   const myStanding = standing(focusRep);
+
+  // ── Team leaderboard (public): rank-sum over quality / avg / volume ──────
+  // Each metric ranked separately (competition ranking); final place = lowest
+  // rank total. Two of three metrics are volume-driven, so a shiny average on
+  // a handful of calls can't outrank steady volume (Kyle 9/10).
+  const board = useMemo(() => {
+    const rows = (data?.rank ?? []).filter((r) => new Date(r.at) >= curStart);
+    const byRep = new Map<string, { count: number; quality: number; scoreSum: number; scored: number }>();
+    for (const rep of reps) byRep.set(rep, { count: 0, quality: 0, scoreSum: 0, scored: 0 });
+    for (const r of rows) {
+      const b = byRep.get(r.rep);
+      if (!b) continue;
+      b.count++;
+      if (r.score != null) {
+        b.scored++;
+        b.scoreSum += r.score;
+        if (r.score >= 3.5) b.quality++;
+      }
+    }
+    const entries = [...byRep.entries()].map(([rep, b]) => ({
+      rep,
+      count: b.count,
+      quality: b.quality,
+      avg: b.scored ? b.scoreSum / b.scored : null,
+    }));
+    const rankBy = (val: (e: (typeof entries)[number]) => number) => {
+      const sorted = [...entries].sort((a, b) => val(b) - val(a));
+      const rk = new Map<string, number>();
+      sorted.forEach((e, i) => {
+        // Competition ranking: equal values share the better rank.
+        const prev = sorted[i - 1];
+        rk.set(e.rep, prev && val(prev) === val(e) ? rk.get(prev.rep)! : i + 1);
+      });
+      return rk;
+    };
+    const rQ = rankBy((e) => e.quality);
+    const rA = rankBy((e) => e.avg ?? -1);
+    const rV = rankBy((e) => e.count);
+    const placed = entries
+      .map((e) => ({ ...e, rQ: rQ.get(e.rep)!, rA: rA.get(e.rep)!, rV: rV.get(e.rep)!, total: rQ.get(e.rep)! + rA.get(e.rep)! + rV.get(e.rep)! }))
+      .sort(
+        (a, b) =>
+          a.total - b.total || b.quality - a.quality || (b.avg ?? -1) - (a.avg ?? -1) || b.count - a.count
+      );
+    return placed;
+  }, [data, reps, period]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (error) return <div className="viewsub">Couldn’t load reviews: {error}</div>;
   if (!data) return <div className="viewsub">Loading…</div>;
@@ -451,53 +510,56 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
         />
       </div>
 
-      {/* Admin: group comparison */}
-      {isAdmin && !repSel && reps.length > 0 && (
+      {/* Team leaderboard — visible to every rep */}
+      {board.length > 0 && (
         <div className="card" style={{ padding: "14px 16px", marginBottom: 18, overflowX: "auto" }}>
-          <div className="panel-h" style={{ marginTop: 0 }}>Rep comparison — {PERIOD_LABEL[period].toLowerCase()}</div>
+          <div className="panel-h" style={{ marginTop: 0 }}>🏆 Team ranking — {PERIOD_LABEL[period].toLowerCase()}</div>
           <table className="data" style={{ fontSize: 13.5 }}>
             <thead>
               <tr>
+                <th>Place</th>
                 <th>Rep</th>
-                <th>Reviews</th>
-                <th>Avg /5</th>
-                <th>Quality (≥3.5/5)</th>
-                <th title={`Reviewed calls vs the period leader — below ${Math.round(VOLUME_CURVE * 100)}% is below standard`}>Vol %</th>
+                <th title="Calls scoring ≥3.5/5 — skill">Quality calls</th>
+                <th title="Average score — consistency">Avg /5</th>
+                <th title="Calls reviewed — activity">Reviews</th>
+                <th title="Reviewed calls vs the period leader">Vol %</th>
                 <th>Standing</th>
-                {PRINCIPLES.map((p) => (
-                  <th key={p}>{SHORT[p]}</th>
-                ))}
               </tr>
             </thead>
             <tbody>
-              {reps.map((rep) => {
-                const a = aggregate(all.filter((r) => r.rep === rep && new Date(r.at) >= curStart));
-                const v = volFor(rep);
-                const st = standing(rep);
+              {board.map((e, i) => {
+                const medal = i === 0 ? "🥇 1st" : i === 1 ? "🥈 2nd" : i === 2 ? "🥉 3rd" : `${i + 1}th`;
+                const v = volFor(e.rep);
+                const st = standing(e.rep);
+                const me = e.rep === (data?.me ?? "");
                 return (
-                  <tr key={rep} style={{ cursor: "pointer" }} onClick={() => setRepSel(rep)} title="Click to drill in">
-                    <td style={{ fontWeight: 600 }}>{rep}</td>
-                    <td style={{ fontVariantNumeric: "tabular-nums" }}>{a.count}</td>
-                    <td style={{ fontVariantNumeric: "tabular-nums", color: a.avg != null && a.avg < STANDARD_AVG ? "var(--crit, #c9502e)" : undefined, fontWeight: a.avg != null && a.avg < STANDARD_AVG ? 700 : undefined }}>
-                      {a.avg != null ? a.avg.toFixed(1) : "—"}
+                  <tr
+                    key={e.rep}
+                    style={{ cursor: isAdmin ? "pointer" : "default", background: me ? "var(--accent-soft, rgba(79,124,255,0.08))" : undefined }}
+                    onClick={() => isAdmin && setRepSel(e.rep)}
+                    title={isAdmin ? "Click to drill in" : undefined}
+                  >
+                    <td style={{ fontWeight: 800, whiteSpace: "nowrap" }}>{medal}</td>
+                    <td style={{ fontWeight: me ? 800 : 600 }}>{e.rep}{me ? " (you)" : ""}</td>
+                    <td style={{ fontVariantNumeric: "tabular-nums" }}>{e.quality} <span style={{ color: "var(--text-3)", fontSize: 11.5 }}>#{e.rQ}</span></td>
+                    <td style={{ fontVariantNumeric: "tabular-nums", color: e.avg != null && e.avg < STANDARD_AVG ? "var(--crit, #c9502e)" : undefined }}>
+                      {e.avg != null ? e.avg.toFixed(1) : "—"} <span style={{ color: "var(--text-3)", fontSize: 11.5 }}>#{e.rA}</span>
                     </td>
-                    <td style={{ fontVariantNumeric: "tabular-nums" }}>
-                      {a.quality}{a.qualityPct != null ? ` (${Math.round(a.qualityPct)}%)` : ""}
-                    </td>
+                    <td style={{ fontVariantNumeric: "tabular-nums" }}>{e.count} <span style={{ color: "var(--text-3)", fontSize: 11.5 }}>#{e.rV}</span></td>
                     <td style={{ fontVariantNumeric: "tabular-nums", color: v.pct != null && v.pct < VOLUME_CURVE * 100 ? "var(--crit, #c9502e)" : undefined }}>
                       {v.pct != null ? `${Math.round(v.pct)}%` : "—"}
                     </td>
                     <td title={st && !st.ok ? st.reasons.join(" · ") : undefined}>{st ? (st.ok ? "✅" : "🚨") : "—"}</td>
-                    {PRINCIPLES.map((p) => (
-                      <td key={p} style={{ fontVariantNumeric: "tabular-nums" }}>
-                        {a.perPrinciple[p] != null ? `${Math.round(a.perPrinciple[p]! * 100)}%` : "—"}
-                      </td>
-                    ))}
                   </tr>
                 );
               })}
             </tbody>
           </table>
+          <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 6 }}>
+            Place = best combined ranking across the three columns (#) — quality calls (skill), average score
+            (consistency), and reviews (activity). Two of the three reward volume, so a high average on a few calls
+            won&apos;t outrank steady output. Ties break by quality calls, then average.
+          </div>
         </div>
       )}
 

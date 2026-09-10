@@ -27,9 +27,24 @@ export async function GET() {
     .order("created_at", { ascending: false })
     .limit(1000);
   if (!isAdmin) {
-    if (!repName) return NextResponse.json({ reviews: [], patterns: null, me: null });
+    if (!repName) return NextResponse.json({ reviews: [], patterns: null, me: null, rank: [], volume: [] });
     q = q.eq("rep", repName);
   }
+
+  // Team leaderboard rows for EVERY user: rep + when + computed score only
+  // (peers see each other's numbers, never each other's call contents).
+  const { data: rankRaw } = await db
+    .from("call_reviews")
+    .select("rep, created_at, review")
+    .gte("created_at", since)
+    .not("rep", "is", null)
+    .limit(2000);
+  const VS: Record<string, number> = { hit: 1, partial: 0.5, missed: 0 };
+  const rank = (rankRaw ?? []).map((r: any) => {
+    const sc = (r.review?.scorecard ?? []) as { verdict: string }[];
+    const score = sc.length === 5 ? sc.reduce((a, x) => a + (VS[x.verdict] ?? 0), 0) : null;
+    return { rep: r.rep as string, at: r.created_at as string, score };
+  });
   const [{ data: rows }, { data: patterns }, { data: volRows }] = await Promise.all([
     q,
     isAdmin ? db.from("rep_call_patterns").select("*") : db.from("rep_call_patterns").select("*").eq("rep", repName ?? ""),
@@ -52,5 +67,5 @@ export async function GET() {
   }));
 
   const volume = (volRows ?? []).map((v: any) => ({ rep: v.rep as string, at: v.created_at as string }));
-  return NextResponse.json({ reviews, patterns: patterns ?? [], me: repName, isAdmin, volume });
+  return NextResponse.json({ reviews, patterns: patterns ?? [], me: repName, isAdmin, volume, rank });
 }
