@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { buildSlices, type EngSliceSource } from "./engagementMeta";
 
 /**
  * Scoreboard analytics: dials↔talk scatter (one dot per rep-day), weekly SMS
@@ -156,9 +157,18 @@ function weeklyAverages(
 
 export function ScoreboardAnalytics({ onHover }: { onHover: (tip: Tip) => void }) {
   const [data, setData] = useState<{ dialsTalk: DialsTalkRow[]; smsRate: SmsRateRow[]; leaders: LeaderRow[]; journeyTalk: JourneyTalkRow[] } | null>(null);
+  const [eng, setEng] = useState<{
+    date: string;
+    toolLabels: Record<string, { label: string; emoji: string }>;
+    reps: (EngSliceSource & { name: string; engagedS: number })[];
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    fetch("/api/scoreboard/engagement")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setEng(d))
+      .catch(() => {});
     fetch("/api/scoreboard/analytics")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then(setData)
@@ -425,37 +435,97 @@ export function ScoreboardAnalytics({ onHover }: { onHover: (tip: Tip) => void }
       )}
 
       <div className="card" style={{ marginTop: 18 }}>
-        <h3 style={{ margin: 0 }}>15+ minute contacts</h3>
-        <div className="sub" style={{ marginBottom: 10 }}>
-          Contacts with over 15 minutes of lifetime conversation time · attributed to the rep with the most talk time
+        <h3 style={{ margin: 0 }}>Where the day went</h3>
+        <div className="sub" style={{ marginBottom: 12 }}>
+          Today&apos;s engagement mix per rep — calls, app surfaces, tools, idle. Same data as the admin engagement
+          page, so everyone can see what the top of the leaderboard spends time on.
         </div>
-        {data.leaders.length === 0 && (
-          <div style={{ fontSize: 14, color: "var(--text-3)" }}>No contacts over 15 minutes yet.</div>
-        )}
-        {[...leadersByRep.entries()].map(([rep, rows]) => (
-          <div key={rep} style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-3)", margin: "8px 0 4px" }}>
-              {rep} · {rows.length}
-            </div>
-            {rows.map((l) => (
-              <div className="stmt-row" key={l.peer_phone}>
-                <div style={{ minWidth: 0 }}>
-                  <b style={{ fontSize: 14.5 }}>{l.contact_name?.trim() || l.peer_phone}</b>
-                  {l.contact_name && (
-                    <span style={{ fontSize: 13, color: "var(--text-3)", marginLeft: 8, fontVariantNumeric: "tabular-nums" }}>
-                      {l.peer_phone}
-                    </span>
-                  )}
-                </div>
-                <div style={{ fontSize: 13.5, color: "var(--text-2)", flexShrink: 0, marginLeft: 10, fontVariantNumeric: "tabular-nums" }}>
-                  <b style={{ color: "var(--text-1)" }}>{fmtTalk(l.talk_s)}</b> · {l.calls} call{l.calls === 1 ? "" : "s"} · last{" "}
-                  {new Date(l.last_call).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                </div>
-              </div>
+        {!eng || eng.reps.length === 0 ? (
+          <div style={{ fontSize: 14, color: "var(--text-3)" }}>No activity tracked yet today.</div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 16 }}>
+            {eng.reps.map((r) => (
+              <RepDayPie key={r.name} rep={r} toolLabels={eng.toolLabels} />
             ))}
           </div>
-        ))}
+        )}
       </div>
     </>
+  );
+}
+
+
+function fmtHM(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.round((sec % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+/** One rep's day as a donut: slice construction identical to the admin
+ * engagement bar (shared engagementMeta), top 5 slices + Other (idle always
+ * kept distinct so it can't hide). */
+function RepDayPie({
+  rep,
+  toolLabels,
+}: {
+  rep: EngSliceSource & { name: string; engagedS: number };
+  toolLabels: Record<string, { label: string; emoji: string }>;
+}) {
+  const raw = buildSlices(rep, toolLabels);
+  const idle = raw.filter((x) => x.label === "Idle");
+  const work = raw.filter((x) => x.label !== "Idle").sort((a, b) => b.s - a.s);
+  const top = work.slice(0, 5);
+  const restS = work.slice(5).reduce((a, x) => a + x.s, 0);
+  const slices = [...top, ...(restS > 0 ? [{ label: "Other", s: restS, color: "#9c9285" }] : []), ...idle];
+  const total = slices.reduce((a, x) => a + x.s, 0);
+  if (total === 0) {
+    return (
+      <div style={{ textAlign: "center", color: "var(--text-3)", fontSize: 13 }}>
+        <b style={{ color: "var(--text-2)" }}>{rep.name.split(" ")[0]}</b>
+        <div>no activity yet</div>
+      </div>
+    );
+  }
+  const R = 62;
+  const INNER = 34;
+  const CX = 70;
+  const CY = 70;
+  let angle = -Math.PI / 2;
+  const arcs = slices.map((sl) => {
+    const frac = sl.s / total;
+    const a0 = angle;
+    const a1 = angle + frac * 2 * Math.PI;
+    angle = a1;
+    const large = a1 - a0 > Math.PI ? 1 : 0;
+    const p = (a: number, r: number) => `${(CX + r * Math.cos(a)).toFixed(2)},${(CY + r * Math.sin(a)).toFixed(2)}`;
+    // Donut segment: outer arc → line inward → inner arc back.
+    const d = `M${p(a0, R)} A${R},${R} 0 ${large} 1 ${p(a1, R)} L${p(a1, INNER)} A${INNER},${INNER} 0 ${large} 0 ${p(a0, INNER)} Z`;
+    return { ...sl, d, frac };
+  });
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+      <svg viewBox="0 0 140 140" style={{ width: 140, height: 140 }}>
+        {arcs.map((a, i) => (
+          <path key={i} d={a.d} fill={a.color} stroke="var(--surface-1, #0f1115)" strokeWidth={1.5}>
+            <title>{`${a.label}: ${fmtHM(a.s)} (${Math.round(a.frac * 100)}%)`}</title>
+          </path>
+        ))}
+        <text x={CX} y={CY - 3} textAnchor="middle" fontSize="13" fontWeight="800" fill="var(--text-1, #e7e9ec)">
+          {fmtHM(rep.engagedS)}
+        </text>
+        <text x={CX} y={CY + 12} textAnchor="middle" fontSize="9" fill="var(--text-3, #9aa0a6)">
+          engaged
+        </text>
+      </svg>
+      <b style={{ fontSize: 14, marginTop: 4 }}>{rep.name.split(" ")[0]}</b>
+      <div style={{ fontSize: 11.5, color: "var(--text-2)", marginTop: 4, display: "grid", gap: 2 }}>
+        {slices.slice(0, 4).map((sl, i) => (
+          <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: sl.color, display: "inline-block", flexShrink: 0 }} />
+            {sl.label} · {fmtHM(sl.s)}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
