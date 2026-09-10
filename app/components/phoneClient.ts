@@ -58,6 +58,17 @@ if (typeof window !== "undefined") {
   // calls are no-ops while the context is already running.
   window.addEventListener("pointerdown", primeAudio);
   window.addEventListener("keydown", primeAudio);
+  // Watchdog: ring audio may only exist while a call is ringing. Any leak
+  // path (races, lost events) gets silenced within 5s.
+  setInterval(() => {
+    try {
+      if (!state.incoming && fallbackAudio && !fallbackAudio.paused && !ring && !customAudio) {
+        fallbackAudio.pause();
+        fallbackAudio.currentTime = 0;
+        ringDiag("watchdog-stop", {});
+      }
+    } catch {}
+  }, 5000);
 }
 
 // ── Ring-time attention aids ───────────────────────────────────────────────
@@ -164,6 +175,10 @@ let customAudio: HTMLAudioElement | null = null;
 // blessed element is allowed even with no gesture in sight.
 let fallbackAudio: HTMLAudioElement | null = null;
 let blessedSrc: string | null = null;
+// Ring generation: bumped by every start AND stop. An element .play() that
+// resolves after its generation passed (rep answered before playback began —
+// Jackson 9/10: endless ringback under his calls) pauses itself immediately.
+let ringGen = 0;
 function ringSrc(): string {
   const kind = getRingtoneKind();
   if (kind === "custom") {
@@ -282,12 +297,24 @@ function startRinging(kindOverride?: string) {
       }
       fallbackAudio.volume = 0.7;
       fallbackAudio.currentTime = 0;
+      const gen = ++ringGen;
       void fallbackAudio
         .play()
-        .then(() => ringDiag("element-ok", {}))
+        .then(() => {
+          if (gen !== ringGen) {
+            // Stopped while play was in flight — kill it now.
+            try {
+              fallbackAudio?.pause();
+              if (fallbackAudio) fallbackAudio.currentTime = 0;
+            } catch {}
+            ringDiag("element-late-stop", {});
+            return;
+          }
+          ringDiag("element-ok", {});
+        })
         .catch((e) => {
           ringDiag("element-err", { err: String(e).slice(0, 120) });
-          startOscRing(kind, false);
+          if (gen === ringGen) startOscRing(kind, false);
         });
       return;
     } catch (e) {
@@ -354,6 +381,7 @@ function startOscRing(kind: string, isPreview: boolean) {
 }
 
 function stopRinging() {
+  ringGen++; // invalidate any in-flight element play
   if (customAudio) {
     try {
       customAudio.pause();
