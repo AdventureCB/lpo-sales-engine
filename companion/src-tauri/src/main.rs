@@ -113,8 +113,50 @@ fn open_tool_window(app: tauri::AppHandle, url: String, label: String, title: St
     }
     let app2 = app.clone();
     app.run_on_main_thread(move || {
+        // Browser tool only: persistent floating nav (back/forward/search) —
+        // injected natively into every page the window loads, so it survives
+        // navigation to external sites (Kyle 9/10). Skips our own start page,
+        // which has its own search UI.
+        const BROWSER_NAV: &str = r#"(function(){
+  if (window.top !== window || window.__lpoNavBar) return; window.__lpoNavBar = true;
+  if (/lpo-sales-engine\.vercel\.app$/.test(location.host)) return;
+  var mk = function(){
+    if (!document.body) { setTimeout(mk, 50); return; }
+    var bar = document.createElement('div');
+    bar.style.cssText = 'position:fixed;top:10px;right:10px;z-index:2147483647;display:flex;gap:4px;align-items:center;background:rgba(20,22,26,.94);border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:5px 7px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 4px 20px rgba(0,0,0,.4)';
+    var btn = function(txt, fn, title){
+      var b = document.createElement('button'); b.textContent = txt; b.title = title;
+      b.style.cssText = 'all:unset;cursor:pointer;color:#e7e9ec;font-size:15px;line-height:1;padding:3px 8px;border-radius:6px';
+      b.onmouseenter = function(){ b.style.background = 'rgba(255,255,255,.12)'; };
+      b.onmouseleave = function(){ b.style.background = 'transparent'; };
+      b.onclick = fn; return b;
+    };
+    bar.appendChild(btn('←', function(){ history.back(); }, 'Back'));
+    bar.appendChild(btn('→', function(){ history.forward(); }, 'Forward'));
+    var inp = document.createElement('input');
+    inp.placeholder = 'Search or URL…';
+    inp.style.cssText = 'background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.14);color:#e7e9ec;border-radius:7px;padding:4px 10px;font-size:13px;width:200px;outline:none';
+    inp.addEventListener('keydown', function(e){
+      e.stopPropagation();
+      if (e.key !== 'Enter') return;
+      var v = inp.value.trim(); if (!v) return;
+      var hasScheme = /^[a-z]+:\/\//i.test(v);
+      var urlish = hasScheme || (/^[\w.-]+\.[a-z]{2,}(\/|$|\?)/i.test(v) && v.indexOf(' ') === -1);
+      location.href = urlish ? (hasScheme ? v : 'https://' + v) : 'https://www.google.com/search?q=' + encodeURIComponent(v);
+    }, true);
+    bar.appendChild(inp);
+    bar.appendChild(btn('–', function(){ inp.style.display = inp.style.display === 'none' ? '' : 'none'; }, 'Collapse'));
+    document.body.appendChild(bar);
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mk); else mk();
+})();"#;
+
         let mut builder = tauri::WebviewWindowBuilder::new(&app2, &safe, tauri::WebviewUrl::External(parsed))
-            .title(&title)
+            .title(&title);
+        if clean == "browser" {
+            builder = builder.initialization_script(BROWSER_NAV);
+        }
+        builder = builder
             // Real Safari UA: these are WebKit windows, but sites sniff the
             // default wry UA string and throw "unsupported browser" banners
             // (Gmail/ClickUp 9/9); Google can even hard-block sign-in.
