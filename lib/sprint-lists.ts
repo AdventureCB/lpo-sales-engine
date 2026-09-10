@@ -845,6 +845,58 @@ async function claimReprospect(
     else lockedByOther.add(c.deal_id);
   }
 
+  // ── Post-lease cooldown (Kyle 9/10) ──────────────────────────────────────
+  // A hot-signal deal whose lease expired used to be re-claimed by the NEXT
+  // rep immediately (it still tops the signal ranking) — cycling rep→rep
+  // forever while the rest of the pool starved. A deal whose holder ACTUALLY
+  // attempted contact now rests 14 days after the lease ends; a lease where
+  // the rep never dialed recirculates immediately (their neglect shouldn't
+  // bury the lead).
+  const COOLDOWN_MS = 14 * 86_400_000;
+  const cooldown = new Set<string>();
+  {
+    const nowMs = Date.now();
+    const cutoffIso = new Date(nowMs - COOLDOWN_MS).toISOString();
+    const { data: endedRows } = await db
+      .from("crm_reprospect_checkouts")
+      .select("deal_id, rep_email, checked_out_at, expires_at, released_at")
+      .gt("expires_at", cutoffIso)
+      .limit(2000);
+    const ended = (endedRows ?? [])
+      .map((c) => ({ ...c, endMs: Date.parse(c.released_at ?? c.expires_at) }))
+      .filter((c) => c.endMs <= nowMs && c.endMs > nowMs - COOLDOWN_MS);
+    if (ended.length) {
+      const dealIds = [...new Set(ended.map((c) => c.deal_id))];
+      const { data: repRows } = await db.from("reps").select("id, email").not("email", "is", null);
+      const repIdByEmail = new Map((repRows ?? []).map((r) => [r.email as string, r.id as string]));
+      const attempts: { rep_id: string; crm_deal_id: string | null; started_at: string }[] = [];
+      for (let i = 0; i < dealIds.length; i += 200) {
+        const { data: calls } = await db
+          .from("call_events")
+          .select("rep_id, crm_deal_id, started_at")
+          .in("crm_deal_id", dealIds.slice(i, i + 200))
+          .eq("direction", "outgoing")
+          .gte("started_at", new Date(nowMs - 2 * COOLDOWN_MS).toISOString())
+          .limit(2000);
+        attempts.push(...((calls ?? []) as any[]));
+      }
+      for (const c of ended) {
+        const holderId = repIdByEmail.get(c.rep_email);
+        const startMs = Date.parse(c.checked_out_at ?? c.expires_at) - 0;
+        // Attempt window: the hold itself plus a day of slack (dispositions
+        // can land just after expiry while the list is still open).
+        const attempted = attempts.some(
+          (a) =>
+            a.crm_deal_id === c.deal_id &&
+            a.rep_id === holderId &&
+            Date.parse(a.started_at) >= startMs - 3600_000 &&
+            Date.parse(a.started_at) <= c.endMs + 86_400_000
+        );
+        if (attempted) cooldown.add(c.deal_id);
+      }
+    }
+  }
+
   // Load the whole open pool (paginated) with contacts + emails.
   const confIdsPool = await confirmationStageIds(db);
   let pool = (await fetchAll((f, t) => {
@@ -927,7 +979,7 @@ async function claimReprospect(
   let newSlots = Math.min(Math.max(remaining, 0), subcap) - items.length;
   if (newSlots > 0) {
     const candidates = pool
-      .filter((d) => !mine.has(d.id) && !lockedByOther.has(d.id) && !hammered.has(d.id) && !excluded(d) && primaryPhone(d.crm_contacts?.phones ?? []))
+      .filter((d) => !mine.has(d.id) && !lockedByOther.has(d.id) && !hammered.has(d.id) && !cooldown.has(d.id) && !excluded(d) && primaryPhone(d.crm_contacts?.phones ?? []))
       .sort((a, b) => (signalAt(b) ?? "").localeCompare(signalAt(a) ?? ""));
     const expires = new Date(Date.now() + cfg.checkout_hold_days * 86_400_000).toISOString();
     for (const d of candidates) {
