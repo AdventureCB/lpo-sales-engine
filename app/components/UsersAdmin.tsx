@@ -236,6 +236,134 @@ export function UsersAdmin() {
           )}
         </div>
       ))}
+      <RedistributeDeals />
+    </div>
+  );
+}
+
+/** 🔀 Round-robin a (departed) rep's open deals to chosen eligible reps —
+ * preview first, armed confirm to execute. Every deal gets a timeline entry. */
+function RedistributeDeals() {
+  const [owners, setOwners] = useState<{ id: number; name: string; active: boolean; openDeals: number }[]>([]);
+  const [from, setFrom] = useState<number | "">("");
+  const [targets, setTargets] = useState<Set<number>>(new Set());
+  const [preview, setPreview] = useState<{ total: number; from: string; preview: { name: string; count: number }[] } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [armed2, setArmed2] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const load = () =>
+    fetch("/api/admin/redistribute")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setOwners(d.owners))
+      .catch(() => {});
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const post = async (execute: boolean) => {
+    if (!from || targets.size === 0) return;
+    setBusy(true);
+    setMsg(null);
+    const r = await fetch("/api/admin/redistribute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fromOwnerId: from, toOwnerIds: [...targets], execute }),
+    }).catch(() => null);
+    setBusy(false);
+    if (!r?.ok) {
+      setMsg("Failed — try again");
+      return;
+    }
+    const d = await r.json();
+    if (execute) {
+      setMsg(`✓ Reassigned ${d.updated} of ${d.total} deals — ${d.preview.map((p: any) => `${p.name.split(" ")[0]}: ${p.count}`).join(" · ")}`);
+      setPreview(null);
+      setArmed2(false);
+      setFrom("");
+      setTargets(new Set());
+      void load();
+    } else {
+      setPreview(d);
+      setArmed2(false);
+    }
+  };
+
+  const sourceOptions = owners.filter((o) => o.openDeals > 0);
+  const targetOptions = owners.filter((o) => o.active && o.id !== from);
+
+  return (
+    <div className="card" style={{ marginTop: 22, padding: "16px 18px", maxWidth: 640 }}>
+      <div className="panel-h" style={{ marginTop: 0 }}>🔀 Redistribute a rep&apos;s open deals</div>
+      <div style={{ fontSize: 12.5, color: "var(--text-3)", marginBottom: 10 }}>
+        For departures: evenly round-robins every open deal from one owner to the reps you pick (interleaved by
+        recency, so everyone gets a fair mix). Each deal gets a timeline entry; history keeps the old rep&apos;s name.
+      </div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+        <span style={{ fontSize: 13.5 }}>From</span>
+        <select
+          className="vmsel"
+          style={{ width: "auto" }}
+          value={from === "" ? "" : String(from)}
+          onChange={(e) => {
+            setFrom(e.target.value ? Number(e.target.value) : "");
+            setPreview(null);
+            setTargets(new Set());
+          }}
+        >
+          <option value="">Pick an owner…</option>
+          {sourceOptions.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.name}{o.active ? "" : " (inactive)"} — {o.openDeals.toLocaleString()} open
+            </option>
+          ))}
+        </select>
+        <span style={{ fontSize: 13.5 }}>to</span>
+        {targetOptions.map((o) => (
+          <label key={o.id} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 13.5, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={targets.has(o.id)}
+              onChange={(e) => {
+                setTargets((prev) => {
+                  const next = new Set(prev);
+                  if (e.target.checked) next.add(o.id);
+                  else next.delete(o.id);
+                  return next;
+                });
+                setPreview(null);
+              }}
+              style={{ cursor: "pointer" }}
+            />
+            {o.name.split(" ")[0]}
+          </label>
+        ))}
+      </div>
+      {preview && (
+        <div style={{ fontSize: 13.5, color: "var(--text-2)", marginBottom: 10 }}>
+          {preview.total.toLocaleString()} open deals from <b>{preview.from}</b> →{" "}
+          {preview.preview.map((p) => `${p.name.split(" ")[0]}: ${p.count.toLocaleString()}`).join(" · ")}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="btn" disabled={busy || !from || targets.size === 0} onClick={() => void post(false)}>
+          {busy && !armed2 ? "…" : "Preview split"}
+        </button>
+        {preview && preview.total > 0 && (
+          <button
+            className="btn primary"
+            disabled={busy}
+            style={armed2 ? { background: "var(--crit)", color: "#fff" } : undefined}
+            onClick={() => {
+              if (!armed2) return setArmed2(true);
+              void post(true);
+            }}
+          >
+            {busy ? "Reassigning…" : armed2 ? `Really reassign ${preview.total.toLocaleString()} deals?` : "Execute"}
+          </button>
+        )}
+      </div>
+      {msg && <div style={{ fontSize: 13.5, color: msg.startsWith("✓") ? "var(--good)" : "var(--crit)", marginTop: 8 }}>{msg}</div>}
     </div>
   );
 }
