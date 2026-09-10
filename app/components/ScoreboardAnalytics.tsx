@@ -158,22 +158,40 @@ function weeklyAverages(
 export function ScoreboardAnalytics({ onHover }: { onHover: (tip: Tip) => void }) {
   const [data, setData] = useState<{ dialsTalk: DialsTalkRow[]; smsRate: SmsRateRow[]; leaders: LeaderRow[]; journeyTalk: JourneyTalkRow[] } | null>(null);
   const [eng, setEng] = useState<{
-    date: string;
+    dates: string[];
     toolLabels: Record<string, { label: string; emoji: string }>;
     reps: (EngSliceSource & { name: string; engagedS: number })[];
   } | null>(null);
+  // Timeframe: defaults to YESTERDAY (a complete day) — "today" builds live.
+  const [engTf, setEngTf] = useState<{ kind: "yesterday" | "today" | "week" | "date"; date?: string }>({ kind: "yesterday" });
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/scoreboard/engagement")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => d && setEng(d))
-      .catch(() => {});
     fetch("/api/scoreboard/analytics")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then(setData)
       .catch((e) => setError(String(e)));
   }, []);
+
+  useEffect(() => {
+    const localYmd = (daysAgo: number) => {
+      const d = new Date(Date.now() - daysAgo * 86_400_000);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    };
+    const qs =
+      engTf.kind === "week"
+        ? "?range=week"
+        : engTf.kind === "today"
+          ? `?date=${localYmd(0)}`
+          : engTf.kind === "date" && engTf.date
+            ? `?date=${engTf.date}`
+            : ""; // default = yesterday, server-side
+    setEng(null);
+    fetch(`/api/scoreboard/engagement${qs}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setEng(d))
+      .catch(() => {});
+  }, [engTf]);
 
   if (error) return <div className="viewsub">Couldn’t load analytics: {error}</div>;
   if (!data) return <div className="viewsub">Loading analytics…</div>;
@@ -435,13 +453,38 @@ export function ScoreboardAnalytics({ onHover }: { onHover: (tip: Tip) => void }
       )}
 
       <div className="card" style={{ marginTop: 18 }}>
-        <h3 style={{ margin: 0 }}>Where the day went</h3>
-        <div className="sub" style={{ marginBottom: 12 }}>
-          Today&apos;s engagement mix per rep — calls, app surfaces, tools, idle. Same data as the admin engagement
-          page, so everyone can see what the top of the leaderboard spends time on.
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <h3 style={{ margin: 0 }}>Where the day went</h3>
+          <span style={{ display: "inline-flex", gap: 6, marginLeft: "auto", alignItems: "center" }}>
+            {([["yesterday", "Yesterday"], ["today", "Today"], ["week", "This week"]] as const).map(([k, label]) => (
+              <button
+                key={k}
+                className={`btn ${engTf.kind === k ? "primary" : "ghost"}`}
+                style={{ padding: "4px 12px", fontSize: 12.5 }}
+                onClick={() => setEngTf({ kind: k })}
+              >
+                {label}
+              </button>
+            ))}
+            <input
+              type="date"
+              className="vmsel"
+              style={{ width: "auto", fontSize: 12.5, padding: "4px 8px" }}
+              value={engTf.kind === "date" ? engTf.date ?? "" : ""}
+              onChange={(e) => e.target.value && setEngTf({ kind: "date", date: e.target.value })}
+              title="Pick any past day"
+            />
+          </span>
         </div>
-        {!eng || eng.reps.length === 0 ? (
-          <div style={{ fontSize: 14, color: "var(--text-3)" }}>No activity tracked yet today.</div>
+        <div className="sub" style={{ marginBottom: 12 }}>
+          Engagement mix per rep{eng ? ` · ${eng.dates.length > 1 ? `${eng.dates[0]} → ${eng.dates[eng.dates.length - 1]}` : eng.dates[0]}` : ""} —
+          calls, app surfaces, tools, idle. Same data as the admin engagement page, so everyone can see what the top
+          of the leaderboard spends time on.
+        </div>
+        {!eng ? (
+          <div style={{ fontSize: 14, color: "var(--text-3)" }}>Loading…</div>
+        ) : eng.reps.length === 0 ? (
+          <div style={{ fontSize: 14, color: "var(--text-3)" }}>No activity tracked in this timeframe.</div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 16 }}>
             {eng.reps.map((r) => (
