@@ -27,20 +27,25 @@ export async function GET(req: Request) {
   if ((await monthToDateSpendCents(db)) >= cfg.monthly_budget_cents)
     return NextResponse.json({ skipped: "monthly budget reached" });
 
-  // ── mode=reviews: auto-review every call ≥5min (Kyle 9/9 — reviews are the
-  // leading KPI, so they can't depend on the rep pressing the button). Newest
-  // first; the review cache makes re-entry free; reviewCall re-checks budget.
+  // ── mode=reviews: auto-review calls the rep can be coached on (reviews are
+  // the leading KPI, so they can't depend on the button). Rules (Kyle 9/15):
+  //   • skip anything under 3 min (too short to coach)
+  //   • a call on a LOST deal is skipped unless it ran 10+ min (a long lost
+  //     call still holds lessons; a short one doesn't)
+  // Newest first; the review cache makes re-entry free; reviewCall re-checks budget.
+  const MIN_S = 180; // 3 min floor
+  const LOST_MIN_S = 600; // 10 min floor for lost deals
   if (new URL(req.url).searchParams.get("mode") === "reviews") {
     const started = Date.now();
     const { reviewCall } = await import("@/lib/ai-call-review");
     const { data: calls } = await db
       .from("call_events")
       .select("quo_call_id, crm_deal_id, deal_id, duration_s, transcript:raw->>transcript")
-      .gte("duration_s", 300)
+      .gte("duration_s", MIN_S)
       .gte("started_at", new Date(Date.now() - 14 * 86_400_000).toISOString())
       .not("raw->>transcript", "is", null)
       .order("started_at", { ascending: false })
-      .limit(25);
+      .limit(40);
     const candidates = (calls ?? []).filter((c: any) => String(c.transcript ?? "").length >= 400);
     let reviewed = 0;
     let skipped = 0;
@@ -54,11 +59,21 @@ export async function GET(req: Request) {
       if (existing) continue;
       // Resolve the deal: native uuid first, else the numeric internal id.
       let dealId: string | null = c.crm_deal_id;
-      if (!dealId && c.deal_id) {
-        const { data: d } = await db.from("crm_deals").select("id").eq("pipedrive_deal_id", c.deal_id).maybeSingle();
+      let dealStatus: string | null = null;
+      if (dealId) {
+        const { data: d } = await db.from("crm_deals").select("status").eq("id", dealId).maybeSingle();
+        dealStatus = d?.status ?? null;
+      } else if (c.deal_id) {
+        const { data: d } = await db.from("crm_deals").select("id, status").eq("pipedrive_deal_id", c.deal_id).maybeSingle();
         dealId = d?.id ?? null;
+        dealStatus = d?.status ?? null;
       }
       if (!dealId) continue;
+      // Lost deal → only review a substantial (10+ min) call.
+      if (dealStatus === "lost" && (c.duration_s ?? 0) < LOST_MIN_S) {
+        skipped++;
+        continue;
+      }
       const res = await reviewCall(db, { dealId, quoCallId: c.quo_call_id });
       if (res.ok && !res.cached) reviewed++;
       else if (!res.ok) {
