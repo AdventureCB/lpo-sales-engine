@@ -114,6 +114,7 @@ export async function reviewCall(
   // ── Transcript + call facts (two sources; see header comment) ────────────
   let transcript = "";
   let rep: string | null = null;
+  let durationS: number | null = null;
   const facts: string[] = [];
   if (opts.activityId) {
     const { data: a } = await db
@@ -136,6 +137,7 @@ export async function reviewCall(
       .eq("quo_call_id", opts.quoCallId)
       .maybeSingle();
     if (!c) return { ok: false, reason: "call not found" };
+    durationS = c.duration_s ?? null;
     transcript = String((c as any).transcript ?? "").trim();
     facts.push(c.direction === "incoming" ? "Inbound call" : "Outbound call");
     if (c.duration_s) facts.push(`${Math.floor(c.duration_s / 60)}m ${c.duration_s % 60}s`);
@@ -196,6 +198,19 @@ export async function reviewCall(
     do_differently: Array.isArray(call.input.do_differently) ? call.input.do_differently.filter((d: any) => d && typeof d === "object") : [],
   };
 
+  // Score-eligibility (Kyle 9/15): a review is created either way (rep can see
+  // it), but it only feeds the KPI/leaderboard if the call meets the criteria —
+  // ≥3 min, and if the deal is lost, ≥10 min. Duration-less legacy Quo
+  // summaries (activity path) default to scored.
+  let excluded = false;
+  if (durationS != null) {
+    if (durationS < 180) excluded = true;
+    else if (durationS < 600) {
+      const { data: dstat } = await db.from("crm_deals").select("status").eq("id", opts.dealId).maybeSingle();
+      if (dstat?.status === "lost") excluded = true;
+    }
+  }
+
   const now = new Date().toISOString();
   const row = {
     deal_id: opts.dealId,
@@ -207,11 +222,23 @@ export async function reviewCall(
     transcript_chars: transcript.length,
     model: tier,
     review: normalized,
+    excluded_from_score: excluded,
+    excluded_by: excluded ? "auto" : null,
     updated_at: now,
   };
   // Partial unique indexes can't take PostgREST onConflict — select-then-write.
-  if (existing) await db.from("call_reviews").update(row).eq("id", existing.id);
-  else await db.from("call_reviews").insert(row);
+  if (existing) {
+    // Preserve an admin's manual exclude/include across re-reviews (only 'auto'
+    // decisions get recomputed).
+    const upd = { ...row } as Record<string, unknown>;
+    if (existing.excluded_by && existing.excluded_by !== "auto") {
+      delete upd.excluded_from_score;
+      delete upd.excluded_by;
+    }
+    await db.from("call_reviews").update(upd).eq("id", existing.id);
+  } else {
+    await db.from("call_reviews").insert(row);
+  }
   return { ok: true, review: normalized, reviewedAt: now };
 }
 

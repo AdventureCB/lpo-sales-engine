@@ -22,6 +22,7 @@ interface Review {
   snapshot: string | null;
   scorecard: { principle: string; verdict: Verdict }[];
   thin: boolean;
+  excluded?: boolean;
 }
 
 const PRINCIPLES = ["Guide positioning", "Problem articulation", "Simple plan", "Clear CTA", "Discovery"];
@@ -249,13 +250,14 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
   );
   const focusRep = isAdmin ? repSel : data?.me ?? null;
   const mine = useMemo(() => (focusRep ? all.filter((r) => r.rep === focusRep) : all), [all, focusRep]);
+  const scoredMine = useMemo(() => mine.filter((r) => !r.excluded), [mine]);
 
   const curStart = periodStart(period, 0);
   const prevStart = periodStart(period, 1);
-  const cur = useMemo(() => aggregate(mine.filter((r) => new Date(r.at) >= curStart)), [mine, period]); // eslint-disable-line react-hooks/exhaustive-deps
+  const cur = useMemo(() => aggregate(scoredMine.filter((r) => new Date(r.at) >= curStart)), [scoredMine, period]); // eslint-disable-line react-hooks/exhaustive-deps
   const prev = useMemo(
-    () => aggregate(mine.filter((r) => new Date(r.at) >= prevStart && new Date(r.at) < curStart)),
-    [mine, period] // eslint-disable-line react-hooks/exhaustive-deps
+    () => aggregate(scoredMine.filter((r) => new Date(r.at) >= prevStart && new Date(r.at) < curStart)),
+    [scoredMine, period] // eslint-disable-line react-hooks/exhaustive-deps
   );
   const patterns = (data?.patterns ?? []).find((p: any) => p.rep === focusRep) ?? (!isAdmin ? (data?.patterns ?? [])[0] : null);
 
@@ -341,6 +343,15 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
   if (!data) return <div className="viewsub">Loading…</div>;
 
   const listRows = mine.filter((r) => new Date(r.at) >= curStart);
+
+  const toggleExclude = async (id: string, excluded: boolean) => {
+    setData((d) => (d ? { ...d, reviews: d.reviews.map((x) => (x.id === id ? { ...x, excluded } : x)) } : d));
+    await fetch("/api/reviews/stats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, excluded }),
+    }).catch(() => {});
+  };
 
   return (
     <>
@@ -502,10 +513,10 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
               return reps.map((rep, i) => ({
                 name: rep,
                 color: SERIES_COLORS[i % SERIES_COLORS.length],
-                points: weeklySeries(all.filter((r) => r.rep === rep), weeks),
+                points: weeklySeries(all.filter((r) => r.rep === rep && !r.excluded), weeks),
               }));
             }
-            return [{ name: focusRep ?? "You", color: SERIES_COLORS[0], points: weeklySeries(mine, weeks) }];
+            return [{ name: focusRep ?? "You", color: SERIES_COLORS[0], points: weeklySeries(scoredMine, weeks) }];
           })()}
         />
       </div>
@@ -600,12 +611,13 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
         </div>
         {listRows.length === 0 && <div style={{ color: "var(--text-3)", fontSize: 13.5 }}>None in this period.</div>}
         {listRows.map((r) => (
-          <div key={r.id} style={{ borderTop: "1px solid var(--border-soft, #2c2f35)", padding: "10px 0" }}>
+          <div key={r.id} style={{ borderTop: "1px solid var(--border-soft, #2c2f35)", padding: "10px 0", opacity: r.excluded ? 0.55 : 1 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span style={{ fontSize: 12.5, color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
                 {new Date(r.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
               </span>
               {isAdmin && !focusRep && r.rep && <span style={{ fontSize: 12.5, color: "var(--text-2)" }}>{r.rep}</span>}
+              {r.excluded && <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-3)", border: "1px solid var(--border-soft)", borderRadius: 5, padding: "0 6px" }}>not scored</span>}
               {r.dealId ? (
                 <Link href={`/crm/deal/${r.dealId}`} style={{ fontWeight: 600, fontSize: 14 }}>
                   {r.dealTitle ?? "Open deal"}
@@ -621,6 +633,16 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
               <span style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums", width: 46, textAlign: "right" }}>
                 {r.scorecard.length === 5 ? `${score(r).toFixed(1)}/5` : "—"}
               </span>
+              {isAdmin && (
+                <button
+                  className="btn ghost"
+                  style={{ padding: "2px 9px", fontSize: 11.5 }}
+                  title={r.excluded ? "Count this review toward the score" : "Exclude this review from the score"}
+                  onClick={() => void toggleExclude(r.id, !r.excluded)}
+                >
+                  {r.excluded ? "Include" : "Exclude"}
+                </button>
+              )}
             </div>
             {r.snapshot && <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 4 }}>{r.snapshot}</div>}
             {r.thin && <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>thin transcript — high-level review only</div>}
