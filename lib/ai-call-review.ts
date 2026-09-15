@@ -23,7 +23,17 @@ const SCORECARD_PRINCIPLES = ["Guide positioning", "Problem articulation", "Simp
 // LPO-specific recognition cues so the model scores against OUR prospecting
 // script, not generic StoryBrand (Kyle 9/15: it was missing plans/CTAs that
 // don't look like a textbook close).
-const RUBRIC = `HOW TO SCORE EACH PRINCIPLE (Lone Peak prospecting script):
+const RUBRIC = `CALIBRATION — reward the core move; do NOT demand a perfect textbook run.
+Score a HIT when the rep clearly executed the HEART of a principle, even if they
+could have added more. Optional proofs/enhancements make a hit STRONGER; their
+absence does NOT drop it to partial. Reserve PARTIAL for a genuinely weak or
+half-done attempt at the core move; MISSED for essentially absent. Example: a rep
+who positions as a fellow owner with clear empathy AND authority is a HIT on
+Guide positioning even without a Trailhead mention or a same-truck owner story —
+don't withhold the hit just because another proof element was available. Lean
+slightly generous: when a move clearly landed, call it a hit.
+
+HOW TO SCORE EACH PRINCIPLE (Lone Peak prospecting script):
 
 • Guide positioning — rep positions LPO as fellow overlanders who had the same
   problem and solved it (empathy + authority): "we experienced that too… that's
