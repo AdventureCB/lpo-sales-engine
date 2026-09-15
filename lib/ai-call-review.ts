@@ -254,17 +254,17 @@ export async function reviewCall(
     do_differently: Array.isArray(call.input.do_differently) ? call.input.do_differently.filter((d: any) => d && typeof d === "object") : [],
   };
 
-  // Score-eligibility (Kyle 9/15): a review is created either way (rep can see
-  // it), but it only feeds the KPI/leaderboard if the call meets the criteria —
-  // ≥3 min, and if the deal is lost, ≥10 min. Duration-less legacy Quo
-  // summaries (activity path) default to scored.
+  // Score-eligibility (Kyle 9/15): a review is always created (rep can read it),
+  // but it only feeds the KPI/leaderboard if it qualifies:
+  //   • under 3 min → not scored
+  //   • the deal is LOST → not scored, at ANY length. (A long lost call is
+  //     still worth REVIEWING for coaching — the auto-review cron only bothers
+  //     when it ran 10+ min — but a lost outcome never counts toward the score.)
   let excluded = false;
-  if (durationS != null) {
-    if (durationS < 180) excluded = true;
-    else if (durationS < 600) {
-      const { data: dstat } = await db.from("crm_deals").select("status").eq("id", opts.dealId).maybeSingle();
-      if (dstat?.status === "lost") excluded = true;
-    }
+  if (durationS != null && durationS < 180) excluded = true;
+  if (!excluded) {
+    const { data: dstat } = await db.from("crm_deals").select("status").eq("id", opts.dealId).maybeSingle();
+    if (dstat?.status === "lost") excluded = true;
   }
 
   const now = new Date().toISOString();

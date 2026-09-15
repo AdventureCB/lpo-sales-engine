@@ -84,6 +84,23 @@ export async function GET(req: Request) {
   if (new URL(req.url).searchParams.get("mode") === "reviews") {
     const started = Date.now();
     const { reviewCall } = await import("@/lib/ai-call-review");
+
+    // Sweep: a deal that went LOST after its call was reviewed must stop
+    // scoring (Kyle 9/15). Auto-decisions only — never override an admin's
+    // manual include. Cheap, runs every tick.
+    const { data: nowLost } = await db
+      .from("call_reviews")
+      .select("id, crm_deals!inner(status)")
+      .eq("excluded_from_score", false)
+      .eq("crm_deals.status", "lost")
+      .or("excluded_by.is.null,excluded_by.eq.auto")
+      .limit(300);
+    if (nowLost?.length) {
+      await db
+        .from("call_reviews")
+        .update({ excluded_from_score: true, excluded_by: "auto" })
+        .in("id", nowLost.map((r: any) => r.id));
+    }
     const { data: calls } = await db
       .from("call_events")
       .select("quo_call_id, crm_deal_id, deal_id, duration_s, transcript:raw->>transcript")
