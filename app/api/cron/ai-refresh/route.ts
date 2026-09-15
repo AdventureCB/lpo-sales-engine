@@ -35,6 +35,48 @@ export async function GET(req: Request) {
   // Newest first; the review cache makes re-entry free; reviewCall re-checks budget.
   const MIN_S = 180; // 3 min floor
   const LOST_MIN_S = 600; // 10 min floor for lost deals
+
+  // ── mode=rescore: force re-review this week's SCORED reviews under the
+  // current rubric (one-off after a rubric change). ?before=<iso> — only
+  // reviews last updated before that get re-run, so a driver can loop to done.
+  if (new URL(req.url).searchParams.get("mode") === "rescore") {
+    const started = Date.now();
+    const before = new URL(req.url).searchParams.get("before") ?? new Date().toISOString();
+    const weekStart = new Date(Date.now() - 8 * 86_400_000).toISOString();
+    const { reviewCall } = await import("@/lib/ai-call-review");
+    const { data: revs } = await db
+      .from("call_reviews")
+      .select("deal_id, quo_call_id, activity_id, updated_at")
+      .gte("created_at", weekStart)
+      .eq("excluded_from_score", false)
+      .lt("updated_at", before)
+      .order("updated_at", { ascending: true })
+      .limit(12);
+    let rescored = 0;
+    let failed = 0;
+    for (const r of revs ?? []) {
+      if (Date.now() - started > 45_000) break;
+      const res = await reviewCall(db, {
+        dealId: r.deal_id,
+        quoCallId: r.quo_call_id ?? null,
+        activityId: r.activity_id ?? null,
+        force: true,
+      });
+      if (res.ok) rescored++;
+      else {
+        failed++;
+        if ((res.reason ?? "").includes("budget")) break;
+      }
+    }
+    const { count } = await db
+      .from("call_reviews")
+      .select("id", { count: "exact", head: true })
+      .gte("created_at", weekStart)
+      .eq("excluded_from_score", false)
+      .lt("updated_at", before);
+    return NextResponse.json({ mode: "rescore", rescored, failed, remaining: count ?? 0 });
+  }
+
   if (new URL(req.url).searchParams.get("mode") === "reviews") {
     const started = Date.now();
     const { reviewCall } = await import("@/lib/ai-call-review");
