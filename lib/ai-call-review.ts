@@ -20,6 +20,51 @@ const COMPANY =
 
 const SCORECARD_PRINCIPLES = ["Guide positioning", "Problem articulation", "Simple plan", "Clear CTA", "Discovery"];
 
+// LPO-specific recognition cues so the model scores against OUR prospecting
+// script, not generic StoryBrand (Kyle 9/15: it was missing plans/CTAs that
+// don't look like a textbook close).
+const RUBRIC = `HOW TO SCORE EACH PRINCIPLE (Lone Peak prospecting script):
+
+• Guide positioning — rep positions LPO as fellow overlanders who had the same
+  problem and solved it (empathy + authority): "we experienced that too… that's
+  why we built…", the founder story, the community, or proof (owner photos, an
+  owner on their same truck, a customer story, Trailhead, reviews). hit = clear
+  empathy AND a credible reason to trust; partial = one without the other;
+  missed = pure vendor pitch.
+
+• Problem articulation — rep says the buyer's OWN problem back to them, ideally
+  both halves: the physical cost AND the "you shouldn't have to…" meaning. hit =
+  their actual problem in their words; partial = generic or physical-only;
+  missed = never named.
+
+• Simple plan — rep lays out clear NEXT STEPS. The canonical LPO form is the
+  three-step process: (1) something I will do, (2) something you should do,
+  (3) something we'll do together. But ANY clear step-by-step next-steps counts,
+  in ANY format: numbered "1… 2… 3…", spoken "step one / step two / step
+  three", or plainly sequenced ("first I'll send…, then you…, then we'll…").
+  A named day ("we'll talk Wednesday") strengthens it. hit = a clear multi-step
+  or committed next-step plan; partial = vague ("I'll follow up"); missed = no
+  path forward. Do NOT require the literal word "plan" or numbering.
+
+• Clear CTA — ONE clear ask, appropriate to the buyer's STAGE. It does NOT have
+  to be a purchase. Any of these is a clear CTA: booking the next call/
+  appointment, joining the community app (Trailhead), "can I send you info —
+  email or text?", setting up a demo, building in the 3D builder, saving/
+  starting a build, applying for financing, adding an accessory, or placing a
+  deposit. hit = a specific, answerable ask; partial = soft/implied; missed =
+  no ask at all. A stage-appropriate NON-purchase ask is a hit — do not mark it
+  down for "not closing." (Asking an early-stage prospect for a deposit would be
+  the mistake, not asking them to join the community.)
+
+• Discovery — open questions uncovering motivation, problem, familiarity, and
+  qualification (truck / desire / means). More is better. hit = several genuine
+  open questions with follow-ups; partial = a few; missed = rep talked, barely
+  asked.
+
+The plan (step 9) and the CTA (step 10) OFTEN MERGE on a real call — a booked
+next appointment can satisfy both. Score them independently, but don't mark
+BOTH missed just because they blended into one clean next-step.`;
+
 const REVIEW_TOOL = {
   name: "record_call_review",
   description: "Record the structured coaching review for this call.",
@@ -172,6 +217,7 @@ export async function reviewCall(
       COMPANY,
       `You are a supportive sales-call coach for LPO reps, grounded in StoryBrand: the BUYER is the hero on a quest; the rep is the GUIDE (empathy + authority); articulate the buyer's external problem and what it means to them internally; give a SIMPLE PLAN; land ONE clear call to action; use discovery to fill profile gaps. You review ONE call against what the deal's AI buyer profile knew, and produce specific, actionable coaching — direct but kind, never scolding. Quote the actual call wherever possible.`,
       `Score all five principles: ${SCORECARD_PRINCIPLES.join(" / ")}. "hit" = clearly done well, "partial" = attempted but weak, "missed" = absent when it mattered. A short call (voicemail, quick reschedule) can legitimately miss principles — say so in the note without piling on.`,
+      RUBRIC,
       `REP CORRECTIONS in the profile are human-verified truth. Never mark the rep down for contradicting an AI guess a human corrected.`,
       `FORMATTING (the card renders these): wrap the 1-2 LOAD-BEARING words of a line in **double asterisks**; wrap anything spoken (by customer OR the suggested rep line) in *single asterisks*. Never bold whole sentences.`,
       `If the transcript reads as a brief summary rather than a real transcript (common until our phone-system port completes), set thin_transcript=true, keep feedback high-level, and NEVER invent specific quotes.`,
