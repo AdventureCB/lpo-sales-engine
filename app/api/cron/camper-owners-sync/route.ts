@@ -18,6 +18,7 @@ const ORDERS_QUERY = `query($cursor: String, $q: String) {
     edges { cursor node {
       name createdAt
       customer { id firstName lastName email phone }
+      billingAddress { city provinceCode zip }
       shippingAddress { city provinceCode zip }
       lineItems(first: 25) { edges { node { sku title quantity } } }
     } }
@@ -108,7 +109,8 @@ async function upsertOwner(db: any, o: any, version: CamperVersion, items: any[]
   const email = (cust.email ?? "").trim().toLowerCase() || null;
   const key = cust.id ? String(cust.id) : email;
   if (!key) return false;
-  const addr = o.shippingAddress ?? {};
+  // Owner location = BILLING (customer's home); shipping is the installer.
+  const addr = o.billingAddress ?? o.shippingAddress ?? {};
   const zip = zip5(addr.zip);
   const coords = zipCoords(zip);
   const name = [cust.firstName, cust.lastName].filter(Boolean).join(" ").trim() || email || "Unknown";
@@ -125,7 +127,7 @@ async function upsertOwner(db: any, o: any, version: CamperVersion, items: any[]
     contactId = c?.id ?? null;
   }
 
-  const { data: existing } = await db.from("camper_owners").select("id, version, camper_order_at").eq("owner_key", key).maybeSingle();
+  const { data: existing } = await db.from("camper_owners").select("id, version, camper_order_at, address_manual").eq("owner_key", key).maybeSingle();
   const mergedVersion =
     existing?.version === "both"
       ? "both"
@@ -133,6 +135,7 @@ async function upsertOwner(db: any, o: any, version: CamperVersion, items: any[]
         ? "both"
         : version;
   const keepThisOrder = !existing?.camper_order_at || Date.parse(orderAt) >= Date.parse(existing.camper_order_at);
+  const keepAddress = keepThisOrder && !existing?.address_manual; // never clobber a manual fix
 
   const row: Record<string, unknown> = {
     owner_key: key,
@@ -146,14 +149,18 @@ async function upsertOwner(db: any, o: any, version: CamperVersion, items: any[]
   };
   if (keepThisOrder) {
     Object.assign(row, {
+      camper_order_name: o.name ?? null,
+      camper_order_at: orderAt,
+      order_line_items: items.map((it) => ({ sku: it.sku, title: it.title, qty: it.quantity })),
+    });
+  }
+  if (keepAddress) {
+    Object.assign(row, {
       city: addr.city ?? null,
       state: addr.provinceCode ?? null,
       zip,
       lat: coords?.[0] ?? null,
       lng: coords?.[1] ?? null,
-      camper_order_name: o.name ?? null,
-      camper_order_at: orderAt,
-      order_line_items: items.map((it) => ({ sku: it.sku, title: it.title, qty: it.quantity })),
     });
   }
   const { error } = await db.from("camper_owners").upsert(row, { onConflict: "owner_key" });

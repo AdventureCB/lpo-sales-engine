@@ -17,6 +17,7 @@ interface Owner {
   phone: string | null;
   city: string | null;
   state: string | null;
+  zip: string | null;
   miles: number;
   version: "v1" | "v2" | "both";
   willing: boolean;
@@ -25,6 +26,14 @@ interface Owner {
   items: { sku: string | null; title: string | null; qty: number }[];
   contactId: string | null;
   shopifyUrl: string | null;
+}
+
+function miles(a: [number, number], b: [number, number]): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const R = 3958.8;
+  const dLat = toRad(b[0] - a[0]), dLng = toRad(b[1] - a[1]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.sin(dLng / 2) ** 2;
+  return Math.round(2 * R * Math.asin(Math.sqrt(h)));
 }
 
 const VERSION_BADGE: Record<string, { label: string; color: string }> = {
@@ -39,6 +48,7 @@ export function DemoFinderView() {
   const [version, setVersion] = useState<"all" | "v1" | "v2">("all");
   const [willingOnly, setWillingOnly] = useState(false);
   const [owners, setOwners] = useState<Owner[] | null>(null);
+  const [origin, setOrigin] = useState<[number, number] | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -61,6 +71,7 @@ export function DemoFinderView() {
       return;
     }
     const d = await r.json();
+    setOrigin(d.origin ? [d.origin.lat, d.origin.lng] : null);
     setOwners(d.owners);
   };
 
@@ -105,18 +116,43 @@ export function DemoFinderView() {
       )}
 
       <div style={{ display: "grid", gap: 10 }}>
-        {owners?.map((o) => <OwnerCard key={o.id} owner={o} />)}
+        {owners?.map((o) => (
+          <OwnerCard
+            key={o.id}
+            owner={o}
+            origin={origin}
+            onAddr={(city, state, zip, m) =>
+              setOwners((prev) =>
+                (prev ?? [])
+                  .map((x) => (x.id === o.id ? { ...x, city, state, zip, miles: m ?? x.miles } : x))
+                  .sort((a, b) => a.miles - b.miles)
+              )
+            }
+          />
+        ))}
       </div>
     </>
   );
 }
 
-function OwnerCard({ owner }: { owner: Owner }) {
+function OwnerCard({
+  owner,
+  origin,
+  onAddr,
+}: {
+  owner: Owner;
+  origin: [number, number] | null;
+  onAddr: (city: string, state: string, zip: string, m: number | null) => void;
+}) {
   const [willing, setWilling] = useState(owner.willing);
   const [open, setOpen] = useState(false);
   const [texting, setTexting] = useState(false);
   const [msg, setMsg] = useState("");
   const [note, setNote] = useState<string | null>(null);
+  const [editAddr, setEditAddr] = useState(false);
+  const [aCity, setACity] = useState(owner.city ?? "");
+  const [aState, setAState] = useState(owner.state ?? "");
+  const [aZip, setAZip] = useState(owner.zip ?? "");
   const badge = VERSION_BADGE[owner.version] ?? VERSION_BADGE.v1;
 
   const toggleWilling = async () => {
@@ -143,6 +179,22 @@ function OwnerCard({ owner }: { owner: Owner }) {
     setTimeout(() => setNote(null), 4000);
   };
 
+  const saveAddr = async () => {
+    if (!/\d{5}/.test(aZip)) { setNote("Enter a 5-digit zip"); return; }
+    const r = await fetch("/api/crm/demo-finder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: owner.id, op: "address", city: aCity, state: aState, zip: aZip }),
+    }).catch(() => null);
+    if (!r?.ok) { setNote("Address update failed"); return; }
+    const d = await r.json();
+    const m = origin && d.lat != null ? miles(origin, [d.lat, d.lng]) : null;
+    onAddr(aCity.trim(), aState.trim().toUpperCase().slice(0, 2), d.zip, m);
+    setEditAddr(false);
+    setNote("✓ Address updated" + (m != null ? ` — ${m} mi` : ""));
+    setTimeout(() => setNote(null), 4000);
+  };
+
   return (
     <div className="card" style={{ padding: "12px 14px", border: willing ? "1px solid var(--good, #3aa76d)" : undefined }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -156,6 +208,9 @@ function OwnerCard({ owner }: { owner: Owner }) {
           {owner.phone && <button className="btn ghost" style={{ padding: "4px 10px", fontSize: 13 }} onClick={call}>📞 Call</button>}
           {owner.phone && <button className="btn ghost" style={{ padding: "4px 10px", fontSize: 13 }} onClick={() => setTexting((v) => !v)}>💬 Text</button>}
           {owner.shopifyUrl && <a href={owner.shopifyUrl} target="_blank" rel="noreferrer" className="btn ghost" style={{ padding: "4px 10px", fontSize: 13 }}>🛍 Shopify →</a>}
+          <button className="btn ghost" style={{ padding: "4px 10px", fontSize: 13 }} onClick={() => setEditAddr((v) => !v)} title="Customer moved? Update their location">
+            ✎ Address
+          </button>
           <button className="btn ghost" style={{ padding: "4px 10px", fontSize: 13 }} onClick={() => setOpen((v) => !v)}>
             {open ? "Hide order" : "View order"}
           </button>
@@ -184,6 +239,16 @@ function OwnerCard({ owner }: { owner: Owner }) {
             autoFocus
           />
           <button className="btn primary" style={{ padding: "6px 14px" }} onClick={() => void sendText()} disabled={!msg.trim()}>Send</button>
+        </div>
+      )}
+      {editAddr && (
+        <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input className="vmsel" style={{ width: 160 }} placeholder="City" value={aCity} onChange={(e) => setACity(e.target.value)} />
+          <input className="vmsel" style={{ width: 60 }} placeholder="ST" value={aState} onChange={(e) => setAState(e.target.value)} maxLength={2} />
+          <input className="vmsel" style={{ width: 90 }} placeholder="Zip" value={aZip} onChange={(e) => setAZip(e.target.value)} inputMode="numeric" />
+          <button className="btn primary" style={{ padding: "6px 12px", fontSize: 13 }} onClick={() => void saveAddr()}>Save</button>
+          <button className="btn ghost" style={{ padding: "6px 10px", fontSize: 13 }} onClick={() => setEditAddr(false)}>Cancel</button>
+          <span style={{ fontSize: 11.5, color: "var(--text-3)" }}>Billing address by default; override if they moved.</span>
         </div>
       )}
       {note && <div style={{ fontSize: 12.5, color: "var(--good)", marginTop: 4 }}>{note}</div>}

@@ -73,19 +73,42 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  let body: { id?: string; willing?: boolean; note?: string };
+  let body: { id?: string; op?: string; willing?: boolean; note?: string; city?: string; state?: string; zip?: string };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
   if (!body.id) return NextResponse.json({ error: "id required" }, { status: 400 });
+  const db = supabaseAdmin();
+
+  // Manual address correction (customer moved) — re-geocode, and mark it
+  // manual so the sync never overwrites it with the billing address again.
+  if (body.op === "address") {
+    const z = zip5(body.zip);
+    if (!z) return NextResponse.json({ error: "a valid US zip is required" }, { status: 400 });
+    const coords = zipCoords(z);
+    if (!coords) return NextResponse.json({ error: `unknown zip ${z}` }, { status: 400 });
+    const { error } = await db
+      .from("camper_owners")
+      .update({
+        city: body.city?.trim() || null,
+        state: (body.state ?? "").trim().toUpperCase().slice(0, 2) || null,
+        zip: z,
+        lat: coords[0],
+        lng: coords[1],
+        address_manual: true,
+      })
+      .eq("id", body.id);
+    return NextResponse.json({ ok: !error, lat: coords[0], lng: coords[1], zip: z });
+  }
+
   const patch: Record<string, unknown> = {
     willing_to_demo: !!body.willing,
     willing_at: body.willing ? new Date().toISOString() : null,
     willing_by: body.willing ? user.email : null,
   };
   if (typeof body.note === "string") patch.notes = body.note.slice(0, 500);
-  const { error } = await supabaseAdmin().from("camper_owners").update(patch).eq("id", body.id);
+  const { error } = await db.from("camper_owners").update(patch).eq("id", body.id);
   return NextResponse.json({ ok: !error });
 }
