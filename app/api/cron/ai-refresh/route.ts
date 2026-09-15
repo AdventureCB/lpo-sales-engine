@@ -42,7 +42,11 @@ export async function GET(req: Request) {
   if (new URL(req.url).searchParams.get("mode") === "rescore") {
     const started = Date.now();
     const before = new URL(req.url).searchParams.get("before") ?? new Date().toISOString();
-    const weekStart = new Date(Date.now() - 8 * 86_400_000).toISOString();
+    // Monday 00:00 UTC of the current week ("this week").
+    const nowD = new Date();
+    const dow = (nowD.getUTCDay() + 6) % 7; // 0 = Monday
+    const weekStartD = new Date(Date.UTC(nowD.getUTCFullYear(), nowD.getUTCMonth(), nowD.getUTCDate() - dow));
+    const weekStart = weekStartD.toISOString();
     const { reviewCall } = await import("@/lib/ai-call-review");
     const { data: revs } = await db
       .from("call_reviews")
@@ -50,7 +54,7 @@ export async function GET(req: Request) {
       .gte("created_at", weekStart)
       .eq("excluded_from_score", false)
       .lt("updated_at", before)
-      .order("updated_at", { ascending: true })
+      .order("created_at", { ascending: false })
       .limit(12);
     let rescored = 0;
     let failed = 0;
