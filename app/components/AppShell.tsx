@@ -38,6 +38,7 @@ const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[]
       { label: "Scoreboard", href: "/scoreboard" },
       { label: "⚖️ Reviews", href: "/reviews" },
       { label: "Lookup", href: "/lookup" },
+      { label: "🏕 Demo Finder", href: "/demo-finder" },
       { label: "🧰 Tools", href: "/tools" },
     ],
   },
