@@ -418,6 +418,37 @@ export function previewRingtone(kind: string) {
   setTimeout(stopRinging, 2600);
 }
 
+// ── Remote call audio (rep hears the customer) ──────────────────────────────
+// Occasional one-way silence: the customer heard the rep but the rep heard
+// nothing (Kyle 9/15). The Telnyx SDK attaches the remote stream to the
+// <audio id="telnyx-audio"> element, but WKWebView can leave it PAUSED
+// (autoplay not unlocked at that instant) or routed to a stale output device.
+// On every call becoming active we force it: unmute, full volume, reset the
+// sink to the system default, and .play() — then log what we found.
+function ensureRemoteAudio(): void {
+  try {
+    const el = document.getElementById("telnyx-audio") as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null;
+    if (!el) {
+      ringDiag("rx-noelem", {});
+      return;
+    }
+    el.muted = false;
+    el.volume = 1;
+    if (typeof el.setSinkId === "function") {
+      void el.setSinkId("").catch(() => {}); // "" = system default output
+    }
+    const kick = () => {
+      ringDiag("rx", { paused: el.paused, hasStream: !!el.srcObject, ready: el.readyState });
+      void el.play().catch((e) => ringDiag("rx-playerr", { err: String(e).slice(0, 100) }));
+    };
+    kick();
+    // The SDK may attach the stream a beat after the state event — retry once.
+    setTimeout(kick, 600);
+  } catch (e) {
+    ringDiag("rx-throw", { err: String(e).slice(0, 100) });
+  }
+}
+
 const emit = () => subs.forEach((f) => f());
 
 export function subscribePhone(cb: () => void): () => void {
@@ -620,6 +651,7 @@ export async function ensurePhone(): Promise<any> {
           stopRinging();
           clearRingBroadcast();
           stopTitleFlash();
+          ensureRemoteAudio();
         } else if (s === "hangup" || s === "destroy") {
           state.incoming = null;
           // An inbound leg dying must NOT reset the phase while an outbound
@@ -638,6 +670,7 @@ export async function ensurePhone(): Promise<any> {
       if (s === "active") {
         state.callPhase = "talking";
         outboundLive = true;
+        ensureRemoteAudio();
       } else if (s === "hangup" || s === "destroy") {
         state.callPhase = "none";
         outboundLive = false;
