@@ -161,7 +161,12 @@ fn open_tool_window(app: tauri::AppHandle, url: String, label: String, title: St
             // default wry UA string and throw "unsupported browser" banners
             // (Gmail/ClickUp 9/9); Google can even hard-block sign-in.
             .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15")
-            .inner_size(1240.0, 860.0);
+            .inner_size(1240.0, 860.0)
+            // Allow window.open / target=_blank popups. Without a handler
+            // Tauri DENIES them, so tool buttons that open a doc/payment/OAuth
+            // popup did nothing (Ops + others, Kyle 9/15). Allow = open with
+            // the default implementation (real interactive window).
+            .on_new_window(|_url, _features| tauri::webview::NewWindowResponse::Allow);
         // macOS native window tabbing: same identifier → windows merge into
         // ONE tabbed window (Kyle 9/9: main app + Ops + one tools window =
         // max 3). Ops passes no group and stays standalone.
