@@ -105,6 +105,75 @@ function fmtDialed(digits: string) {
   return `(${n.slice(0, 3)}) ${n.slice(3, 6)}-${n.slice(6, 10)}`;
 }
 
+/** Editable contact NAME in the lead card (contact rename op). */
+function LeadName({ deal, name, onSaved }: { deal: DialerDeal; name: string; onSaved: (n: string) => void }) {
+  const [edit, setEdit] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    const v = (edit ?? "").trim();
+    setEdit(null);
+    if (!v || v === name || !deal.contact) return;
+    setBusy(true);
+    const [first, ...rest] = v.split(/\s+/);
+    await fetch("/api/crm/contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contactId: deal.contact.id, op: "rename", firstName: first, lastName: rest.join(" ") }),
+    }).catch(() => null);
+    await deal.refresh();
+    onSaved(v);
+    setBusy(false);
+  };
+  if (edit !== null) {
+    return (
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <input className="vmsel" autoFocus style={{ fontSize: 18, fontWeight: 700, width: 260 }} value={edit} disabled={busy}
+          onChange={(e) => setEdit(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") void save(); if (e.key === "Escape") setEdit(null); }} />
+        <button className="btn primary" style={{ padding: "3px 10px", fontSize: 12.5 }} disabled={busy} onClick={() => void save()}>Save</button>
+        <button className="btn ghost" style={{ padding: "3px 8px", fontSize: 12.5 }} disabled={busy} onClick={() => setEdit(null)}>✕</button>
+      </div>
+    );
+  }
+  return (
+    <div className="lead-name" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+      {name || <span style={{ color: "var(--text-3)" }}>Add name</span>}
+      {deal.contact && (
+        <button className="btn ghost" style={{ padding: "0 7px", fontSize: 12 }} title="Edit name" onClick={() => setEdit(name)}>✎</button>
+      )}
+    </div>
+  );
+}
+
+/** Editable DEAL TITLE in the lead card (deal rename). */
+function LeadTitle({ deal, title, onSaved }: { deal: DialerDeal; title: string; onSaved: (t: string) => void }) {
+  const [edit, setEdit] = useState<string | null>(null);
+  const save = async () => {
+    const v = (edit ?? "").trim();
+    setEdit(null);
+    if (!v || v === title) return;
+    await deal.update({ title: v });
+    onSaved(v);
+  };
+  if (edit !== null) {
+    return (
+      <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+        <input className="vmsel" autoFocus style={{ fontSize: 13.5, width: 240, padding: "2px 8px" }} value={edit}
+          onChange={(e) => setEdit(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") void save(); if (e.key === "Escape") setEdit(null); }} />
+        <button className="btn primary" style={{ padding: "2px 9px", fontSize: 12 }} onClick={() => void save()}>Save</button>
+        <button className="btn ghost" style={{ padding: "2px 7px", fontSize: 12 }} onClick={() => setEdit(null)}>✕</button>
+      </span>
+    );
+  }
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      {title}
+      <button className="btn ghost" style={{ padding: "0 6px", fontSize: 11.5 }} title="Edit deal title" onClick={() => setEdit(title)}>✎</button>
+    </span>
+  );
+}
+
 /** Email on file, editable in place — lives right under the name/phone in the
  * lead card so reps can verify/fix it while on the call. Saves through the
  * same contact ops as the deal page's Contact card. */
@@ -1383,9 +1452,28 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
             <>
               <div className="lead-top">
                 <div>
-                  <div className="lead-name">{lead.personName ?? lead.title}</div>
+                  {leadDeal?.contact ? (
+                    <LeadName
+                      key={`n-${leadDeal.contact.id}`}
+                      deal={leadDeal}
+                      name={lead.personName ?? ""}
+                      onSaved={(n) => setLeads((prev) => prev.map((l, i) => (i === leadIdx ? { ...l, personName: n } : l)))}
+                    />
+                  ) : (
+                    <div className="lead-name">{lead.personName ?? lead.title}</div>
+                  )}
                   <div className="lead-phone">
-                    {lead.phone} · {lead.title}
+                    {lead.phone} ·{" "}
+                    {leadDeal ? (
+                      <LeadTitle
+                        key={`t-${leadDeal.record.pdId ?? "x"}`}
+                        deal={leadDeal}
+                        title={lead.title}
+                        onSaved={(t) => setLeads((prev) => prev.map((l, i) => (i === leadIdx ? { ...l, title: t } : l)))}
+                      />
+                    ) : (
+                      lead.title
+                    )}
                   </div>
                   {leadDeal?.contact && <LeadEmail key={leadDeal.contact.id} deal={leadDeal} />}
                 </div>

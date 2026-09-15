@@ -1705,16 +1705,14 @@ export function DealDetailView({
           {embedded && <NextActionCard profile={data.aiProfile ?? null} building={aiBuilding} />}
           {embedded && klaviyoEl}
           {embedded && adJourneyEl}
-          {!embedded && (
-            <>
+          {/* Editable contact card — in the dialer (embedded) too, so name /
+              phones / emails are editable mid-call (Kyle 9/15). */}
           {contact ? (
-            <ContactCard contact={contact} phones={phones} emails={emails} truck={<>{truckFieldEl}{interestsEl}</>} onSaved={load} />
+            <ContactCard contact={contact} phones={phones} emails={emails} truck={embedded ? undefined : <>{truckFieldEl}{interestsEl}</>} onSaved={load} />
           ) : (
             <>
               <div className="panel-h">Contact</div>
               <div style={{ color: "var(--text-3)", fontSize: 14 }}>No linked contact.</div>
-            </>
-          )}
             </>
           )}
           {/* Record + editable pipeline/stage/source/value move into the dialer
