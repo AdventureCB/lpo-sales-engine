@@ -150,14 +150,28 @@ export function CallLogView() {
                 <span style={{ color: "var(--text-2)", fontVariantNumeric: "tabular-nums" }}>
                   {c.missed && !c.vm ? "missed" : fmtDur(c.durationS)}
                 </span>
-                <span style={{ color: "var(--text-3)", fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {c.disposition
-                    ? DISPO_LABEL[c.disposition] ?? c.disposition
-                    : c.classification ?? c.status ?? ""}
-                  {c.vmUrl && " · 🔊"}
-                  {c.hasTranscript && " · 📝"}
-                  {c.quality?.avg_loss_pct != null && ` · 📶 ${c.quality.avg_loss_pct}%`}
-                  {expandable && <span style={{ marginLeft: 6 }}>{open ? "▾" : "▸"}</span>}
+                <span style={{ color: "var(--text-3)", fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 8 }}>
+                  {c.crmDealId && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        router.push(`/crm/deal/${c.crmDealId}`);
+                      }}
+                      title={c.dealTitle ? `Open deal: ${c.dealTitle}` : "Open deal"}
+                      style={{ flexShrink: 0, padding: "2px 9px", fontSize: 12.5, borderRadius: 6, border: "1px solid var(--border-soft)", background: "transparent", color: "var(--accent)", cursor: "pointer" }}
+                    >
+                      📂 Deal
+                    </button>
+                  )}
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {c.disposition
+                      ? DISPO_LABEL[c.disposition] ?? c.disposition
+                      : c.classification ?? c.status ?? ""}
+                    {c.vmUrl && " · 🔊"}
+                    {c.hasTranscript && " · 📝"}
+                    {c.quality?.avg_loss_pct != null && ` · 📶 ${c.quality.avg_loss_pct}%`}
+                  </span>
+                  {expandable && <span style={{ marginLeft: "auto" }}>{open ? "▾" : "▸"}</span>}
                 </span>
                 <span style={{ color: "var(--text-3)", fontSize: 13.5, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
                   {fmtWhen(c.at)}
