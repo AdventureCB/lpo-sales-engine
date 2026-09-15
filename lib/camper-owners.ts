@@ -35,7 +35,10 @@ export function classifyOrder(items: OrderLineItem[]): CamperVersion | null {
   for (const it of items) {
     const sku = (it.sku ?? "").trim().toUpperCase();
     const title = (it.title ?? "").trim().toLowerCase();
-    if (sku.startsWith("LPCV2-") || V2_OLD_SKUS.has(sku) || title === "lone peak camper v2") {
+    // V2 = current LPCV2-* SKUs, the OLD "LPC"+3-letter fitment SKUs (regex
+    // covers variants beyond the explicit set; no accessory uses this shape),
+    // or an exact "Lone Peak Camper V2" title.
+    if (sku.startsWith("LPCV2-") || /^LPC[A-D]{3}$/.test(sku) || V2_OLD_SKUS.has(sku) || title === "lone peak camper v2") {
       return "v2"; // V2 wins if somehow both appear
     }
     if (sku === "LPCW" || title === "lone peak camper") v1 = true;
