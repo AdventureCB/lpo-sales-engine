@@ -457,6 +457,9 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   };
   const handleProfile = useCallback((p: { profile: AiProfile | null; stale: boolean; building: boolean }) => setLeadProfile(p), []);
   const [aiExpanded, setAiExpanded] = useState(false);
+  // Right-rail host: the embedded deal view portals its Timeline here (above
+  // the buyer profile) so recent activity is visible without scrolling.
+  const [timelineHost, setTimelineHost] = useState<HTMLElement | null>(null);
   const [aiRefreshing, setAiRefreshing] = useState(false);
 
   // Deal meta (pipeline/stage/source/value/record) surfaced from the embedded
@@ -1863,6 +1866,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
             embedded
             onProfile={handleProfile}
             onDeal={handleDeal}
+            timelineHost={timelineHost}
           />
         )}
         </div>
@@ -1943,6 +1947,9 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
               </Link>
             </div>
           </div>
+          {/* Timeline portals in here (from the embedded deal view) — above the
+              buyer profile so recent activity needs no scrolling. */}
+          <div ref={setTimelineHost} />
           {/* AI confidence + archetypes (was Up next). Tags & attributes reveal
               on expand. */}
           {lead && (lead.dealId > 0 || lead.crmDealId) && (() => {

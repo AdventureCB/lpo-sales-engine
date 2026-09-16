@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { newOutboundCall, setOutboundHandler } from "./phoneClient";
 import { INTERESTS } from "./interests";
@@ -168,12 +169,20 @@ export function fmtWhen(iso: string | null) {
   });
 }
 
+/** Render children inline, or into `host` (a DOM node elsewhere) when given —
+ * lets the dialer relocate the embedded timeline into its right rail without
+ * duplicating the (large, stateful) JSX. */
+function MaybePortal({ host, children }: { host: HTMLElement | null | undefined; children: React.ReactNode }) {
+  return host ? <>{createPortal(children, host)}</> : <>{children}</>;
+}
+
 export function DealDetailView({
   dealId,
   pdDealId,
   embedded,
   onProfile,
   onDeal,
+  timelineHost,
 }: {
   dealId?: string;
   pdDealId?: number;
@@ -183,6 +192,7 @@ export function DealDetailView({
   onProfile?: (p: { profile: AiProfile | null; stale: boolean; building: boolean }) => void;
   // …and the deal meta (value, pipeline/stage/source, record + update fn).
   onDeal?: (d: DialerDeal | null) => void;
+  timelineHost?: HTMLElement | null; // dialer right-rail node to portal the Timeline into
 }) {
   const router = useRouter();
   // Seed from the prefetch cache (warmed during the dialer's review step) so an
@@ -1486,6 +1496,7 @@ export function DealDetailView({
             );
           })()}
 
+          <MaybePortal host={embedded ? timelineHost : null}>
           <div className="card">
             <div className="panel-h" style={{ display: "flex", alignItems: "center" }}>
               Timeline
@@ -1624,6 +1635,7 @@ export function DealDetailView({
               );
             })}
           </div>
+          </MaybePortal>
         </div>
 
         {noteEdit && (
