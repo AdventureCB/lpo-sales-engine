@@ -199,6 +199,7 @@ export function DealDetailView({
   // advanced-to deal paints instantly; load() still revalidates in background.
   const [data, setData] = useState<DealData | null>(() => getCachedDeal(dealId, pdDealId));
   const [error, setError] = useState<string | null>(null);
+  const [upcomingHost, setUpcomingHost] = useState<HTMLElement | null>(null);
   const roster = useRoster();
   const [note, setNote] = useState("");
   const [noteTitle, setNoteTitle] = useState("");
@@ -628,7 +629,7 @@ export function DealDetailView({
       phone={goodPhones.find((p) => p.primary)?.e164 ?? goodPhones[0]?.e164 ?? goodPhones[0]?.value ?? null}
       contactName={contact?.name ?? null}
       hasEmail={!!(emails.find((e) => e.primary)?.value ?? emails[0]?.value)}
-      defaultOpen={embedded}
+      defaultOpen={false}
     />
   );
 
@@ -796,7 +797,7 @@ export function DealDetailView({
         />
       )}
 
-      {embedded && <div style={{ marginBottom: 18 }}>{commBarEl}{scriptsEl}</div>}
+      {embedded && <div style={{ marginBottom: 18 }}>{commBarEl}{scriptsEl}<div ref={setUpcomingHost} /></div>}
 
       <div className="split" style={{ marginTop: 0, ...(embedded ? { gridTemplateColumns: "1fr" } : {}) }}>
         <div>
@@ -1366,6 +1367,7 @@ export function DealDetailView({
 
           {!embedded && commBarEl}
 
+          <MaybePortal host={embedded ? upcomingHost : null}>
           {(() => {
             const upcoming = data.timeline
               .filter((t) => t.id && t.due && !t.done && t.kind !== "system")
@@ -1499,6 +1501,7 @@ export function DealDetailView({
               </div>
             );
           })()}
+          </MaybePortal>
 
           <MaybePortal host={embedded ? timelineHost : null}>
           <div className="card">
