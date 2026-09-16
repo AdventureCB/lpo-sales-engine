@@ -216,7 +216,7 @@ export function DealDetailView({
   const [newSprintName, setNewSprintName] = useState("");
   const [newSprintOwner, setNewSprintOwner] = useState("");
   // Upcoming-activity inline editor
-  const [editAct, setEditAct] = useState<{ id: string; subject: string; type: string; due: string } | null>(null);
+  const [editAct, setEditAct] = useState<{ id: string; subject: string; type: string; due: string; priority: boolean } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [modal, setModal] = useState<null | "note" | "schedule" | "sprint" | "lost" | "reopen" | "log" | "snooze">(null);
   const [snoozeDate, setSnoozeDate] = useState("");
@@ -1389,6 +1389,10 @@ export function DealDetailView({
                           value={ea.due}
                           onChange={(e) => setEditAct((a) => a && { ...a, due: e.target.value })}
                         />
+                        <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 13, color: ea.priority ? "#d99a2b" : "var(--text-2)", cursor: "pointer", fontWeight: ea.priority ? 700 : 400 }} title="Countdown banner 10 min before + popup at the scheduled time (your reminders only)">
+                          <input type="checkbox" checked={ea.priority} onChange={(e) => setEditAct((a) => a && { ...a, priority: e.target.checked })} style={{ cursor: "pointer" }} />
+                          ⭐ Priority
+                        </label>
                       </div>
                       <div style={{ display: "flex", gap: 8 }}>
                         <button
@@ -1401,7 +1405,8 @@ export function DealDetailView({
                                 activityId: ea.id,
                                 subject: ea.subject,
                                 type: ea.type,
-                                dueAt: new Date(ea.due).toISOString(),
+                                dueAt: timedIso(new Date(ea.due)),
+                                priority: ea.priority,
                               },
                             });
                             setEditAct(null);
@@ -1418,6 +1423,7 @@ export function DealDetailView({
                     <div className="stmt-row" key={t.id} style={{ alignItems: "center" }}>
                       <div style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
                         <span>{KIND_ICON[t.kind] ?? "•"}</span>
+                        {(t as any).priority && !t.done && <span title="Priority — countdown reminder">⭐</span>}
                         <b style={{ fontSize: 14 }}>{t.title}</b>
                         <span style={{ fontSize: 13, color: Date.parse(t.due!) < Date.now() ? "var(--crit)" : "var(--text-3)" }}>
                           {Date.parse(t.due!) < Date.now() ? "overdue · " : "due "}
@@ -1445,6 +1451,7 @@ export function DealDetailView({
                               subject: t.title,
                               type: ["call", "task", "meeting", "email"].includes(t.kind) ? t.kind : "task",
                               due: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`,
+                              priority: Boolean((t as any).priority),
                             });
                           }}
                         >
