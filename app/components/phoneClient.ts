@@ -15,14 +15,23 @@ export interface PhoneIncoming {
   active: boolean;
 }
 
+interface OutboundCall {
+  number: string;
+  state: "dialing" | "ringing" | "active";
+  startedAt: number | null; // ms when it went active (for the timer)
+  muted: boolean;
+}
+
 interface PhoneState {
   conn: string; // off | connecting… | ready | reconnecting… | error: …
   incoming: PhoneIncoming | null;
   callerNumber: string | null;
   callPhase: "none" | "dialing" | "talking"; // observed by the activity tracker
+  outbound: OutboundCall | null; // the live outbound call — drives the global CallDock
 }
 
-const state: PhoneState = { conn: "off", incoming: null, callerNumber: null, callPhase: "none" };
+const state: PhoneState = { conn: "off", incoming: null, callerNumber: null, callPhase: "none", outbound: null };
+let outboundCall: any = null; // the TelnyxRTC call object for mute/hangup
 let client: any = null;
 let readyPromise: Promise<any> | null = null;
 let outboundHandler: ((call: any, callState: string) => void) | null = null;
@@ -670,11 +679,19 @@ export async function ensurePhone(): Promise<any> {
       if (s === "active") {
         state.callPhase = "talking";
         outboundLive = true;
+        if (state.outbound) state.outbound = { ...state.outbound, state: "active", startedAt: state.outbound.startedAt ?? Date.now() };
+        outboundCall = call;
         ensureRemoteAudio();
       } else if (s === "hangup" || s === "destroy") {
         state.callPhase = "none";
         outboundLive = false;
-      } else state.callPhase = "dialing"; // new/requesting/trying/early/ringing
+        state.outbound = null;
+        outboundCall = null;
+      } else {
+        state.callPhase = "dialing"; // new/requesting/trying/early/ringing
+        outboundCall = call;
+        if (state.outbound && state.outbound.state !== "active") state.outbound = { ...state.outbound, state: "ringing" };
+      }
       emit();
       outboundHandler?.(call, s);
     });
@@ -703,13 +720,38 @@ export async function ensurePhone(): Promise<any> {
 export async function newOutboundCall(phone: string): Promise<any> {
   const c = await ensurePhone();
   state.callPhase = "dialing"; // count call setup from the click, not the first event
+  state.outbound = { number: phone, state: "dialing", startedAt: null, muted: false };
   emit();
-  return c.newCall({
+  const call = c.newCall({
     destinationNumber: phone,
     callerNumber: state.callerNumber ?? undefined,
     audio: true,
     video: false,
   });
+  outboundCall = call;
+  return call;
+}
+
+/** End the live outbound call (global CallDock / any caller). */
+export function endOutbound() {
+  try {
+    outboundCall?.hangup();
+  } catch {}
+  outboundCall = null;
+  state.outbound = null;
+  emit();
+}
+
+/** Toggle mute on the live outbound call. */
+export function toggleOutboundMute() {
+  if (!state.outbound || !outboundCall) return;
+  const next = !state.outbound.muted;
+  try {
+    if (next) outboundCall.muteAudio?.();
+    else outboundCall.unmuteAudio?.();
+  } catch {}
+  state.outbound = { ...state.outbound, muted: next };
+  emit();
 }
 
 export function answerIncoming() {

@@ -8,6 +8,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { ChatDock } from "./ChatDock";
 import { InboundTextWatcher } from "./InboundTextWatcher";
 import { PriorityFollowupWatcher } from "./PriorityFollowupWatcher";
+import { CallDock } from "./CallDock";
 import { ToolFocusWatcher } from "./ToolFocusWatcher";
 
 interface NavItem {
@@ -122,6 +123,7 @@ export function AppShell({
       <ChatDock />
       <InboundTextWatcher />
       <PriorityFollowupWatcher />
+      <CallDock />
       <ToolFocusWatcher />
     </div>
   );

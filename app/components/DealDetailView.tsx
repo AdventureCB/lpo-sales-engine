@@ -3195,9 +3195,10 @@ function CommBar({
         </div>
       )}
 
-      {/* ── Floating call panel: live controls during the call, then the same
-             disposition flow as the dialer — one popup, bottom-right. ── */}
-      {((callState && !callState.startsWith("error")) || awaitingDispo) && (
+      {/* ── Post-call disposition flow, bottom-right. Live call controls
+             (timer/mute/end) are the GLOBAL CallDock now, so they show on
+             every page — this panel only handles logging the outcome. ── */}
+      {awaitingDispo && (
         <div
           style={{
             position: "fixed",
