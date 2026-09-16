@@ -584,6 +584,10 @@ export function DealDetailView({
       </div>
     </div>
   );
+  // True when our Timeline is portaled into the dialer's narrow right rail —
+  // bound its height + scroll so it doesn't stack tall and push the profile down.
+  const timelineInRail = !!(embedded && timelineHost);
+
   const commBarEl = (
     <CommBar
       dealId={d.id}
@@ -1518,6 +1522,7 @@ export function DealDetailView({
                 ＋ Log activity
               </button>
             </div>
+            <div style={timelineInRail ? { maxHeight: "46vh", overflowY: "auto", marginRight: -6, paddingRight: 6 } : undefined}>
             {data.timeline.length === 0 && (
               <div style={{ color: "var(--text-3)", fontSize: 14 }}>No activity yet.</div>
             )}
@@ -1634,6 +1639,7 @@ export function DealDetailView({
                 </div>
               );
             })}
+            </div>
           </div>
           </MaybePortal>
         </div>
