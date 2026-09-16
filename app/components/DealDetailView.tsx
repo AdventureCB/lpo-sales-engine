@@ -1374,7 +1374,7 @@ export function DealDetailView({
               .sort((a, b) => (a.due ?? "").localeCompare(b.due ?? ""));
             if (upcoming.length === 0) return null;
             return (
-              <div className="card" style={{ marginBottom: 18 }}>
+              <div className="card" style={{ marginBottom: 18, ...(embedded ? { marginTop: 18 } : {}) }}>
                 <div className="panel-h">Upcoming</div>
                 {upcoming.map((t) => {
                   const ea = editAct && editAct.id === t.id ? editAct : null;
