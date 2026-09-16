@@ -964,6 +964,21 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     setLeadIdx((i) => i + 1);
   };
 
+  // Step back to the previous lead — reps who hit Next before finishing
+  // something. Blocked mid-call; clears the disposition/next flow so the
+  // prior lead shows cleanly.
+  const canGoBack = leadIdx > 0 && !inCall;
+  const goBack = () => {
+    if (!canGoBack) return;
+    setAwaitingNext(false);
+    setAwaitingDispo(false);
+    setPendingDispo(null);
+    setSkipPrompt(false);
+    setDispoNote("");
+    setValueEdit(null);
+    setLeadIdx((i) => Math.max(0, i - 1));
+  };
+
   // VM drop selection lives in Settings → My profile (persisted per machine);
   // fall back to the first available recording when nothing was chosen.
   const [vmDrop, setVmDrop] = useState<VmDrop | null>(null);
@@ -1193,6 +1208,16 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
             {" "}· <b style={{ color: "var(--text-1)" }}>
               Call {Math.min(leadIdx + 1, leads.length)} / {leads.length}
             </b>
+            {canGoBack && (
+              <button
+                className="btn ghost"
+                style={{ padding: "1px 9px", fontSize: 12.5, marginLeft: 8 }}
+                title="Go back to the previous lead"
+                onClick={goBack}
+              >
+                ← Back
+              </button>
+            )}
           </>
         )}{" "}
         · calls place in your browser · every call auto-logs to the deal
@@ -1814,7 +1839,12 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                   <span style={{ fontSize: 13.5, color: "var(--text-2)" }}>
                     ✓ Logged{nextScheduled ? " · follow-up scheduled" : ""} — send an email, add another activity, or update the deal, then continue.
                   </span>
-                  <button className="btn primary" style={{ marginLeft: "auto" }} onClick={advanceNext}>
+                  {canGoBack && (
+                    <button className="btn ghost" style={{ marginLeft: "auto" }} onClick={goBack} title="Go back to the previous lead">
+                      ← Back
+                    </button>
+                  )}
+                  <button className="btn primary" style={{ marginLeft: canGoBack ? 0 : "auto" }} onClick={advanceNext}>
                     Next → <kbd>⏎</kbd>
                   </button>
                 </div>
