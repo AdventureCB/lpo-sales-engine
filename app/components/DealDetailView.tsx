@@ -1534,7 +1534,7 @@ export function DealDetailView({
               return (
                 <div
                   className="stmt-row"
-                  style={{ alignItems: "flex-start", cursor: t.body ? "pointer" : "default" }}
+                  style={{ alignItems: "flex-start", cursor: t.body ? "pointer" : "default", ...(timelineInRail ? { flexDirection: "column", gap: 2, alignItems: "stretch" } : {}) }}
                   key={i}
                   title={t.body && !isOpen ? "Click to expand" : undefined}
                   onClick={() =>
@@ -1633,7 +1633,7 @@ export function DealDetailView({
                       )}
                     </div>
                   </div>
-                  <div style={{ fontSize: 12, color: "var(--text-3)", flexShrink: 0, marginLeft: 10 }}>
+                  <div style={{ fontSize: 12, color: "var(--text-3)", flexShrink: 0, ...(timelineInRail ? { order: -1, marginLeft: 0, marginBottom: 1 } : { marginLeft: 10 }) }}>
                     {fmtWhen(t.at)}
                   </div>
                 </div>
