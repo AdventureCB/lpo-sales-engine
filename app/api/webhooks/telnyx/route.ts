@@ -195,12 +195,37 @@ export async function POST(req: NextRequest) {
           .maybeSingle();
         const craw = ((cur?.raw as any) ?? {}) as Record<string, unknown>;
         if (cur && !cur.answered_at && !cur.completed_at && !craw.vm && craw.a_ccid && !craw.ring2) {
-          await db.from("call_events").update({ raw: { ...craw, ring2: true } }).eq("id", cur.id);
-          const { transferCall, getSharedSipUsername } = await import("@/lib/telnyx");
-          const shared = await getSharedSipUsername(db);
-          if (shared && !p.to.includes(`${shared}@`)) {
-            const caller = ((craw as any)?.data?.object?.participants ?? [])[0] ?? null;
-            await transferCall(String(craw.a_ccid), `sip:${shared}@sip.telnyx.com`, { timeoutSecs: 55, clientState: "ring", from: typeof caller === "string" ? caller : null });
+          // Busy guard for the shared identity: every OUTBOUND browser call
+          // registers on the shared credential, so a fallback INVITE while any
+          // rep is mid-call there would disrupt that live call (the same
+          // second-INVITE corruption we fixed on the per-rep path 9/17 — and the
+          // exact leg that dropped Jesse's call). If anyone's live on the shared
+          // credential, skip the fallback and let the VM timer take the caller.
+          const { data: liveShared } = await db
+            .from("call_events")
+            .select("quo_call_id")
+            .neq("quo_call_id", sessionKey)
+            .eq("direction", "outgoing")
+            .is("completed_at", null)
+            .gte("started_at", new Date(Date.now() - 2 * 3600_000).toISOString())
+            .or(`status.in.(bridged,answered,"in-progress"),answered_at.not.is.null,started_at.gte.${new Date(Date.now() - 3 * 60_000).toISOString()}`)
+            .limit(1);
+          if (liveShared?.length) {
+            await db.from("telnyx_event_log").insert({
+              event_type: "sharedring.skip.busy",
+              session_id: p.call_session_id ?? null,
+              leg_from: p.from ?? null,
+              leg_to: p.to ?? null,
+              payload: { liveCall: liveShared[0].quo_call_id },
+            });
+          } else {
+            await db.from("call_events").update({ raw: { ...craw, ring2: true } }).eq("id", cur.id);
+            const { transferCall, getSharedSipUsername } = await import("@/lib/telnyx");
+            const shared = await getSharedSipUsername(db);
+            if (shared && !p.to.includes(`${shared}@`)) {
+              const caller = ((craw as any)?.data?.object?.participants ?? [])[0] ?? null;
+              await transferCall(String(craw.a_ccid), `sip:${shared}@sip.telnyx.com`, { timeoutSecs: 55, clientState: "ring", from: typeof caller === "string" ? caller : null });
+            }
           }
         }
       } catch (e) {
