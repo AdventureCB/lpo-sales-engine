@@ -23,6 +23,7 @@ interface Review {
   scorecard: { principle: string; verdict: Verdict }[];
   thin: boolean;
   excluded?: boolean;
+  bonus?: number; // outcome bonus: +1 deposit, +2 paid-in-full
 }
 
 const PRINCIPLES = ["Guide positioning", "Problem articulation", "Simple plan", "Clear CTA", "Discovery"];
@@ -61,8 +62,13 @@ function periodStart(p: Period, offset = 0): Date {
   return d;
 }
 
-function score(r: Review): number {
+function baseScore(r: Review): number {
   return r.scorecard.reduce((s, x) => s + (VERDICT_SCORE[x.verdict] ?? 0), 0);
+}
+// Effective score used for the KPI/leaderboard: scorecard + outcome bonus,
+// capped at 5 so the /5 scale (and the 3.5 quality line) still hold.
+function score(r: Review): number {
+  return Math.min(5, baseScore(r) + (r.bonus ?? 0));
 }
 // Quality call = score ≥ 3.5/5 with partial = half credit (Kyle 9/9: strong
 // across most categories, reachable — the strict 4-clean-hits bar read 0%).
@@ -229,7 +235,7 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
     patterns: any[];
     me: string | null;
     volume: { rep: string; at: string }[];
-    rank: { rep: string; at: string; score: number | null }[];
+    rank: { rep: string; at: string; score: number | null; bonus?: number }[];
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<Period>("week");
@@ -281,8 +287,9 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
     // Team rank rows (every role gets all reps') — the full review list only
     // holds the viewer's own reviews for non-admins.
     const rows = (data?.rank ?? []).filter((r) => r.rep === rep && new Date(r.at) >= curStart);
-    const scored = rows.filter((r) => r.score != null) as { score: number }[];
-    const avg = scored.length ? scored.reduce((a, r) => a + r.score, 0) / scored.length : null;
+    const scored = rows.filter((r) => r.score != null) as { score: number; bonus?: number }[];
+    const eff = (r: { score: number; bonus?: number }) => Math.min(5, r.score + (r.bonus ?? 0));
+    const avg = scored.length ? scored.reduce((a, r) => a + eff(r), 0) / scored.length : null;
     const v = volFor(rep);
     const reasons: string[] = [];
     if (avg != null && avg < STANDARD_AVG) reasons.push(`avg ${avg.toFixed(1)} < ${STANDARD_AVG}`);
@@ -306,9 +313,10 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
       if (!b) continue;
       b.count++;
       if (r.score != null) {
+        const eff = Math.min(5, r.score + (r.bonus ?? 0));
         b.scored++;
-        b.scoreSum += r.score;
-        if (r.score >= 3.5) b.quality++;
+        b.scoreSum += eff;
+        if (eff >= 3.5) b.quality++;
       }
     }
     const entries = [...byRep.entries()].map(([rep, b]) => ({
@@ -350,6 +358,15 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, excluded }),
+    }).catch(() => {});
+  };
+
+  const setBonus = async (id: string, bonus: number) => {
+    setData((d) => (d ? { ...d, reviews: d.reviews.map((x) => (x.id === id ? { ...x, bonus } : x)) } : d));
+    await fetch("/api/reviews/stats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, bonus }),
     }).catch(() => {});
   };
 
@@ -630,9 +647,27 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
                   <span key={i} style={{ width: 10, height: 10, borderRadius: "50%", background: VERDICT_DOT[s.verdict] ?? "var(--surface-3)" }} />
                 ))}
               </span>
+              {(r.bonus ?? 0) > 0 && (
+                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--good, #3aa76d)" }} title={r.bonus === 2 ? "Paid in full: +2" : "Deposit: +1"}>
+                  🏆 +{r.bonus}
+                </span>
+              )}
               <span style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums", width: 46, textAlign: "right" }}>
                 {r.scorecard.length === 5 ? `${score(r).toFixed(1)}/5` : "—"}
               </span>
+              {isAdmin && (
+                <select
+                  className="vmsel"
+                  style={{ width: "auto", padding: "1px 4px", fontSize: 11.5 }}
+                  value={r.bonus ?? 0}
+                  title="Outcome bonus for a call that ended in a sale"
+                  onChange={(e) => void setBonus(r.id, Number(e.target.value))}
+                >
+                  <option value={0}>no bonus</option>
+                  <option value={1}>🏆 +1 deposit</option>
+                  <option value={2}>🏆 +2 paid</option>
+                </select>
+              )}
               {isAdmin && (
                 <button
                   className="btn ghost"

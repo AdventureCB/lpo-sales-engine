@@ -170,6 +170,7 @@ export async function reviewCall(
   let transcript = "";
   let rep: string | null = null;
   let durationS: number | null = null;
+  let callStart: string | null = null;
   const facts: string[] = [];
   if (opts.activityId) {
     const { data: a } = await db
@@ -193,6 +194,7 @@ export async function reviewCall(
       .maybeSingle();
     if (!c) return { ok: false, reason: "call not found" };
     durationS = c.duration_s ?? null;
+    callStart = c.started_at ?? null;
     transcript = String((c as any).transcript ?? "").trim();
     facts.push(c.direction === "incoming" ? "Inbound call" : "Outbound call");
     if (c.duration_s) facts.push(`${Math.floor(c.duration_s / 60)}m ${c.duration_s % 60}s`);
@@ -260,11 +262,48 @@ export async function reviewCall(
   //   • the deal is LOST → not scored, at ANY length. (A long lost call is
   //     still worth REVIEWING for coaching — the auto-review cron only bothers
   //     when it ran 10+ min — but a lost outcome never counts toward the score.)
+  // ── Score eligibility + outcome bonus (Kyle 9/16) ────────────────────────
+  // Pull the deal's outcome + when a deposit happened, to decide scoring.
+  const { data: dstat } = await db
+    .from("crm_deals")
+    .select("status, stage_changed_at, pipedrive_deal_id, crm_stages ( name )")
+    .eq("id", opts.dealId)
+    .maybeSingle();
+  const stageName = String((dstat as any)?.crm_stages?.name ?? "").toLowerCase();
+  const isDepositStage = stageName.includes("deposit");
+  const isWonStage = stageName.includes("won") || dstat?.status === "won";
+  const stageAt = dstat?.stage_changed_at ?? null;
+  // Deposit timestamp: the sales journey's own field when present, else the
+  // stage-change time if the deal is sitting on a deposit stage.
+  let depositAt: string | null = null;
+  if ((dstat as any)?.pipedrive_deal_id) {
+    const { data: sj } = await db
+      .from("sales_journeys")
+      .select("deposit_started_at")
+      .eq("pipedrive_deal_id", (dstat as any).pipedrive_deal_id)
+      .not("deposit_started_at", "is", null)
+      .order("deposit_started_at")
+      .limit(1)
+      .maybeSingle();
+    depositAt = sj?.deposit_started_at ?? null;
+  }
+  if (!depositAt && isDepositStage) depositAt = stageAt;
+
   let excluded = false;
   if (durationS != null && durationS < 180) excluded = true;
-  if (!excluded) {
-    const { data: dstat } = await db.from("crm_deals").select("status").eq("id", opts.dealId).maybeSingle();
-    if (dstat?.status === "lost") excluded = true;
+  if (!excluded && dstat?.status === "lost") excluded = true;
+  // Confirmation / post-deposit call: the deposit was placed BEFORE this call,
+  // so it's not StoryBrand prospecting — don't score it.
+  if (!excluded && depositAt && callStart && Date.parse(depositAt) < Date.parse(callStart)) excluded = true;
+
+  // Outcome bonus: this call ended in a deposit/won (the milestone happened
+  // during or shortly after the call). +2 paid-in-full (won), +1 deposit.
+  let bonus = 0;
+  if (callStart) {
+    const cs = Date.parse(callStart);
+    const inWindow = (t: string | null) => !!t && Date.parse(t) >= cs && Date.parse(t) <= cs + 12 * 3600_000;
+    if (isWonStage && inWindow(stageAt)) bonus = 2;
+    else if (depositAt && inWindow(depositAt)) bonus = 1;
   }
 
   const now = new Date().toISOString();
@@ -280,6 +319,8 @@ export async function reviewCall(
     review: normalized,
     excluded_from_score: excluded,
     excluded_by: excluded ? "auto" : null,
+    bonus,
+    bonus_by: bonus ? "auto" : null,
     updated_at: now,
   };
   // Partial unique indexes can't take PostgREST onConflict — select-then-write.
@@ -290,6 +331,10 @@ export async function reviewCall(
     if (existing.excluded_by && existing.excluded_by !== "auto") {
       delete upd.excluded_from_score;
       delete upd.excluded_by;
+    }
+    if (existing.bonus_by && existing.bonus_by !== "auto") {
+      delete upd.bonus;
+      delete upd.bonus_by;
     }
     await db.from("call_reviews").update(upd).eq("id", existing.id);
   } else {
