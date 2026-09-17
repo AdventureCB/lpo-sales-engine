@@ -887,7 +887,7 @@ async function claimReprospect(
   let pool = (await fetchAll((f, t) => {
     let q = db
       .from("crm_deals")
-      .select("id, pipedrive_deal_id, title, last_activity_at, contact_id, crm_contacts ( name, emails, phones, tz_offset, dnc )")
+      .select("id, pipedrive_deal_id, title, last_activity_at, contact_id, pool_released_at, pool_released_reason, crm_contacts ( name, emails, phones, tz_offset, dnc )")
       .eq("status", "open");
     q = poolOwnerId ? q.eq("owner_pipedrive_id", poolOwnerId) : q.is("owner_pipedrive_id", null);
     return notSnoozed(notConfirmation(q, confIdsPool), laDate(new Date())).range(f, t);
@@ -921,15 +921,28 @@ async function claimReprospect(
     hammered = new Set([...attempts7d.entries()].filter(([, n]) => n >= cooldownCap).map(([id]) => id));
   }
 
-  // Marketing recency per email (any age — "last marketing signal" wins).
-  const mkt = await latestSignalByEmail(db);
-  const signalAt = (d: any): string | null => {
+  // Marketing recency per email (any age — "last marketing signal" wins) plus
+  // the latest HOT signal per email (for the lost-to-pool gate below).
+  const { latest: mkt, latestHot } = await latestSignalByEmail(db, cfg);
+  const emailMax = (m: Map<string, string>, d: any): string | null => {
     let best: string | null = null;
     for (const e of d.crm_contacts?.emails ?? []) {
-      const at = mkt.get((e.value ?? "").toLowerCase());
+      const at = m.get((e.value ?? "").toLowerCase());
       if (at && (!best || at > best)) best = at;
     }
     return best;
+  };
+  const signalAt = (d: any): string | null => emailMax(mkt, d);
+
+  // Lost-to-pool safeguard (Kyle 9/17): a deal a rep marked lost-and-released
+  // needs BOTH the 30-day cooldown to pass AND a fresh hot-list signal (saved
+  // build, add-to-cart, email click) that landed AFTER the release — so we don't
+  // pester someone before they show renewed interest. A lease that merely
+  // expired (no pool_released_at) is governed by the 30-day cooldown alone.
+  const lostGateBlocks = (d: any): boolean => {
+    if (!d.pool_released_at) return false; // not a lost-to-pool release
+    const hotAt = emailMax(latestHot, d);
+    return !(hotAt && hotAt > d.pool_released_at);
   };
 
   const excl = opts.exclude;
@@ -955,6 +968,9 @@ async function claimReprospect(
     tierLabel: "reprospect",
     source: "reprospect",
     recencyAt: signalAt(d),
+    // Flag a deal that was previously marked lost + why, so the rep knows the
+    // history (it only resurfaces after cooldown + a fresh signal — see above).
+    flag: d.pool_released_reason ? `⚠️ Previously marked lost — ${d.pool_released_reason}` : null,
   });
 
   const byId = new Map(pool.map((d) => [d.id, d]));
@@ -976,7 +992,7 @@ async function claimReprospect(
   let newSlots = Math.min(Math.max(remaining, 0), subcap) - items.length;
   if (newSlots > 0) {
     const candidates = pool
-      .filter((d) => !mine.has(d.id) && !lockedByOther.has(d.id) && !hammered.has(d.id) && !cooldown.has(d.id) && !excluded(d) && primaryPhone(d.crm_contacts?.phones ?? []))
+      .filter((d) => !mine.has(d.id) && !lockedByOther.has(d.id) && !hammered.has(d.id) && !cooldown.has(d.id) && !lostGateBlocks(d) && !excluded(d) && primaryPhone(d.crm_contacts?.phones ?? []))
       .sort((a, b) => (signalAt(b) ?? "").localeCompare(signalAt(a) ?? ""));
     const expires = new Date(Date.now() + cfg.checkout_hold_days * 86_400_000).toISOString();
     for (const d of candidates) {
@@ -1016,22 +1032,32 @@ async function existingOwnerKeys(db: SupabaseClient): Promise<{ emails: Set<stri
   return ownerKeyCache;
 }
 
-async function latestSignalByEmail(db: SupabaseClient): Promise<Map<string, string>> {
+async function latestSignalByEmail(
+  db: SupabaseClient,
+  cfg: SprintListConfig
+): Promise<{ latest: Map<string, string>; latestHot: Map<string, string> }> {
   // Reprospect pool ordering: most-recent marketing signal wins. Reads the
-  // broad engagement_events store (not the near-empty klaviyo_events).
+  // broad engagement_events store (not the near-empty klaviyo_events). In the
+  // same pass we track the latest HOT signal (a 1a/1b type — cart, saved build,
+  // click; NOT a passive open) so the lost-to-pool gate can require fresh intent
+  // before a previously-lost deal comes back.
+  const hot = new RegExp(`(${cfg.hot_1a_regex})|(${cfg.hot_1b_regex})`, "i");
   const rows = await fetchAll((f, t) =>
     db
       .from("engagement_events")
-      .select("person_email, occurred_at")
+      .select("person_email, type, occurred_at")
       .order("occurred_at", { ascending: false })
       .range(f, t)
   );
-  const m = new Map<string, string>();
+  const latest = new Map<string, string>();
+  const latestHot = new Map<string, string>();
   for (const r of rows) {
     const k = (r.person_email ?? "").toLowerCase();
-    if (k && !m.has(k)) m.set(k, r.occurred_at); // first = latest (ordered desc)
+    if (!k) continue;
+    if (!latest.has(k)) latest.set(k, r.occurred_at); // first = latest (ordered desc)
+    if (!latestHot.has(k) && hot.test(r.type ?? "")) latestHot.set(k, r.occurred_at);
   }
-  return m;
+  return { latest, latestHot };
 }
 
 // ── Persist a generated list onto the sprint rail ──────────────────────────

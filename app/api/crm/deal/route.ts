@@ -29,6 +29,41 @@ export async function GET(req: NextRequest) {
   const { data: deal, error } = await q.maybeSingle();
   if (error || !deal) return NextResponse.json({ error: "not found" }, { status: 404 });
 
+  // Existing camper owner? (Demo Finder directory.) Reps shouldn't cold-prospect
+  // someone who already bought — but a deal can carry an existing owner outside
+  // the reprospect pool (e.g. Parker's won deals that were never moved to the
+  // Confirmation Pipeline, since reassigned to other reps). Surface a badge in
+  // the deal view / dialer so the rep catches it. Match by crm contact id or
+  // any email on file (camper_owners emails are stored lowercased).
+  let existingOwner:
+    | { name: string | null; orderName: string | null; orderAt: string | null; version: string | null }
+    | null = null;
+  try {
+    const ownerEmails = ((deal.crm_contacts?.emails as any[]) ?? [])
+      .map((e) => (e.value ?? "").trim().toLowerCase())
+      .filter(Boolean);
+    const ors: string[] = [];
+    if (deal.contact_id) ors.push(`contact_id.eq.${deal.contact_id}`);
+    for (const e of ownerEmails) ors.push(`email.eq.${e}`);
+    if (ors.length) {
+      const { data: co } = await db
+        .from("camper_owners")
+        .select("name, camper_order_name, camper_order_at, version")
+        .or(ors.join(","))
+        .order("camper_order_at", { ascending: false, nullsFirst: false })
+        .limit(1)
+        .maybeSingle();
+      if (co) {
+        existingOwner = {
+          name: co.name ?? null,
+          orderName: co.camper_order_name ?? null,
+          orderAt: co.camper_order_at ?? null,
+          version: co.version ?? null,
+        };
+      }
+    }
+  } catch {}
+
   // Quo logs calls/notes on the person, not the deal — pull the contact's
   // activities into the deal timeline too, or most history is invisible.
   const activityFilter = deal.contact_id
@@ -247,6 +282,7 @@ export async function GET(req: NextRequest) {
     sprints: sprints.data ?? [],
     dealSprintIds: (dealSprints.data ?? []).map((s) => s.sprint_id),
     sprintOwners: (owners.data ?? []).map((u) => u.email),
+    existingOwner,
   });
 }
 
@@ -625,10 +661,14 @@ export async function POST(req: NextRequest) {
     // deal, so Cainen's PD account (24723797) fronts the pool there — the
     // mirror translates him back to null on sync.
     const newOwner = body.ownerPipedriveId ?? null;
-    const { error } = await db
-      .from("crm_deals")
-      .update({ owner_pipedrive_id: newOwner, updated_at: new Date().toISOString() })
-      .eq("id", deal.id);
+    // Assigning a real owner clears any lost-to-pool release marks (resets the
+    // "previously marked lost" gate/flag); unassigning to the pool leaves them.
+    const ownerPatch: Record<string, unknown> = { owner_pipedrive_id: newOwner, updated_at: new Date().toISOString() };
+    if (newOwner != null) {
+      ownerPatch.pool_released_at = null;
+      ownerPatch.pool_released_reason = null;
+    }
+    const { error } = await db.from("crm_deals").update(ownerPatch).eq("id", deal.id);
     if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
     const pdOwner = newOwner ?? 24723797;
     if (canWriteThrough) {
@@ -683,11 +723,17 @@ export async function POST(req: NextRequest) {
     }
 
     if (["no_interest", "no_contact", "not_qualified"].includes(cat.key!)) {
-      // Stamp pool_released_at so the sprint-list 30-day cooldown covers deals
-      // released to the pool this way even when they never had a checkout row
-      // (an owned deal marked lost-to-pool otherwise leaves no release signal).
+      // Stamp pool_released_at + reason so the sprint-list cooldown covers deals
+      // released this way even when they never had a checkout row (an owned deal
+      // marked lost-to-pool otherwise leaves no release signal), so a resurfaced
+      // deal can flag "Previously marked lost — <reason>", and so the extra
+      // safeguard (30d cooldown AND a fresh hot signal) can gate it.
       const nowIso = new Date().toISOString();
-      await db.from("crm_deals").update({ owner_pipedrive_id: null, pool_released_at: nowIso, updated_at: nowIso }).eq("id", deal.id);
+      const releaseReason = `${label}${detail ? ` — ${detail}` : ""}`;
+      await db
+        .from("crm_deals")
+        .update({ owner_pipedrive_id: null, pool_released_at: nowIso, pool_released_reason: releaseReason, updated_at: nowIso })
+        .eq("id", deal.id);
       await db.from("crm_reprospect_checkouts").update({ released_at: nowIso }).eq("deal_id", deal.id).is("released_at", null);
       if (canWriteThrough) {
         try {

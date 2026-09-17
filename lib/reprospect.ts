@@ -33,7 +33,15 @@ export async function resolveReprospect(
     if (deal) {
       await db
         .from("crm_deals")
-        .update({ owner_pipedrive_id: args.repPipedriveId, owner_email: args.repEmail, updated_at: new Date().toISOString() })
+        // Clear any lost-to-pool release marks: taking real ownership again
+        // resets the "previously marked lost" gate/flag for future pool cycles.
+        .update({
+          owner_pipedrive_id: args.repPipedriveId,
+          owner_email: args.repEmail,
+          pool_released_at: null,
+          pool_released_reason: null,
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", deal.id);
       if (deal.pipedrive_deal_id) {
         await enqueuePdSync(db, "deal_update", { dealId: deal.pipedrive_deal_id, fields: { owner_id: args.repPipedriveId } });

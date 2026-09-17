@@ -55,6 +55,7 @@ interface DealData {
   sprints: { id: string; name: string; owner: string }[];
   dealSprintIds: string[];
   sprintOwners: string[];
+  existingOwner?: { name: string | null; orderName: string | null; orderAt: string | null; version: string | null } | null;
 }
 
 export type AiProfile = NonNullable<DealData["aiProfile"]>;
@@ -694,6 +695,36 @@ export function DealDetailView({
         </>
       )}
       {warn && <div className="viewsub" style={{ color: "var(--warn)" }}>{warn}</div>}
+
+      {/* Existing camper owner — a rep should never cold-prospect someone who
+          already bought. Shows in the dialer too (this view is embedded there). */}
+      {data.existingOwner && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+            background: "var(--accent-2-soft)",
+            border: "1px solid rgba(196,154,108,0.45)",
+            borderRadius: 10,
+            padding: "8px 12px",
+            fontSize: 13.5,
+            fontWeight: 600,
+            marginBottom: 12,
+          }}
+          title="Matched to the Demo Finder camper-owner directory by contact or email"
+        >
+          🏕 Existing camper owner
+          {data.existingOwner.version && <span style={{ color: "var(--text-2)", fontWeight: 500 }}>· {data.existingOwner.version}</span>}
+          {data.existingOwner.orderName && <span style={{ color: "var(--text-3)", fontWeight: 500 }}>· {data.existingOwner.orderName}</span>}
+          {data.existingOwner.orderAt && (
+            <span style={{ color: "var(--text-3)", fontWeight: 500 }}>
+              · bought {new Date(data.existingOwner.orderAt).toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "short", year: "numeric" })}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Deal properties + outcome — one labeled row above everything. */}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end", margin: "0 0 18px" }}>
