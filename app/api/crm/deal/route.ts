@@ -661,13 +661,12 @@ export async function POST(req: NextRequest) {
     // deal, so Cainen's PD account (24723797) fronts the pool there — the
     // mirror translates him back to null on sync.
     const newOwner = body.ownerPipedriveId ?? null;
-    // Assigning a real owner clears any lost-to-pool release marks (resets the
-    // "previously marked lost" gate/flag); unassigning to the pool leaves them.
+    // Assigning a real owner resets the lost-to-pool GATE (clears pool_released_at
+    // so cooldown/fresh-signal don't keep gating a re-engaged deal), but keeps
+    // pool_released_reason as permanent lost history — status reverts to 'open'
+    // on release, so that column is the only structured record it was lost.
     const ownerPatch: Record<string, unknown> = { owner_pipedrive_id: newOwner, updated_at: new Date().toISOString() };
-    if (newOwner != null) {
-      ownerPatch.pool_released_at = null;
-      ownerPatch.pool_released_reason = null;
-    }
+    if (newOwner != null) ownerPatch.pool_released_at = null;
     const { error } = await db.from("crm_deals").update(ownerPatch).eq("id", deal.id);
     if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
     const pdOwner = newOwner ?? 24723797;

@@ -726,6 +726,24 @@ export function DealDetailView({
         </div>
       )}
 
+      {/* Lost history — a lost-to-pool release reverts status to 'open', so this
+          is the deal's only at-a-glance record it was previously marked lost. */}
+      {d.pool_released_reason && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: 12.5,
+            color: "var(--text-3)",
+            marginBottom: 12,
+          }}
+          title="Marked lost and released back to the reprospecting pool — the deal reopened but this history is kept"
+        >
+          ⚠️ Previously marked lost — {d.pool_released_reason}
+        </div>
+      )}
+
       {/* Deal properties + outcome — one labeled row above everything. */}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end", margin: "0 0 18px" }}>
         {!embedded && propertyFields}

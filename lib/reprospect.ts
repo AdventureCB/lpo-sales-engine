@@ -33,13 +33,14 @@ export async function resolveReprospect(
     if (deal) {
       await db
         .from("crm_deals")
-        // Clear any lost-to-pool release marks: taking real ownership again
-        // resets the "previously marked lost" gate/flag for future pool cycles.
+        // Clear the release TIMESTAMP so the 30-day-cooldown + fresh-signal gate
+        // resets (a re-engaged deal that later goes stale shouldn't stay gated),
+        // but KEEP pool_released_reason as permanent lost history — a lost-to-pool
+        // deal reverts status to 'open', so this is the only record it was lost.
         .update({
           owner_pipedrive_id: args.repPipedriveId,
           owner_email: args.repEmail,
           pool_released_at: null,
-          pool_released_reason: null,
           updated_at: new Date().toISOString(),
         })
         .eq("id", deal.id);
