@@ -683,8 +683,12 @@ export async function POST(req: NextRequest) {
     }
 
     if (["no_interest", "no_contact", "not_qualified"].includes(cat.key!)) {
-      await db.from("crm_deals").update({ owner_pipedrive_id: null, updated_at: new Date().toISOString() }).eq("id", deal.id);
-      await db.from("crm_reprospect_checkouts").update({ released_at: new Date().toISOString() }).eq("deal_id", deal.id).is("released_at", null);
+      // Stamp pool_released_at so the sprint-list 30-day cooldown covers deals
+      // released to the pool this way even when they never had a checkout row
+      // (an owned deal marked lost-to-pool otherwise leaves no release signal).
+      const nowIso = new Date().toISOString();
+      await db.from("crm_deals").update({ owner_pipedrive_id: null, pool_released_at: nowIso, updated_at: nowIso }).eq("id", deal.id);
+      await db.from("crm_reprospect_checkouts").update({ released_at: nowIso }).eq("deal_id", deal.id).is("released_at", null);
       if (canWriteThrough) {
         try {
           await updateDealStage(deal.pipedrive_deal_id!, { owner_id: 24723797 });

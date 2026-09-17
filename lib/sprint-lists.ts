@@ -63,14 +63,18 @@ export const DEFAULT_CONFIG: SprintListConfig = {
   cainen_owner_pipedrive_id: null, // null = pool is UNASSIGNED deals (owner is null)
 };
 
-// ── Confirmation Pipeline exclusion ─────────────────────────────────────────
-// Deals in the Confirmation Pipeline are post-sale confirmation work — they
-// must never appear on call lists. Stage uuids cached 10 min per process.
+// ── Out-of-scope pipeline exclusion ─────────────────────────────────────────
+// Deals in the Confirmation Pipeline (post-sale confirmation work) and the Base
+// Camp List (an admin holding pipeline, not prospecting material) must never
+// appear on call lists. Stage uuids cached 10 min per process.
 let confStageCache: { ids: string[]; at: number } | null = null;
 
 async function confirmationStageIds(db: SupabaseClient): Promise<string[]> {
   if (confStageCache && Date.now() - confStageCache.at < 600_000) return confStageCache.ids;
-  const { data: pipes } = await db.from("crm_pipelines").select("id").ilike("name", "%confirmation%");
+  const { data: pipes } = await db
+    .from("crm_pipelines")
+    .select("id")
+    .or("name.ilike.%confirmation%,name.ilike.%base camp%");
   const pids = (pipes ?? []).map((p) => p.id);
   let ids: string[] = [];
   if (pids.length) {
@@ -81,7 +85,7 @@ async function confirmationStageIds(db: SupabaseClient): Promise<string[]> {
   return ids;
 }
 
-/** Chainable filter: drop deals sitting in a Confirmation Pipeline stage. */
+/** Chainable filter: drop deals sitting in an out-of-scope pipeline stage. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function notConfirmation<T = any>(q: T, ids: string[]): T {
   return ids.length ? (q as any).not("stage_id", "in", `(${ids.join(",")})`) : q;
@@ -845,56 +849,37 @@ async function claimReprospect(
     else lockedByOther.add(c.deal_id);
   }
 
-  // ── Post-lease cooldown (Kyle 9/10) ──────────────────────────────────────
-  // A hot-signal deal whose lease expired used to be re-claimed by the NEXT
-  // rep immediately (it still tops the signal ranking) — cycling rep→rep
-  // forever while the rest of the pool starved. A deal whose holder ACTUALLY
-  // attempted contact now rests 14 days after the lease ends; a lease where
-  // the rep never dialed recirculates immediately (their neglect shouldn't
-  // bury the lead).
-  const COOLDOWN_MS = 14 * 86_400_000;
+  // ── Hard 30-day between-rep cooldown (Kyle 9/17) ─────────────────────────
+  // A deal released to the pool — a lease that expired OR a rep marking it
+  // lost-to-pool — sits out a HARD 30 days before ANY rep can re-claim it,
+  // regardless of whether the prior holder attempted contact. The old rule
+  // (14 days, and only if the holder actually dialed) let un-worked deals
+  // recirculate rep→rep the next morning, recycling the same numbers while the
+  // uncontacted backlog starved. Two release signals feed it: a checkout that
+  // ended (released or expired) within 30d, and crm_deals.pool_released_at
+  // (set when a lost-to-pool release leaves no checkout row).
+  const COOLDOWN_MS = 30 * 86_400_000;
   const cooldown = new Set<string>();
   {
     const nowMs = Date.now();
     const cutoffIso = new Date(nowMs - COOLDOWN_MS).toISOString();
+    // (a) Lease/hold ended within the window (released_at, else expires_at).
     const { data: endedRows } = await db
       .from("crm_reprospect_checkouts")
-      .select("deal_id, rep_email, checked_out_at, expires_at, released_at")
-      .gt("expires_at", cutoffIso)
-      .limit(2000);
-    const ended = (endedRows ?? [])
-      .map((c) => ({ ...c, endMs: Date.parse(c.released_at ?? c.expires_at) }))
-      .filter((c) => c.endMs <= nowMs && c.endMs > nowMs - COOLDOWN_MS);
-    if (ended.length) {
-      const dealIds = [...new Set(ended.map((c) => c.deal_id))];
-      const { data: repRows } = await db.from("reps").select("id, email").not("email", "is", null);
-      const repIdByEmail = new Map((repRows ?? []).map((r) => [r.email as string, r.id as string]));
-      const attempts: { rep_id: string; crm_deal_id: string | null; started_at: string }[] = [];
-      for (let i = 0; i < dealIds.length; i += 200) {
-        const { data: calls } = await db
-          .from("call_events")
-          .select("rep_id, crm_deal_id, started_at")
-          .in("crm_deal_id", dealIds.slice(i, i + 200))
-          .eq("direction", "outgoing")
-          .gte("started_at", new Date(nowMs - 2 * COOLDOWN_MS).toISOString())
-          .limit(2000);
-        attempts.push(...((calls ?? []) as any[]));
-      }
-      for (const c of ended) {
-        const holderId = repIdByEmail.get(c.rep_email);
-        const startMs = Date.parse(c.checked_out_at ?? c.expires_at) - 0;
-        // Attempt window: the hold itself plus a day of slack (dispositions
-        // can land just after expiry while the list is still open).
-        const attempted = attempts.some(
-          (a) =>
-            a.crm_deal_id === c.deal_id &&
-            a.rep_id === holderId &&
-            Date.parse(a.started_at) >= startMs - 3600_000 &&
-            Date.parse(a.started_at) <= c.endMs + 86_400_000
-        );
-        if (attempted) cooldown.add(c.deal_id);
-      }
+      .select("deal_id, expires_at, released_at")
+      .or(`released_at.gte.${cutoffIso},expires_at.gte.${cutoffIso}`)
+      .limit(5000);
+    for (const c of endedRows ?? []) {
+      const endMs = Date.parse(c.released_at ?? c.expires_at);
+      if (endMs <= nowMs && endMs > nowMs - COOLDOWN_MS) cooldown.add(c.deal_id);
     }
+    // (b) Marked lost-to-pool within the window (no checkout row to read).
+    const { data: releasedDeals } = await db
+      .from("crm_deals")
+      .select("id")
+      .gte("pool_released_at", cutoffIso)
+      .limit(5000);
+    for (const d of releasedDeals ?? []) cooldown.add(d.id);
   }
 
   // Load the whole open pool (paginated) with contacts + emails.
@@ -910,6 +895,18 @@ async function claimReprospect(
   // Slot-partitioned fill (Lists 1/2): only contacts in the slot's timezones;
   // unknown-TZ pool deals stay List 3 material.
   pool = pool.filter((d) => !d.crm_contacts?.dnc); // Do-Not-Contact is absolute
+  // Existing customers (Demo Finder camper owners) aren't prospecting material —
+  // drop any pool deal whose contact matches an owner by crm id or email.
+  const owners = await existingOwnerKeys(db);
+  if (owners.emails.size || owners.contactIds.size) {
+    pool = pool.filter((d) => {
+      if (d.contact_id && owners.contactIds.has(d.contact_id)) return false;
+      for (const e of d.crm_contacts?.emails ?? []) {
+        if (owners.emails.has((e.value ?? "").trim().toLowerCase())) return false;
+      }
+      return true;
+    });
+  }
   if (opts.tzOffsets) {
     pool = pool.filter((d) => opts.tzOffsets!.includes(d.crm_contacts?.tz_offset));
   }
@@ -997,6 +994,26 @@ async function claimReprospect(
   }
 
   return items.filter((it) => it.phone);
+}
+
+/**
+ * Existing camper owners (Demo Finder directory) — reps shouldn't cold-prospect
+ * people who already bought. Returns lowercased emails + linked crm contact ids
+ * so a pool deal can be matched by either. Cached 10 min per process.
+ */
+let ownerKeyCache: { emails: Set<string>; contactIds: Set<string>; at: number } | null = null;
+async function existingOwnerKeys(db: SupabaseClient): Promise<{ emails: Set<string>; contactIds: Set<string> }> {
+  if (ownerKeyCache && Date.now() - ownerKeyCache.at < 600_000) return ownerKeyCache;
+  const rows = await fetchAll((f, t) => db.from("camper_owners").select("email, contact_id").range(f, t));
+  const emails = new Set<string>();
+  const contactIds = new Set<string>();
+  for (const r of rows) {
+    const e = (r.email ?? "").trim().toLowerCase();
+    if (e) emails.add(e);
+    if (r.contact_id) contactIds.add(r.contact_id);
+  }
+  ownerKeyCache = { emails, contactIds, at: Date.now() };
+  return ownerKeyCache;
 }
 
 async function latestSignalByEmail(db: SupabaseClient): Promise<Map<string, string>> {
