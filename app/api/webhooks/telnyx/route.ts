@@ -453,18 +453,28 @@ export async function POST(req: NextRequest) {
       // falls through to the VM timer below and the miss shows in the bell.
       let busy = false;
       if (sipLogin && toN) {
-        // A "live" row must be plausibly live: answered, or dialed within the
-        // last 3 minutes. Dials REJECTED at Telnyx's concurrent-call limit
-        // never get a hangup webhook, so their rows sit open (answered_at
-        // null) and — under the old open-row-within-2h rule — marked the rep
-        // busy for hours: every inbound went straight to VM (Logan, 9/9).
+        // A "live" row must be plausibly live. Signals, in order:
+        //   • status in progress (bridged/answered/in-progress) — the ground
+        //     truth for a call that's actually up, at ANY age;
+        //   • answered_at set (belt-and-suspenders — for OUTBOUND browser calls
+        //     answered_at is only computed at HANGUP, so it's null mid-call);
+        //   • dialed within the last 3 minutes (the ring/setup window before a
+        //     status webhook lands).
+        // The 3-min-only rule (pre-9/17) went BLIND on any outbound call past 3
+        // minutes because outbound answered_at stays null until hangup — so an
+        // inbound would transfer a SECOND INVITE into a rep already ~5+ min into
+        // a call and drop it (Jesse, 9/17: 4.5-min call dropped when an inbound
+        // rang → user_busy → shared-ring fallback into his shared credential).
+        // 'initiated' rows (dials REJECTED at the concurrent-call limit — no
+        // hangup webhook ever, answered_at null) are deliberately NOT matched by
+        // status, so they can't mark a rep busy for hours (Logan, 9/9).
         const { data: live } = await db
           .from("call_events")
           .select("quo_call_id")
           .neq("quo_call_id", `tx:${p.call_session_id}`)
           .is("completed_at", null)
           .gte("started_at", new Date(Date.now() - 2 * 3600_000).toISOString())
-          .or(`answered_at.not.is.null,started_at.gte.${new Date(Date.now() - 3 * 60_000).toISOString()}`)
+          .or(`status.in.(bridged,answered,"in-progress"),answered_at.not.is.null,started_at.gte.${new Date(Date.now() - 3 * 60_000).toISOString()}`)
           .contains("raw", { data: { object: { participants: [toN] } } })
           .limit(1);
         busy = Boolean(live?.length);
