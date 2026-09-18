@@ -44,11 +44,20 @@ const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[]
     ],
   },
   {
+    header: "📊 Analytics",
+    collapsible: true,
+    items: [
+      { label: "Overview", href: "/analytics", adminOnly: true },
+      { label: "🔍 Google", href: "/analytics/google", adminOnly: true },
+      { label: "📘 Meta", href: "/analytics/meta", adminOnly: true },
+      { label: "💰 Ad ROI", href: "/ad-roi", adminOnly: true },
+    ],
+  },
+  {
     header: "Admin",
     items: [
       { label: "Quality", href: "/quality", adminOnly: true },
       { label: "⏱ Engagement", href: "/engagement", adminOnly: true },
-      { label: "💰 Ad ROI", href: "/ad-roi", adminOnly: true },
       { label: "Commissions", href: "/commissions", adminOnly: true },
     ],
   },
