@@ -13,8 +13,9 @@ import { env, envOptional } from "./env";
 export const ADS_SCOPE = "https://www.googleapis.com/auth/adwords";
 export const REDIRECT_PATH = "/api/google-ads/callback";
 const STATE_KEY = "google_ads_oauth";
-// The Ads API retires versions aggressively; probe in order and cache what works.
-const VERSIONS = ["v21", "v20", "v19", "v18"];
+// The Ads API retires versions aggressively (v18-v21 all 404'd by 9/18/2026);
+// probe newest-first and cache what works. Bump this list when these sunset.
+const VERSIONS = ["v24", "v23", "v22"];
 
 export function adsRedirectUri(): string {
   const base = envOptional("APP_URL") ?? "https://lpo-sales-engine.vercel.app";
