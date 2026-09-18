@@ -11,7 +11,7 @@ const OVERDUE_WINDOW_MS = 14 * 86_400_000; // don't resurface ancient tasks
 type NotifGroup = "deals" | "notes" | "comms" | "tasks";
 interface Notif {
   key: string; // stable id for dismissal
-  kind: "sms" | "whatsapp" | "missed_call" | "overdue" | "intake" | "mention";
+  kind: "sms" | "whatsapp" | "missed_call" | "inbound_email" | "overdue" | "intake" | "mention";
   group: NotifGroup;
   title: string;
   sub: string | null;
@@ -59,8 +59,19 @@ export async function GET() {
     .limit(15);
   if (!isAdmin && user.repId) callQ = callQ.eq("rep_id", user.repId);
 
+  // Inbound emails swept into contact timelines (meta.mailbox = receiving rep).
+  let emailQ = db
+    .from("crm_activities")
+    .select("id, subject, occurred_at, meta, crm_contacts ( name, crm_deals ( id, status, owner_pipedrive_id ) )")
+    .eq("type", "email")
+    .eq("meta->>direction", "inbound")
+    .gte("occurred_at", since)
+    .order("occurred_at", { ascending: false })
+    .limit(15);
+  if (!isAdmin) emailQ = emailQ.eq("meta->>mailbox", user.email);
+
   const mentionSince = new Date(Date.now() - 7 * 86_400_000).toISOString();
-  const [{ data: sms }, { data: wa }, { data: missed }, { data: due }, { data: intake }, { data: mentions }] = await Promise.all([
+  const [{ data: sms }, { data: wa }, { data: missed }, { data: due }, { data: intake }, { data: mentions }, { data: emails }] = await Promise.all([
     smsQ,
     db
       .from("whatsapp_messages")
@@ -96,6 +107,7 @@ export async function GET() {
       .gte("occurred_at", mentionSince)
       .order("occurred_at", { ascending: false })
       .limit(20),
+    emailQ,
   ]);
 
   const intakeItems = (intake ?? []).filter((e: any) => {
@@ -173,6 +185,20 @@ export async function GET() {
       href: e.crm_deals?.id ? `/crm/deal/${e.crm_deals.id}` : "/crm",
       isNew: e.created_at > seenAt,
     })),
+    ...(emails ?? []).map((e: any): Notif => {
+      const deals = (e.crm_contacts?.crm_deals ?? []) as any[];
+      const deal = deals.find((d) => d.status === "open") ?? deals[0];
+      return {
+        key: `email:${e.id}`,
+        kind: "inbound_email",
+        group: "comms",
+        title: `✉️ ${e.crm_contacts?.name ?? "New email"}`,
+        sub: (e.subject ?? "").replace(/^📥\s*/, "").slice(0, 90) || "New email",
+        at: e.occurred_at,
+        href: deal?.id ? `/crm/deal/${deal.id}` : "/crm",
+        isNew: e.occurred_at > seenAt,
+      };
+    }),
     ...(mentions ?? []).map((a: any): Notif => ({
       key: `mention:${a.id}`,
       kind: "mention",

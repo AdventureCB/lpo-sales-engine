@@ -314,15 +314,17 @@ export async function sweepGmailAccount(
 
     // Match any counterpart to a CRM contact.
     let contactId: string | null = null;
+    let contactName: string | null = null;
     let matchedEmail: string | null = null;
     for (const email of counterparts) {
       const { data: contact } = await db
         .from("crm_contacts")
-        .select("id")
+        .select("id, name")
         .contains("emails", JSON.stringify([{ value: email }]))
         .maybeSingle();
       if (contact) {
         contactId = contact.id;
+        contactName = (contact as any).name ?? null;
         matchedEmail = email;
         break;
       }
@@ -342,6 +344,7 @@ export async function sweepGmailAccount(
       }).then((r) => r.json());
       bodyText = extractBody(full.payload)?.slice(0, 50_000) ?? bodyText;
     } catch {}
+    const mailbox = account.user_email;
     const { error } = await db.from("crm_activities").upsert(
       {
         pd_key: key,
@@ -351,11 +354,73 @@ export async function sweepGmailAccount(
         body: bodyText,
         actor: inbound ? matchedEmail : account.user_email,
         occurred_at: occurredAt,
-        meta: { gmail: true, direction: inbound ? "inbound" : "outbound" },
+        // mailbox = the rep who received/sent it (drives inbound-email notifs +
+        // the reply-reminder owner; the email's own actor is the counterpart).
+        meta: { gmail: true, direction: inbound ? "inbound" : "outbound", mailbox },
       },
       { onConflict: "pd_key", ignoreDuplicates: true }
     );
-    if (!error) matched++;
+    if (error) continue;
+    matched++;
+
+    // Same logic as a missed call: an inbound email raises a PAST-DUE reply task
+    // (stamped at the email time) so it surfaces on the deal page + calendar and
+    // in notifications. One OPEN reply task per contact+mailbox (a follow-up
+    // email bumps its time). The rep replying — from anywhere — resolves it, so
+    // the next sweep's outbound match clears the reminder.
+    try {
+      const { data: deal } = await db
+        .from("crm_deals")
+        .select("id, status")
+        .eq("contact_id", contactId)
+        .order("status", { ascending: true })
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const crmDealId = (deal as any)?.id ?? null;
+      if (inbound) {
+        const subject = `✉️ Reply — email from ${contactName || matchedEmail}`;
+        const tmeta = { inbound_email: true, mailbox, reply_to: matchedEmail };
+        const { data: openTask } = await db
+          .from("crm_activities")
+          .select("id")
+          .eq("type", "task")
+          .eq("meta->>inbound_email", "true")
+          .eq("meta->>mailbox", mailbox)
+          .eq("contact_id", contactId)
+          .is("done_at", null)
+          .order("created_at", { ascending: false })
+          .limit(1);
+        if (openTask && openTask.length) {
+          await db
+            .from("crm_activities")
+            .update({ due_at: occurredAt, occurred_at: occurredAt, subject, deal_id: crmDealId, meta: tmeta })
+            .eq("id", openTask[0].id);
+        } else {
+          await db.from("crm_activities").insert({
+            type: "task",
+            subject,
+            due_at: occurredAt,
+            occurred_at: occurredAt,
+            actor: mailbox,
+            contact_id: contactId,
+            deal_id: crmDealId,
+            meta: tmeta,
+          });
+        }
+      } else {
+        await db
+          .from("crm_activities")
+          .update({ done_at: new Date().toISOString() })
+          .eq("type", "task")
+          .eq("meta->>inbound_email", "true")
+          .eq("meta->>mailbox", mailbox)
+          .eq("contact_id", contactId)
+          .is("done_at", null);
+      }
+    } catch (e) {
+      console.error("inbound-email reply task failed", e);
+    }
   }
 
   await db
