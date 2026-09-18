@@ -40,7 +40,8 @@ export async function GET(req: Request) {
         await db.from("ad_campaign_daily").upsert(
           {
             channel: "facebook", campaign_id: c.campaignId, day: c.day, name: c.name,
-            spend_cents: c.spendCents, clicks: c.clicks, updated_at: new Date().toISOString(),
+            spend_cents: c.spendCents, clicks: c.clicks, impressions: c.impressions,
+            updated_at: new Date().toISOString(),
           },
           { onConflict: "channel,campaign_id,day" }
         );
@@ -60,7 +61,9 @@ export async function GET(req: Request) {
         await db.from("ad_campaign_daily").upsert(
           {
             channel: "google", campaign_id: c.campaignId, day: c.day, name: c.name,
-            spend_cents: c.spendCents, clicks: c.clicks, updated_at: new Date().toISOString(),
+            spend_cents: c.spendCents, clicks: c.clicks, impressions: c.impressions,
+            impr_share: c.imprShare, lost_is_budget: c.lostIsBudget, lost_is_rank: c.lostIsRank,
+            updated_at: new Date().toISOString(),
           },
           { onConflict: "channel,campaign_id,day" }
         );

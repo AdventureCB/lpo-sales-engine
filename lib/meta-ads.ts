@@ -15,6 +15,7 @@ export interface CampaignDay {
   day: string; // YYYY-MM-DD
   spendCents: number;
   clicks: number;
+  impressions: number;
 }
 
 export function metaConfigured(): boolean {
@@ -29,7 +30,7 @@ export async function metaCampaignDaily(since: string, until: string): Promise<C
   const out: CampaignDay[] = [];
   let url =
     `https://graph.facebook.com/${V}/${account}/insights` +
-    `?level=campaign&fields=campaign_id,campaign_name,spend,clicks` +
+    `?level=campaign&fields=campaign_id,campaign_name,spend,clicks,impressions` +
     `&time_increment=1&limit=500` +
     `&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}` +
     `&access_token=${encodeURIComponent(token)}`;
@@ -46,6 +47,7 @@ export async function metaCampaignDaily(since: string, until: string): Promise<C
         day: row.date_start,
         spendCents: Math.round(Number(row.spend ?? 0) * 100),
         clicks: Math.round(Number(row.clicks ?? 0)),
+        impressions: Math.round(Number(row.impressions ?? 0)),
       });
     }
     url = d?.paging?.next ?? null;

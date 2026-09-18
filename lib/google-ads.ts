@@ -97,6 +97,10 @@ export interface GoogleCampaignDay {
   day: string;
   spendCents: number;
   clicks: number;
+  impressions: number;
+  imprShare: number | null; // search_impression_share (0-1); null for non-search
+  lostIsBudget: number | null; // search_budget_lost_impression_share
+  lostIsRank: number | null; // search_rank_lost_impression_share
 }
 
 /** Campaign daily via GAQL searchStream; probes API versions and caches the working one. */
@@ -109,7 +113,9 @@ export async function googleCampaignDaily(
   const cid = env("GOOGLE_ADS_CUSTOMER_ID").replace(/-/g, "");
   const login = envOptional("GOOGLE_ADS_LOGIN_CUSTOMER_ID")?.replace(/-/g, "");
   const query =
-    `SELECT campaign.id, campaign.name, metrics.cost_micros, metrics.clicks, segments.date ` +
+    `SELECT campaign.id, campaign.name, metrics.cost_micros, metrics.clicks, metrics.impressions, ` +
+    `metrics.search_impression_share, metrics.search_budget_lost_impression_share, ` +
+    `metrics.search_rank_lost_impression_share, segments.date ` +
     `FROM campaign WHERE segments.date BETWEEN '${since}' AND '${until}'`;
 
   const st = await adsState(db);
@@ -143,12 +149,23 @@ export async function googleCampaignDaily(
     const out: GoogleCampaignDay[] = [];
     for (const chunk of Array.isArray(chunks) ? chunks : [chunks]) {
       for (const row of chunk?.results ?? []) {
+        const m = row.metrics ?? {};
+        // IS metrics are absent for non-search campaigns; Google also returns a
+        // sentinel for "< 10%" — treat missing/negative as null (unknown).
+        const rate = (v: unknown): number | null => {
+          const n = Number(v);
+          return v == null || !Number.isFinite(n) || n < 0 ? null : n;
+        };
         out.push({
           campaignId: String(row.campaign?.id ?? ""),
           name: String(row.campaign?.name ?? "").slice(0, 200),
           day: row.segments?.date ?? "",
-          spendCents: Math.round(Number(row.metrics?.costMicros ?? 0) / 10_000),
-          clicks: Math.round(Number(row.metrics?.clicks ?? 0)),
+          spendCents: Math.round(Number(m.costMicros ?? 0) / 10_000),
+          clicks: Math.round(Number(m.clicks ?? 0)),
+          impressions: Math.round(Number(m.impressions ?? 0)),
+          imprShare: rate(m.searchImpressionShare),
+          lostIsBudget: rate(m.searchBudgetLostImpressionShare),
+          lostIsRank: rate(m.searchRankLostImpressionShare),
         });
       }
     }
