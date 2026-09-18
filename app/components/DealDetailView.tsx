@@ -19,7 +19,7 @@ import { CloseLikelihood } from "./CloseLikelihood";
 
 interface DealData {
   deal: any;
-  timeline: { id?: string; kind: string; at: string | null; title: string; body: string | null; media?: string[] | null; audio?: string | null; actor: string | null; done: boolean; due: string | null; callId?: string | null; reviewable?: boolean; reviewed?: boolean; emailDirection?: string | null; track?: { opens: number; clicks: number; lastOpenAt: string | null } | null }[];
+  timeline: { id?: string; kind: string; at: string | null; title: string; body: string | null; media?: string[] | null; audio?: string | null; actor: string | null; done: boolean; due: string | null; callId?: string | null; reviewable?: boolean; reviewed?: boolean; emailDirection?: string | null; callbackPhone?: string | null; track?: { opens: number; clicks: number; lastOpenAt: string | null } | null }[];
   callStats: { dials: number; answered: number; talkS: number; inbound: number } | null;
   adInfo?: { source: string | null; campaign: string | null; channel: string | null; leadCostCents: number | null } | null;
   adJourney?: {
@@ -1496,6 +1496,16 @@ export function DealDetailView({
                         </span>
                       </div>
                       <span style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                        {(t as any).callbackPhone && (
+                          <button
+                            className="btn"
+                            style={{ padding: "4px 10px", fontSize: 13 }}
+                            title={`Call back ${(t as any).callbackPhone}`}
+                            onClick={() => void newOutboundCall((t as any).callbackPhone).catch(() => {})}
+                          >
+                            📞 Call back
+                          </button>
+                        )}
                         <button
                           className="btn ghost"
                           style={{ padding: "4px 10px", fontSize: 13 }}

@@ -146,6 +146,8 @@ export async function GET(req: NextRequest) {
       done: Boolean(a.done_at),
       due: a.due_at,
       priority: Boolean((a as any).meta?.priority),
+      // Missed-call callback tasks carry the number to dial back.
+      callbackPhone: (a as any).meta?.callback_phone ?? null,
       // Same "real call material" bar as the AI profiler (Quo summaries live
       // in call bodies until the port; short dial stubs aren't reviewable).
       reviewable: a.type === "call" && (a.body ?? "").trim().length > 120,

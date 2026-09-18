@@ -589,21 +589,30 @@ export async function POST(req: NextRequest) {
       // "voicemail" put empty 📼 entries in the bell (Joyce Edwards 9/8).
       // recording.saved upgrades to "voicemail" when a message actually lands.
       if (!answeredAt) update.classification = "no_answer";
+      let repEmail: string | null = null;
       if (p.to) {
         const { data: rep } = await db
           .from("reps")
-          .select("id")
+          .select("id, email")
           .eq("telnyx_number", normalizePhone(p.to) ?? p.to)
           .maybeSingle();
-        if (rep) update.rep_id = rep.id;
+        if (rep) {
+          update.rep_id = rep.id;
+          repEmail = (rep as any).email ?? null;
+        }
       }
+      let contactId: string | null = null;
+      let contactDnc = false;
+      let crmDealId: string | null = null;
       if (peer) {
         const { data: contact } = await db
           .from("crm_contacts")
-          .select("id")
+          .select("id, dnc")
           .contains("phones", JSON.stringify([{ e164: peer }]))
           .maybeSingle();
         if (contact) {
+          contactId = contact.id;
+          contactDnc = Boolean((contact as any).dnc);
           const { data: deal } = await db
             .from("crm_deals")
             .select("id, pipedrive_deal_id, status")
@@ -614,6 +623,7 @@ export async function POST(req: NextRequest) {
             .maybeSingle();
           // Native-first: link by crm id always; PD id rides along when it exists.
           if (deal) {
+            crmDealId = deal.id;
             update.crm_deal_id = deal.id;
             if (deal.pipedrive_deal_id) update.deal_id = deal.pipedrive_deal_id;
           }
@@ -621,6 +631,52 @@ export async function POST(req: NextRequest) {
       }
       if (Object.keys(update).length > 0) {
         await db.from("call_events").update(update).eq("quo_call_id", `tx:${p.call_session_id}`);
+      }
+
+      // Missed inbound → a PAST-DUE callback task stamped at the call time, so it
+      // surfaces on the deal page + calendar with a call-back button. No deal or
+      // contact → it still lands on the rep's calendar (actor = the called rep).
+      // DNC contacts are skipped. One OPEN callback task per caller number: a
+      // repeat missed call bumps the existing task's time instead of piling up.
+      if (!answeredAt && peer && repEmail && !contactDnc) {
+        try {
+          const { data: row } = await db
+            .from("call_events")
+            .select("started_at")
+            .eq("quo_call_id", `tx:${p.call_session_id}`)
+            .maybeSingle();
+          const callAt = (row as any)?.started_at ?? (p as any).start_time ?? new Date().toISOString();
+          const pretty = peer.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, "($1) $2-$3");
+          const meta = { missed_call: true, callback_phone: peer, call_session: String(p.call_session_id) };
+          const subject = `📞 Call back — missed call from ${pretty}`;
+          const { data: openTask } = await db
+            .from("crm_activities")
+            .select("id")
+            .eq("meta->>callback_phone", peer)
+            .eq("meta->>missed_call", "true")
+            .is("done_at", null)
+            .order("created_at", { ascending: false })
+            .limit(1);
+          if (openTask && openTask.length) {
+            await db
+              .from("crm_activities")
+              .update({ due_at: callAt, occurred_at: callAt, subject, contact_id: contactId, deal_id: crmDealId, meta })
+              .eq("id", openTask[0].id);
+          } else {
+            await db.from("crm_activities").insert({
+              type: "task",
+              subject,
+              due_at: callAt,
+              occurred_at: callAt,
+              actor: repEmail,
+              contact_id: contactId,
+              deal_id: crmDealId,
+              meta,
+            });
+          }
+        } catch (e) {
+          console.error("missed-call callback task failed", e);
+        }
       }
       // Drop the first-leg stub (initiated-only twin) so one inbound call
       // is one row.

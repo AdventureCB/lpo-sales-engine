@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { isAllDayIso, activityDayKey, splitDue, combineDue } from "@/lib/allday";
 import { TimeSelect } from "./TimeSelect";
 import { useRoster } from "./useRoster";
+import { newOutboundCall } from "./phoneClient";
 
 interface CalActivity {
   id: string;
@@ -18,6 +19,8 @@ interface CalActivity {
   dealTitle: string | null;
   contactName: string | null;
   ownerPipedriveId: number | null;
+  callbackPhone?: string | null;
+  missedCall?: boolean;
 }
 
 type CalView = "month" | "week" | "day";
@@ -43,6 +46,10 @@ function weekStart(d: Date): Date {
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function fmtPhone(e164: string) {
+  return e164.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, "($1) $2-$3");
 }
 
 export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
@@ -176,12 +183,14 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
   };
 
   const markDone = async (a: CalActivity) => {
-    if (!a.dealId || saving) return;
+    if (saving) return;
     setSaving(true);
-    await fetch("/api/crm/deal", {
+    // Deal-linked → the deal endpoint (keeps Pipedrive in sync); deal-less
+    // (e.g. a missed-call callback with no matched deal) → the calendar endpoint.
+    await fetch(a.dealId ? "/api/crm/deal" : "/api/calendar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: a.dealId, completeActivityId: a.id }),
+      body: JSON.stringify(a.dealId ? { id: a.dealId, completeActivityId: a.id } : { action: "done", ids: [a.id] }),
     }).catch(() => {});
     setSaving(false);
     void load();
@@ -244,18 +253,31 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
       </span>
       {detailed && (
         <>
-          {a.contactName && (
+          {(a.contactName || a.callbackPhone) && (
             <span style={{ color: "var(--text-3)", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {a.contactName}
+              {a.contactName ?? fmtPhone(a.callbackPhone!)}
             </span>
           )}
           {isAdmin && a.actor && (
             <span className="chip stage" style={{ flexShrink: 0, fontSize: 11.5 }}>{a.actor.split("@")[0]}</span>
           )}
-          {!a.done && a.dealId && (
+          {!a.done && a.callbackPhone && (
+            <button
+              className="btn"
+              style={{ marginLeft: "auto", padding: "3px 10px", fontSize: 12.5, flexShrink: 0 }}
+              title={`Call back ${fmtPhone(a.callbackPhone)}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                void newOutboundCall(a.callbackPhone!).catch(() => {});
+              }}
+            >
+              📞 Call back
+            </button>
+          )}
+          {!a.done && (a.dealId || a.callbackPhone) && (
             <button
               className="btn ghost"
-              style={{ marginLeft: "auto", padding: "3px 10px", fontSize: 12.5, flexShrink: 0 }}
+              style={{ marginLeft: a.callbackPhone ? 0 : "auto", padding: "3px 10px", fontSize: 12.5, flexShrink: 0 }}
               disabled={saving}
               onClick={(e) => {
                 e.stopPropagation();
@@ -450,37 +472,51 @@ export function CalendarView({ isAdmin }: { isAdmin: boolean }) {
               <span style={{ fontSize: 20 }}>{TYPE_ICON[modalAct.type] ?? "•"}</span>
               <b style={{ fontSize: 16 }}>{modalAct.subject ?? modalAct.type}</b>
             </div>
-            {(modalAct.dealTitle || modalAct.contactName) && (
+            {(modalAct.dealTitle || modalAct.contactName || modalAct.callbackPhone) && (
               <div className="viewsub" style={{ marginTop: 0 }}>
-                {modalAct.dealTitle}{modalAct.contactName ? ` · ${modalAct.contactName}` : ""}
+                {modalAct.dealTitle}
+                {modalAct.contactName ? `${modalAct.dealTitle ? " · " : ""}${modalAct.contactName}` : ""}
+                {!modalAct.contactName && modalAct.callbackPhone ? fmtPhone(modalAct.callbackPhone) : ""}
               </div>
             )}
 
-            <div style={{ display: "grid", gap: 8, margin: "14px 0" }}>
-              <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text-3)" }}>Reschedule</div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <input type="date" className="vmsel" value={edDate} onChange={(e) => setEdDate(e.target.value)} onInput={(e) => setEdDate((e.target as HTMLInputElement).value)} style={{ flex: 1 }} />
-                <TimeSelect value={edTime} onChange={setEdTime} allowEmpty style={{ width: 130 }} />
+            {/* Reschedule writes via the deal endpoint — only offered for
+                deal-linked activities. A deal-less missed-call callback is
+                actioned with Call back / Done instead. */}
+            {modalAct.dealId && (
+              <div style={{ display: "grid", gap: 8, margin: "14px 0" }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text-3)" }}>Reschedule</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input type="date" className="vmsel" value={edDate} onChange={(e) => setEdDate(e.target.value)} onInput={(e) => setEdDate((e.target as HTMLInputElement).value)} style={{ flex: 1 }} />
+                  <TimeSelect value={edTime} onChange={setEdTime} allowEmpty style={{ width: 130 }} />
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Pick &quot;All day&quot; for a no-specific-time activity.</div>
+                {!modalAct.done && (
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: !edTime ? "var(--text-3)" : edPriority ? "#d99a2b" : "var(--text-2)", cursor: edTime ? "pointer" : "not-allowed", fontWeight: edPriority ? 700 : 400 }} title={edTime ? "Countdown banner 10 min before + popup at the scheduled time (your reminders only)" : "Set a time first — a countdown needs a clock time"}>
+                    <input type="checkbox" checked={edPriority && !!edTime} disabled={!edTime} onChange={(e) => setEdPriority(e.target.checked)} style={{ cursor: edTime ? "pointer" : "not-allowed" }} />
+                    ⭐ Priority — remind me with a countdown{!edTime ? " (needs a time)" : ""}
+                  </label>
+                )}
               </div>
-              <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>Pick &quot;All day&quot; for a no-specific-time activity.</div>
-              {!modalAct.done && (
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: !edTime ? "var(--text-3)" : edPriority ? "#d99a2b" : "var(--text-2)", cursor: edTime ? "pointer" : "not-allowed", fontWeight: edPriority ? 700 : 400 }} title={edTime ? "Countdown banner 10 min before + popup at the scheduled time (your reminders only)" : "Set a time first — a countdown needs a clock time"}>
-                  <input type="checkbox" checked={edPriority && !!edTime} disabled={!edTime} onChange={(e) => setEdPriority(e.target.checked)} style={{ cursor: edTime ? "pointer" : "not-allowed" }} />
-                  ⭐ Priority — remind me with a countdown{!edTime ? " (needs a time)" : ""}
-                </label>
-              )}
-            </div>
+            )}
 
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button className="btn primary" disabled={!edDate || saving} onClick={reschedule}>
-                {saving ? "Saving…" : "Save"}
-              </button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
+              {modalAct.dealId && (
+                <button className="btn primary" disabled={!edDate || saving} onClick={reschedule}>
+                  {saving ? "Saving…" : "Save"}
+                </button>
+              )}
+              {modalAct.callbackPhone && (
+                <button className="btn" onClick={() => void newOutboundCall(modalAct.callbackPhone!).catch(() => {})}>
+                  📞 Call back
+                </button>
+              )}
               {modalAct.dealId && (
                 <button className="btn" onClick={() => router.push(`/crm/deal/${modalAct.dealId}`)}>
                   View deal in CRM →
                 </button>
               )}
-              {!modalAct.done && modalAct.dealId && (
+              {!modalAct.done && (modalAct.dealId || modalAct.callbackPhone) && (
                 <button className="btn ghost" disabled={saving} onClick={async () => { await markDone(modalAct); setModalAct(null); }}>
                   ✓ Mark done
                 </button>

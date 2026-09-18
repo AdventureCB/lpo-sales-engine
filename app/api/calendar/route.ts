@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
   const { data, error } = await db
     .from("crm_activities")
     .select(
-      "id, type, subject, due_at, done_at, actor, deal_id, meta, crm_deals ( id, title, owner_pipedrive_id, crm_contacts ( name ) )"
+      "id, type, subject, due_at, done_at, actor, deal_id, contact_id, meta, crm_contacts ( name ), crm_deals ( id, title, owner_pipedrive_id, crm_contacts ( name ) )"
     )
     .not("due_at", "is", null)
     .gte("due_at", start)
@@ -54,8 +54,11 @@ export async function GET(req: NextRequest) {
       actor: a.actor,
       dealId: a.crm_deals?.id ?? null,
       dealTitle: a.crm_deals?.title ?? null,
-      contactName: a.crm_deals?.crm_contacts?.name ?? null,
+      contactName: a.crm_contacts?.name ?? a.crm_deals?.crm_contacts?.name ?? null,
       ownerPipedriveId: a.crm_deals?.owner_pipedrive_id ?? null,
+      // Missed-call callback tasks: dial-back number + flag (may have no deal).
+      callbackPhone: a.meta?.callback_phone ?? null,
+      missedCall: Boolean(a.meta?.missed_call),
     })),
     truncated: rows.length >= 1000,
   });
