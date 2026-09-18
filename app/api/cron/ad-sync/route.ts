@@ -41,6 +41,7 @@ export async function GET(req: Request) {
           {
             channel: "facebook", campaign_id: c.campaignId, day: c.day, name: c.name,
             spend_cents: c.spendCents, clicks: c.clicks, impressions: c.impressions,
+            conv_value_cents: c.convValueCents, conversions: c.conversions,
             updated_at: new Date().toISOString(),
           },
           { onConflict: "channel,campaign_id,day" }
@@ -63,6 +64,7 @@ export async function GET(req: Request) {
             channel: "google", campaign_id: c.campaignId, day: c.day, name: c.name,
             spend_cents: c.spendCents, clicks: c.clicks, impressions: c.impressions,
             impr_share: c.imprShare, lost_is_budget: c.lostIsBudget, lost_is_rank: c.lostIsRank,
+            conv_value_cents: c.convValueCents, conversions: c.conversions,
             updated_at: new Date().toISOString(),
           },
           { onConflict: "channel,campaign_id,day" }

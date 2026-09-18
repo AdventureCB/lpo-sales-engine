@@ -16,6 +16,16 @@ export interface CampaignDay {
   spendCents: number;
   clicks: number;
   impressions: number;
+  convValueCents: number; // platform-reported purchase value
+  conversions: number; // platform-reported purchase count
+}
+
+/** Pull the purchase metric from a Meta actions/action_values array. */
+function purchaseVal(arr: any): number {
+  const list: any[] = Array.isArray(arr) ? arr : [];
+  const pick = (type: string) => list.find((a) => a?.action_type === type);
+  const row = pick("omni_purchase") ?? pick("offsite_conversion.fb_pixel_purchase") ?? pick("purchase");
+  return row ? Number(row.value ?? 0) : 0;
 }
 
 export function metaConfigured(): boolean {
@@ -30,7 +40,7 @@ export async function metaCampaignDaily(since: string, until: string): Promise<C
   const out: CampaignDay[] = [];
   let url =
     `https://graph.facebook.com/${V}/${account}/insights` +
-    `?level=campaign&fields=campaign_id,campaign_name,spend,clicks,impressions` +
+    `?level=campaign&fields=campaign_id,campaign_name,spend,clicks,impressions,actions,action_values` +
     `&time_increment=1&limit=500` +
     `&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}` +
     `&access_token=${encodeURIComponent(token)}`;
@@ -48,6 +58,8 @@ export async function metaCampaignDaily(since: string, until: string): Promise<C
         spendCents: Math.round(Number(row.spend ?? 0) * 100),
         clicks: Math.round(Number(row.clicks ?? 0)),
         impressions: Math.round(Number(row.impressions ?? 0)),
+        convValueCents: Math.round(purchaseVal(row.action_values) * 100),
+        conversions: Math.round(purchaseVal(row.actions)),
       });
     }
     url = d?.paging?.next ?? null;

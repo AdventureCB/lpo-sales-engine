@@ -101,6 +101,8 @@ export interface GoogleCampaignDay {
   imprShare: number | null; // search_impression_share (0-1); null for non-search
   lostIsBudget: number | null; // search_budget_lost_impression_share
   lostIsRank: number | null; // search_rank_lost_impression_share
+  convValueCents: number; // metrics.conversions_value (platform-reported)
+  conversions: number; // metrics.conversions
 }
 
 /** Run a GAQL query via searchStream; probes API versions and caches the working
@@ -154,6 +156,7 @@ export async function googleCampaignDaily(
 ): Promise<GoogleCampaignDay[]> {
   const query =
     `SELECT campaign.id, campaign.name, metrics.cost_micros, metrics.clicks, metrics.impressions, ` +
+    `metrics.conversions, metrics.conversions_value, ` +
     `metrics.search_impression_share, metrics.search_budget_lost_impression_share, ` +
     `metrics.search_rank_lost_impression_share, segments.date ` +
     `FROM campaign WHERE segments.date BETWEEN '${since}' AND '${until}'`;
@@ -177,6 +180,8 @@ export async function googleCampaignDaily(
         imprShare: rate(m.searchImpressionShare),
         lostIsBudget: rate(m.searchBudgetLostImpressionShare),
         lostIsRank: rate(m.searchRankLostImpressionShare),
+        convValueCents: Math.round(Number(m.conversionsValue ?? 0) * 100),
+        conversions: Number(m.conversions ?? 0),
       } as GoogleCampaignDay;
     })
     .filter((x) => x.campaignId && x.day);
