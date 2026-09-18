@@ -103,21 +103,12 @@ export interface GoogleCampaignDay {
   lostIsRank: number | null; // search_rank_lost_impression_share
 }
 
-/** Campaign daily via GAQL searchStream; probes API versions and caches the working one. */
-export async function googleCampaignDaily(
-  db: SupabaseClient,
-  since: string,
-  until: string
-): Promise<GoogleCampaignDay[]> {
+/** Run a GAQL query via searchStream; probes API versions and caches the working
+ * one. Returns the flattened result rows (across stream chunks). */
+async function runGaql(db: SupabaseClient, query: string): Promise<any[]> {
   const token = await accessToken(db);
   const cid = env("GOOGLE_ADS_CUSTOMER_ID").replace(/-/g, "");
   const login = envOptional("GOOGLE_ADS_LOGIN_CUSTOMER_ID")?.replace(/-/g, "");
-  const query =
-    `SELECT campaign.id, campaign.name, metrics.cost_micros, metrics.clicks, metrics.impressions, ` +
-    `metrics.search_impression_share, metrics.search_budget_lost_impression_share, ` +
-    `metrics.search_rank_lost_impression_share, segments.date ` +
-    `FROM campaign WHERE segments.date BETWEEN '${since}' AND '${until}'`;
-
   const st = await adsState(db);
   const tryVersions = st?.api_version ? [st.api_version, ...VERSIONS.filter((v) => v !== st.api_version)] : VERSIONS;
 
@@ -146,30 +137,80 @@ export async function googleCampaignDaily(
       );
     }
     const chunks = JSON.parse(text);
-    const out: GoogleCampaignDay[] = [];
+    const out: any[] = [];
     for (const chunk of Array.isArray(chunks) ? chunks : [chunks]) {
-      for (const row of chunk?.results ?? []) {
-        const m = row.metrics ?? {};
-        // IS metrics are absent for non-search campaigns; Google also returns a
-        // sentinel for "< 10%" — treat missing/negative as null (unknown).
-        const rate = (v: unknown): number | null => {
-          const n = Number(v);
-          return v == null || !Number.isFinite(n) || n < 0 ? null : n;
-        };
-        out.push({
-          campaignId: String(row.campaign?.id ?? ""),
-          name: String(row.campaign?.name ?? "").slice(0, 200),
-          day: row.segments?.date ?? "",
-          spendCents: Math.round(Number(m.costMicros ?? 0) / 10_000),
-          clicks: Math.round(Number(m.clicks ?? 0)),
-          impressions: Math.round(Number(m.impressions ?? 0)),
-          imprShare: rate(m.searchImpressionShare),
-          lostIsBudget: rate(m.searchBudgetLostImpressionShare),
-          lostIsRank: rate(m.searchRankLostImpressionShare),
-        });
-      }
+      for (const row of chunk?.results ?? []) out.push(row);
     }
-    return out.filter((x) => x.campaignId && x.day);
+    return out;
   }
   throw new Error(`google ads: no working API version (${lastErr})`);
+}
+
+/** Campaign daily (spend/clicks/impressions/impression-share) via GAQL. */
+export async function googleCampaignDaily(
+  db: SupabaseClient,
+  since: string,
+  until: string
+): Promise<GoogleCampaignDay[]> {
+  const query =
+    `SELECT campaign.id, campaign.name, metrics.cost_micros, metrics.clicks, metrics.impressions, ` +
+    `metrics.search_impression_share, metrics.search_budget_lost_impression_share, ` +
+    `metrics.search_rank_lost_impression_share, segments.date ` +
+    `FROM campaign WHERE segments.date BETWEEN '${since}' AND '${until}'`;
+  // IS metrics are absent for non-search campaigns; Google also returns a
+  // sentinel for "< 10%" — treat missing/negative as null (unknown).
+  const rate = (v: unknown): number | null => {
+    const n = Number(v);
+    return v == null || !Number.isFinite(n) || n < 0 ? null : n;
+  };
+  const rows = await runGaql(db, query);
+  return rows
+    .map((row) => {
+      const m = row.metrics ?? {};
+      return {
+        campaignId: String(row.campaign?.id ?? ""),
+        name: String(row.campaign?.name ?? "").slice(0, 200),
+        day: row.segments?.date ?? "",
+        spendCents: Math.round(Number(m.costMicros ?? 0) / 10_000),
+        clicks: Math.round(Number(m.clicks ?? 0)),
+        impressions: Math.round(Number(m.impressions ?? 0)),
+        imprShare: rate(m.searchImpressionShare),
+        lostIsBudget: rate(m.searchBudgetLostImpressionShare),
+        lostIsRank: rate(m.searchRankLostImpressionShare),
+      } as GoogleCampaignDay;
+    })
+    .filter((x) => x.campaignId && x.day);
+}
+
+/**
+ * gclid → campaign map from the click_view report. click_view REQUIRES a single
+ * day per query and only covers the last ~90 days, so we loop day-by-day; one
+ * bad day never kills the rest. Lets first-party Google clicks (which carry a
+ * gclid but often an unusable utm_campaign) resolve to a real campaign for ROAS.
+ */
+export async function googleClickCampaigns(
+  db: SupabaseClient,
+  since: string,
+  until: string
+): Promise<{ gclid: string; campaignId: string; day: string }[]> {
+  const out: { gclid: string; campaignId: string; day: string }[] = [];
+  const start = new Date(`${since}T00:00:00Z`);
+  const end = new Date(`${until}T00:00:00Z`);
+  for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+    const day = d.toISOString().slice(0, 10);
+    try {
+      const rows = await runGaql(
+        db,
+        `SELECT click_view.gclid, campaign.id, segments.date FROM click_view WHERE segments.date = '${day}'`
+      );
+      for (const row of rows) {
+        const gclid = row.clickView?.gclid;
+        const campaignId = row.campaign?.id ? String(row.campaign.id) : null;
+        if (gclid && campaignId) out.push({ gclid: String(gclid), campaignId, day: row.segments?.date ?? day });
+      }
+    } catch {
+      // click_view unavailable for this day (outside 90d window, or access) — skip.
+    }
+  }
+  return out;
 }

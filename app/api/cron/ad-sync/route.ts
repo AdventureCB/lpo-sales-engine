@@ -76,6 +76,24 @@ export async function GET(req: Request) {
     campaignErrors.push(`google: ${e instanceof Error ? e.message : "failed"}`);
   }
 
+  // ── 1c. Google gclid → campaign map (click_view) for per-campaign ROAS ──
+  let clickRows = 0;
+  try {
+    const { adsConfigured, googleClickCampaigns } = await import("@/lib/google-ads");
+    if (adsConfigured()) {
+      const clicks = await googleClickCampaigns(db, since, until);
+      for (let i = 0; i < clicks.length; i += 500) {
+        const batch = clicks.slice(i, i + 500).map((c) => ({
+          gclid: c.gclid, campaign_id: c.campaignId, day: c.day, updated_at: new Date().toISOString(),
+        }));
+        await db.from("google_click_map").upsert(batch, { onConflict: "gclid" });
+        clickRows += batch.length;
+      }
+    }
+  } catch (e) {
+    campaignErrors.push(`google clicks: ${e instanceof Error ? e.message : "failed"}`);
+  }
+
   // ── 2. Roll campaigns up to channel-level ad_spend ──
   // Channel spend/clicks = the sum of that channel's campaigns for the day.
   // (Replaces TW's summary API; honest platform spend for the feeds we own.)
@@ -109,6 +127,7 @@ export async function GET(req: Request) {
     ok: true,
     spendDays,
     campaignRows,
+    clickRows,
     spendRows,
     ...(campaignErrors.length ? { campaignErrors } : {}),
     ...(spendErrors.length ? { spendErrors } : {}),
