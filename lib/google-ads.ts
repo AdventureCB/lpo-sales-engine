@@ -187,18 +187,64 @@ export async function googleCampaignDaily(
     .filter((x) => x.campaignId && x.day);
 }
 
+export interface GoogleAdDay {
+  adId: string;
+  name: string;
+  adGroupId: string | null;
+  adGroupName: string | null;
+  campaignId: string;
+  day: string;
+  spendCents: number;
+  clicks: number;
+  impressions: number;
+  convValueCents: number;
+  conversions: number;
+}
+
+/** Ad-level daily metrics (ad within ad group within campaign) — feeds ad_ad_daily. */
+export async function googleAdDaily(db: SupabaseClient, since: string, until: string): Promise<GoogleAdDay[]> {
+  const query =
+    `SELECT ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group_ad.ad.type, ad_group.id, ad_group.name, campaign.id, ` +
+    `metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions, metrics.conversions_value, segments.date ` +
+    `FROM ad_group_ad WHERE segments.date BETWEEN '${since}' AND '${until}'`;
+  const rows = await runGaql(db, query);
+  return rows
+    .map((row) => {
+      const ad = row.adGroupAd?.ad ?? {};
+      const m = row.metrics ?? {};
+      const id = String(ad.id ?? "");
+      // Most Google ads (RSAs, PMax) have no name — label by type + id tail.
+      const name = ad.name ? String(ad.name) : `${String(ad.type ?? "AD").replace(/_/g, " ").toLowerCase()} …${id.slice(-6)}`;
+      return {
+        adId: id,
+        name: name.slice(0, 200),
+        adGroupId: row.adGroup?.id ? String(row.adGroup.id) : null,
+        adGroupName: row.adGroup?.name ? String(row.adGroup.name).slice(0, 200) : null,
+        campaignId: String(row.campaign?.id ?? ""),
+        day: row.segments?.date ?? "",
+        spendCents: Math.round(Number(m.costMicros ?? 0) / 10_000),
+        clicks: Math.round(Number(m.clicks ?? 0)),
+        impressions: Math.round(Number(m.impressions ?? 0)),
+        convValueCents: Math.round(Number(m.conversionsValue ?? 0) * 100),
+        conversions: Number(m.conversions ?? 0),
+      } as GoogleAdDay;
+    })
+    .filter((x) => x.adId && x.campaignId && x.day);
+}
+
 /**
- * gclid → campaign map from the click_view report. click_view REQUIRES a single
- * day per query and only covers the last ~90 days, so we loop day-by-day; one
- * bad day never kills the rest. Lets first-party Google clicks (which carry a
- * gclid but often an unusable utm_campaign) resolve to a real campaign for ROAS.
+ * gclid → campaign / ad group / ad map from the click_view report. click_view
+ * REQUIRES a single day per query and only covers the last ~90 days, so we loop
+ * day-by-day; one bad day never kills the rest. Lets first-party Google clicks
+ * (which carry a gclid but often an unusable utm_campaign) resolve to a real
+ * campaign — and ad — for ROAS.
  */
 export async function googleClickCampaigns(
   db: SupabaseClient,
   since: string,
   until: string
-): Promise<{ gclid: string; campaignId: string; day: string }[]> {
-  const out: { gclid: string; campaignId: string; day: string }[] = [];
+): Promise<{ gclid: string; campaignId: string; adGroupId: string | null; adId: string | null; day: string }[]> {
+  const out: { gclid: string; campaignId: string; adGroupId: string | null; adId: string | null; day: string }[] = [];
   const start = new Date(`${since}T00:00:00Z`);
   const end = new Date(`${until}T00:00:00Z`);
   for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
@@ -206,12 +252,23 @@ export async function googleClickCampaigns(
     try {
       const rows = await runGaql(
         db,
-        `SELECT click_view.gclid, campaign.id, segments.date FROM click_view WHERE segments.date = '${day}'`
+        `SELECT click_view.gclid, campaign.id, ad_group.id, click_view.ad_group_ad, segments.date FROM click_view WHERE segments.date = '${day}'`
       );
       for (const row of rows) {
         const gclid = row.clickView?.gclid;
         const campaignId = row.campaign?.id ? String(row.campaign.id) : null;
-        if (gclid && campaignId) out.push({ gclid: String(gclid), campaignId, day: row.segments?.date ?? day });
+        // ad_group_ad resource name: customers/{c}/adGroupAds/{adGroupId}~{adId}
+        const res: string | null = row.clickView?.adGroupAd ?? null;
+        const adId = res && res.includes("~") ? res.split("~").pop() ?? null : null;
+        if (gclid && campaignId) {
+          out.push({
+            gclid: String(gclid),
+            campaignId,
+            adGroupId: row.adGroup?.id ? String(row.adGroup.id) : null,
+            adId,
+            day: row.segments?.date ?? day,
+          });
+        }
       }
     } catch {
       // click_view unavailable for this day (outside 90d window, or access) — skip.

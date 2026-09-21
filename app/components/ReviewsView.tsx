@@ -42,10 +42,12 @@ const STANDARD_AVG = 3.0;
 const VOLUME_CURVE = 0.6;
 const VERDICT_DOT: Record<Verdict, string> = { hit: "var(--good, #3aa76d)", partial: "#d99a2b", missed: "var(--crit, #c9502e)" };
 
-type Period = "day" | "week" | "month";
-const PERIOD_LABEL: Record<Period, string> = { day: "Today", week: "This week", month: "This month" };
+type BasePeriod = "day" | "week" | "month";
+type Period = BasePeriod | "lastweek" | "custom";
+const PERIOD_LABEL: Record<Period, string> = { day: "Today", week: "This week", lastweek: "Last week", month: "This month", custom: "Custom" };
+const FAR_FUTURE = new Date(8.64e15);
 
-function periodStart(p: Period, offset = 0): Date {
+function periodStart(p: BasePeriod, offset = 0): Date {
   const d = new Date();
   if (p === "day") {
     d.setHours(0, 0, 0, 0);
@@ -239,15 +241,22 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<Period>("week");
+  const [customStart, setCustomStart] = useState(() => new Intl.DateTimeFormat("en-CA").format(new Date(Date.now() - 13 * 86_400_000)));
+  const [customEnd, setCustomEnd] = useState(() => new Intl.DateTimeFormat("en-CA").format(new Date()));
   const [repSel, setRepSel] = useState<string | null>(null); // admin drill-down
   const [growthMetric, setGrowthMetric] = useState<"avg" | "quality">("avg");
 
+  // The API defaults to a 90-day look-back; a custom range that starts earlier
+  // asks for more (the comparison period needs data before the range too).
+  const since = period === "custom"
+    ? new Intl.DateTimeFormat("en-CA").format(new Date(new Date(`${customStart}T00:00:00`).getTime() - (new Date(`${customEnd}T00:00:00`).getTime() - new Date(`${customStart}T00:00:00`).getTime()) - 86_400_000))
+    : null;
   useEffect(() => {
-    fetch("/api/reviews/stats")
+    fetch(`/api/reviews/stats${since ? `?since=${since}` : ""}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then(setData)
       .catch((e) => setError(String(e)));
-  }, []);
+  }, [since]);
 
   const all = data?.reviews ?? [];
   const reps = useMemo(
@@ -258,13 +267,27 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
   const mine = useMemo(() => (focusRep ? all.filter((r) => r.rep === focusRep) : all), [all, focusRep]);
   const scoredMine = useMemo(() => mine.filter((r) => !r.excluded), [mine]);
 
-  const curStart = periodStart(period, 0);
-  const prevStart = periodStart(period, 1);
-  const cur = useMemo(() => aggregate(scoredMine.filter((r) => new Date(r.at) >= curStart)), [scoredMine, period]); // eslint-disable-line react-hooks/exhaustive-deps
-  const prev = useMemo(
-    () => aggregate(scoredMine.filter((r) => new Date(r.at) >= prevStart && new Date(r.at) < curStart)),
-    [scoredMine, period] // eslint-disable-line react-hooks/exhaustive-deps
-  );
+  // Current window [curStart, curEnd) and the equal-length window before it.
+  // Today/this-week/this-month run to now; last week and custom are bounded.
+  const win = (() => {
+    if (period === "lastweek") {
+      const s = periodStart("week", 1), e = periodStart("week", 0);
+      return { curStart: s, curEnd: e, prevStart: periodStart("week", 2), prevEnd: s };
+    }
+    if (period === "custom") {
+      const s = new Date(`${customStart}T00:00:00`), e = new Date(`${customEnd}T23:59:59.999`);
+      const len = Math.max(e.getTime() - s.getTime(), 86_400_000);
+      return { curStart: s, curEnd: e, prevStart: new Date(s.getTime() - len), prevEnd: s };
+    }
+    const s = periodStart(period, 0);
+    return { curStart: s, curEnd: FAR_FUTURE, prevStart: periodStart(period, 1), prevEnd: s };
+  })();
+  const { curStart, curEnd, prevStart, prevEnd } = win;
+  const curKey = `${curStart.getTime()}|${curEnd.getTime()}`;
+  const inCur = (at: string) => { const t = new Date(at).getTime(); return t >= curStart.getTime() && t < curEnd.getTime(); };
+  const inPrev = (at: string) => { const t = new Date(at).getTime(); return t >= prevStart.getTime() && t < prevEnd.getTime(); };
+  const cur = useMemo(() => aggregate(scoredMine.filter((r) => inCur(r.at))), [scoredMine, curKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const prev = useMemo(() => aggregate(scoredMine.filter((r) => inPrev(r.at))), [scoredMine, curKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const patterns = (data?.patterns ?? []).find((p: any) => p.rep === focusRep) ?? (!isAdmin ? (data?.patterns ?? [])[0] : null);
 
   // Volume curve: reviewed-call counts per rep in the current period, graded
@@ -272,10 +295,10 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
   const volCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const v of data?.volume ?? []) {
-      if (new Date(v.at) >= curStart) counts.set(v.rep, (counts.get(v.rep) ?? 0) + 1);
+      if (inCur(v.at)) counts.set(v.rep, (counts.get(v.rep) ?? 0) + 1);
     }
     return counts;
-  }, [data, period]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [data, curKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const volLeader = [...volCounts.entries()].sort((a, b) => b[1] - a[1])[0] ?? null;
   const volFor = (rep: string | null): { count: number; pct: number | null } => {
     const count = rep ? volCounts.get(rep) ?? 0 : [...volCounts.values()].reduce((a, b) => a + b, 0);
@@ -286,7 +309,7 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
     if (!rep) return null;
     // Team rank rows (every role gets all reps') — the full review list only
     // holds the viewer's own reviews for non-admins.
-    const rows = (data?.rank ?? []).filter((r) => r.rep === rep && new Date(r.at) >= curStart);
+    const rows = (data?.rank ?? []).filter((r) => r.rep === rep && inCur(r.at));
     const scored = rows.filter((r) => r.score != null) as { score: number; bonus?: number }[];
     const eff = (r: { score: number; bonus?: number }) => Math.min(5, r.score + (r.bonus ?? 0));
     const avg = scored.length ? scored.reduce((a, r) => a + eff(r), 0) / scored.length : null;
@@ -305,7 +328,7 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
   // rank total. Two of three metrics are volume-driven, so a shiny average on
   // a handful of calls can't outrank steady volume (Kyle 9/10).
   const board = useMemo(() => {
-    const rows = (data?.rank ?? []).filter((r) => new Date(r.at) >= curStart);
+    const rows = (data?.rank ?? []).filter((r) => inCur(r.at));
     const byRep = new Map<string, { count: number; quality: number; scoreSum: number; scored: number }>();
     for (const rep of reps) byRep.set(rep, { count: 0, quality: 0, scoreSum: 0, scored: 0 });
     for (const r of rows) {
@@ -345,12 +368,12 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
           a.total - b.total || b.quality - a.quality || (b.avg ?? -1) - (a.avg ?? -1) || b.count - a.count
       );
     return placed;
-  }, [data, reps, period]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [data, reps, curKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (error) return <div className="viewsub">Couldn’t load reviews: {error}</div>;
   if (!data) return <div className="viewsub">Loading…</div>;
 
-  const listRows = mine.filter((r) => new Date(r.at) >= curStart);
+  const listRows = mine.filter((r) => inCur(r.at));
 
   const toggleExclude = async (id: string, excluded: boolean) => {
     setData((d) => (d ? { ...d, reviews: d.reviews.map((x) => (x.id === id ? { ...x, excluded } : x)) } : d));
@@ -391,6 +414,21 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
             {PERIOD_LABEL[p]}
           </button>
         ))}
+        {period === "custom" && (
+          <>
+            <input type="date" className="vmsel" value={customStart} max={customEnd} onChange={(e) => setCustomStart(e.target.value)} style={{ width: 150 }} />
+            <span style={{ color: "var(--text-3)" }}>→</span>
+            <input
+              type="date"
+              className="vmsel"
+              value={customEnd}
+              min={customStart}
+              max={new Intl.DateTimeFormat("en-CA").format(new Date())}
+              onChange={(e) => setCustomEnd(e.target.value)}
+              style={{ width: 150 }}
+            />
+          </>
+        )}
         {isAdmin && (
           <select
             className="vmsel"

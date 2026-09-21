@@ -89,21 +89,51 @@ function fmtClock(iso: string | null): string {
 function shiftDate(date: string, days: number): string {
   return new Date(new Date(`${date}T12:00:00Z`).getTime() + days * 86_400_000).toISOString().slice(0, 10);
 }
+function shiftMonth(date: string, n: number): string {
+  const [y, m] = date.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 10);
+}
+/** Monday–Sunday containing the date (ISO strings). */
+function weekBounds(date: string): { start: string; end: string } {
+  const dt = new Date(`${date}T12:00:00Z`);
+  const dow = (dt.getUTCDay() + 6) % 7;
+  const mon = new Date(dt.getTime() - dow * 86_400_000);
+  return { start: mon.toISOString().slice(0, 10), end: new Date(mon.getTime() + 6 * 86_400_000).toISOString().slice(0, 10) };
+}
+function monthBounds(date: string): { start: string; end: string } {
+  const [y, m] = date.split("-").map(Number);
+  const mm = String(m).padStart(2, "0");
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return { start: `${y}-${mm}-01`, end: `${y}-${mm}-${String(last).padStart(2, "0")}` };
+}
+const fmtDay = (d: string, opts: Intl.DateTimeFormatOptions) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", ...opts });
+
+type Mode = "day" | "week" | "month" | "custom";
 
 export function EngagementView() {
-  const [date, setDate] = useState<string>(() =>
-    new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())
-  );
-  const [data, setData] = useState<{ kpiHours: number;
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const [mode, setMode] = useState<Mode>("day");
+  const [date, setDate] = useState<string>(today); // anchor day (day mode = the day; week/month = any day inside)
+  const [customStart, setCustomStart] = useState(() => shiftDate(today, -13));
+  const [customEnd, setCustomEnd] = useState(today);
+  const [data, setData] = useState<{ kpiHours: number; start?: string; end?: string; days?: number; activeDays?: number;
   toolLabels?: Record<string, { label: string; emoji: string }>; reps: RepRow[]; trend: { date: string; byRep: Record<string, number> }[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (d: string) => {
+  const isRange = mode !== "day";
+  const range =
+    mode === "week" ? weekBounds(date)
+    : mode === "month" ? monthBounds(date)
+    : mode === "custom" ? { start: customStart, end: customEnd }
+    : null;
+  const query = range ? `start=${range.start}&end=${range.end}` : `date=${date}`;
+
+  const load = useCallback(async (qs: string) => {
     setLoading(true);
     setError(null);
     try {
-      const r = await fetch(`/api/admin/engagement?date=${d}`);
+      const r = await fetch(`/api/admin/engagement?${qs}`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setData(await r.json());
     } catch (e) {
@@ -114,11 +144,19 @@ export function EngagementView() {
   }, []);
 
   useEffect(() => {
-    void load(date);
-  }, [date, load]);
+    void load(query);
+  }, [query, load]);
 
-  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const kpiS = (data?.kpiHours ?? 4) * 3600;
+  // Range goal = daily KPI × days the TEAM was active in the range (weekends
+  // and holidays don't count against anyone).
+  const goalS = isRange ? kpiS * Math.max(1, data?.activeDays ?? 1) : kpiS;
+  const step = (n: number) => setDate(mode === "month" ? shiftMonth(date, n) : shiftDate(date, mode === "week" ? 7 * n : n));
+  const headline =
+    mode === "day" ? fmtDay(date, { weekday: "short", month: "short", day: "numeric" })
+    : mode === "week" ? `Week of ${fmtDay(range!.start, { month: "short", day: "numeric" })}`
+    : mode === "month" ? fmtDay(range!.start, { month: "long", year: "numeric" })
+    : `${customStart} → ${customEnd}`;
 
   return (
     <div>
@@ -131,14 +169,34 @@ export function EngagementView() {
         pages) is tracked but doesn't count.
       </p>
 
-      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 18 }}>
-        <button className="btn ghost" onClick={() => setDate(shiftDate(date, -1))}>‹</button>
-        <b style={{ fontSize: 15, minWidth: 130, textAlign: "center" }}>
-          {new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
-        </b>
-        <button className="btn ghost" onClick={() => setDate(shiftDate(date, 1))} disabled={date >= today}>›</button>
-        {date !== today && (
-          <button className="btn ghost" style={{ fontSize: 13 }} onClick={() => setDate(today)}>Today</button>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 18, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 4 }}>
+          {(["day", "week", "month", "custom"] as Mode[]).map((m) => (
+            <button key={m} className={`btn ${mode === m ? "primary" : "ghost"}`} style={{ padding: "4px 12px", fontSize: 13 }} onClick={() => setMode(m)}>
+              {m === "day" ? "Day" : m === "week" ? "Week" : m === "month" ? "Month" : "Custom"}
+            </button>
+          ))}
+        </div>
+        {mode !== "custom" ? (
+          <>
+            <button className="btn ghost" onClick={() => step(-1)}>‹</button>
+            <b style={{ fontSize: 15, minWidth: 150, textAlign: "center" }}>{headline}</b>
+            <button className="btn ghost" onClick={() => step(1)} disabled={(range?.start ?? date) > today || (mode === "day" && date >= today)}>›</button>
+            {date !== today && (
+              <button className="btn ghost" style={{ fontSize: 13 }} onClick={() => setDate(today)}>{mode === "day" ? "Today" : mode === "week" ? "This week" : "This month"}</button>
+            )}
+          </>
+        ) : (
+          <>
+            <input type="date" className="vmsel" value={customStart} max={customEnd} onChange={(e) => setCustomStart(e.target.value)} style={{ width: 150 }} />
+            <span style={{ color: "var(--text-3)" }}>→</span>
+            <input type="date" className="vmsel" value={customEnd} min={customStart} max={today} onChange={(e) => setCustomEnd(e.target.value)} style={{ width: 150 }} />
+          </>
+        )}
+        {isRange && data?.days != null && (
+          <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+            {data.days} days · {data.activeDays ?? 0} active · goal {hm(goalS)} ({data.kpiHours}h × active days)
+          </span>
         )}
       </div>
 
@@ -173,20 +231,22 @@ export function EngagementView() {
         ];
         const total = stack.reduce((a, x) => a + x.s, 0);
         const dialerActiveS = r.talkingS - r.inboundTalkS + r.dialingS + (r.surfaces?.["/dialer"] ?? 0);
-        const pct = Math.min(r.engagedS / kpiS, 1);
-        const met = r.engagedS >= kpiS;
+        const pct = Math.min(r.engagedS / goalS, 1);
+        const met = r.engagedS >= goalS;
         return (
-          <div key={r.repId} className="card" style={{ marginBottom: 14, padding: "16px 18px" }}>
+          <div key={r.email || r.repId} className="card" style={{ marginBottom: 14, padding: "16px 18px" }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
               <b style={{ fontSize: 16 }}>{r.name}</b>
               <span style={{ fontSize: 20, fontWeight: 800, color: met ? "var(--good)" : "var(--text-1)" }}>
                 {hm(r.engagedS)}
               </span>
               <span style={{ fontSize: 13, color: "var(--text-3)" }}>
-                engaged {met ? "✓ goal met" : `of ${data.kpiHours}h goal`}
+                engaged {met ? "✓ goal met" : `of ${isRange ? hm(goalS) : `${data.kpiHours}h`} goal`}
+                {isRange && (r as any).activeDays != null ? ` · ${hm(r.engagedS / Math.max(1, (r as any).activeDays))}/active day` : ""}
               </span>
               <span style={{ fontSize: 12.5, color: "var(--text-3)", marginLeft: "auto" }}>
-                {r.dials} dials · {r.connects} connects · {fmtClock(r.firstAt)}–{fmtClock(r.lastAt)}
+                {r.dials} dials · {r.connects} connects ·{" "}
+                {isRange ? `${(r as any).activeDays ?? 0} active days` : `${fmtClock(r.firstAt)}–${fmtClock(r.lastAt)}`}
               </span>
             </div>
 
@@ -253,16 +313,17 @@ export function EngagementView() {
                 {data.trend.map((t) => {
                   const s = t.byRep[r.email] ?? 0;
                   const h = Math.max(3, Math.min(40, (s / kpiS) * 40));
+                  const wide = data.trend.length > 10;
                   return (
                     <div key={t.date} title={`${t.date}: ${hm(s)} engaged`} style={{ textAlign: "center" }}>
-                      <div style={{ width: 26, height: h, borderRadius: 4, background: s >= kpiS ? "var(--good)" : "var(--accent-2)", opacity: t.date === date ? 1 : 0.55 }} />
+                      <div style={{ width: wide ? 12 : 26, height: h, borderRadius: 3, background: s >= kpiS ? "var(--good)" : "var(--accent-2)", opacity: !isRange && t.date !== date ? 0.55 : 1 }} />
                       <div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 3 }}>
-                        {new Date(`${t.date}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "narrow" })}
+                        {wide ? fmtDay(t.date, { day: "numeric" }) : fmtDay(t.date, { weekday: "narrow" })}
                       </div>
                     </div>
                   );
                 })}
-                <span style={{ fontSize: 11.5, color: "var(--text-3)", marginLeft: 6 }}>7-day engaged</span>
+                <span style={{ fontSize: 11.5, color: "var(--text-3)", marginLeft: 6 }}>{data.trend.length}-day engaged · bar = vs {data.kpiHours}h/day</span>
               </div>
             )}
           </div>

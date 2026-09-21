@@ -11,14 +11,23 @@ export const dynamic = "force-dynamic";
  * qualitative patterns. Reps get their own; admins get everyone's (the view
  * builds the group comparison client-side).
  */
-export async function GET() {
+export async function GET(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const db = supabaseAdmin();
   const isAdmin = user.role === "admin";
 
   let repName: string | null = user.repName;
-  const since = new Date(Date.now() - 90 * 86_400_000).toISOString();
+  // Default 90-day look-back; a custom date range on the dashboard passes
+  // ?since=YYYY-MM-DD to reach further back (capped at 400 days).
+  const sinceParam = new URL(req.url).searchParams.get("since");
+  const minSince = new Date(Date.now() - 400 * 86_400_000);
+  let sinceDate = new Date(Date.now() - 90 * 86_400_000);
+  if (sinceParam && /^\d{4}-\d{2}-\d{2}$/.test(sinceParam)) {
+    const d = new Date(`${sinceParam}T00:00:00`);
+    if (!Number.isNaN(d.getTime()) && d < sinceDate) sinceDate = d < minSince ? minSince : d;
+  }
+  const since = sinceDate.toISOString();
 
   let q = db
     .from("call_reviews")

@@ -16,6 +16,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export interface DealAttribution {
   channel: string | null; // paid channel slug, or null for organic
   campaignId: string | null; // "" = paid channel known, campaign unresolved
+  adId: string | null; // Meta: utm_content ad id on the click; Google: click_view map
   source: string | null; // raw source of the attributed touch
 }
 export interface DealAttr {
@@ -50,17 +51,24 @@ async function pageAll(build: (from: number, to: number) => any): Promise<any[]>
 const emailsOf = (contact: any): string[] =>
   ((contact?.emails as any[]) ?? []).map((e) => (e?.value ?? "").trim().toLowerCase()).filter(Boolean);
 
-/** Classify a web_touch as a paid click ({channel, campaignId}) or null. */
-function classifyPaid(t: any, clickMap: Map<string, string>): { channel: string; campaignId: string | null } | null {
+type ClickInfo = { campaignId: string; adId: string | null };
+
+/** Classify a web_touch as a paid click ({channel, campaignId, adId}) or null. */
+function classifyPaid(
+  t: any,
+  clickMap: Map<string, ClickInfo>
+): { channel: string; campaignId: string | null; adId: string | null } | null {
   const src = (t.source ?? "").toLowerCase();
   const isGoogle = !!t.gclid || !!t.gbraid || !!t.wbraid || src === "google";
   const isFacebook = !!t.fbclid || src === "facebook" || src === "instagram" || src === "meta";
-  const numericCamp = t.campaign && /^\d{5,}$/.test(String(t.campaign)) ? String(t.campaign) : null;
+  const numeric = (v: unknown) => (v && /^\d{5,}$/.test(String(v)) ? String(v) : null);
+  const numericCamp = numeric(t.campaign);
   if (isGoogle) {
     const byClick = t.gclid ? clickMap.get(String(t.gclid)) : null;
-    return { channel: "google", campaignId: byClick ?? numericCamp ?? null };
+    return { channel: "google", campaignId: byClick?.campaignId ?? numericCamp ?? null, adId: byClick?.adId ?? numeric(t.content) };
   }
-  if (isFacebook) return { channel: "facebook", campaignId: numericCamp };
+  // Meta's URL template puts {{ad.id}} in utm_content (85% of clicks carry it).
+  if (isFacebook) return { channel: "facebook", campaignId: numericCamp, adId: numeric(t.content) };
   return null;
 }
 
@@ -120,7 +128,7 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
   for (let i = 0; i < vidList.length; i += 300) {
     const { data: touches } = await db
       .from("web_touches")
-      .select("visitor_id, at, source, campaign, gclid, gbraid, wbraid, fbclid")
+      .select("visitor_id, at, source, campaign, content, gclid, gbraid, wbraid, fbclid")
       .in("visitor_id", vidList.slice(i, i + 300));
     for (const t of touches ?? []) {
       (touchesByVid.get(t.visitor_id) ?? touchesByVid.set(t.visitor_id, []).get(t.visitor_id)!).push(t);
@@ -128,11 +136,16 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
     }
   }
 
-  const clickMap = new Map<string, string>();
+  const clickMap = new Map<string, ClickInfo>();
   const gclidList = [...gclids];
   for (let i = 0; i < gclidList.length; i += 500) {
-    const { data: rows } = await db.from("google_click_map").select("gclid, campaign_id").in("gclid", gclidList.slice(i, i + 500));
-    for (const r of rows ?? []) if (r.campaign_id) clickMap.set(String(r.gclid), String(r.campaign_id));
+    const { data: rows } = await db
+      .from("google_click_map")
+      .select("gclid, campaign_id, ad_id")
+      .in("gclid", gclidList.slice(i, i + 500));
+    for (const r of rows ?? []) {
+      if (r.campaign_id) clickMap.set(String(r.gclid), { campaignId: String(r.campaign_id), adId: r.ad_id ? String(r.ad_id) : null });
+    }
   }
 
   const resolve = (contact: any): DealAttribution | null => {
@@ -142,10 +155,10 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
     touches.sort((a, b) => (b.at ?? "").localeCompare(a.at ?? "")); // newest first
     for (const t of touches) {
       const paid = classifyPaid(t, clickMap);
-      if (paid) return { channel: paid.channel, campaignId: paid.campaignId ?? "", source: t.source ?? paid.channel };
+      if (paid) return { channel: paid.channel, campaignId: paid.campaignId ?? "", adId: paid.adId, source: t.source ?? paid.channel };
     }
     const organic = touches.find((t) => t.source);
-    return organic ? { channel: null, campaignId: null, source: String(organic.source) } : null;
+    return organic ? { channel: null, campaignId: null, adId: null, source: String(organic.source) } : null;
   };
 
   const value: AttributedDeals = {

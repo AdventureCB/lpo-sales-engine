@@ -78,7 +78,7 @@ export async function GET(req: Request) {
     campaignErrors.push(`google: ${e instanceof Error ? e.message : "failed"}`);
   }
 
-  // ── 1c. Google gclid → campaign map (click_view) for per-campaign ROAS ──
+  // ── 1c. Google gclid → campaign/ad map (click_view) for per-campaign/ad ROAS ──
   let clickRows = 0;
   try {
     const { adsConfigured, googleClickCampaigns } = await import("@/lib/google-ads");
@@ -86,7 +86,8 @@ export async function GET(req: Request) {
       const clicks = await googleClickCampaigns(db, since, until);
       for (let i = 0; i < clicks.length; i += 500) {
         const batch = clicks.slice(i, i + 500).map((c) => ({
-          gclid: c.gclid, campaign_id: c.campaignId, day: c.day, updated_at: new Date().toISOString(),
+          gclid: c.gclid, campaign_id: c.campaignId, ad_group_id: c.adGroupId, ad_id: c.adId, day: c.day,
+          updated_at: new Date().toISOString(),
         }));
         await db.from("google_click_map").upsert(batch, { onConflict: "gclid" });
         clickRows += batch.length;
@@ -94,6 +95,47 @@ export async function GET(req: Request) {
     }
   } catch (e) {
     campaignErrors.push(`google clicks: ${e instanceof Error ? e.message : "failed"}`);
+  }
+
+  // ── 1d. Ad-level daily for both platforms → ad_ad_daily (campaign expand) ──
+  let adRows = 0;
+  const upsertAds = async (rows: Record<string, unknown>[]) => {
+    for (let i = 0; i < rows.length; i += 500) {
+      await db.from("ad_ad_daily").upsert(rows.slice(i, i + 500), { onConflict: "channel,ad_id,day" });
+      adRows += Math.min(500, rows.length - i);
+    }
+  };
+  try {
+    const { metaConfigured, metaAdDaily } = await import("@/lib/meta-ads");
+    if (metaConfigured()) {
+      const ads = await metaAdDaily(since, until);
+      await upsertAds(
+        ads.map((a) => ({
+          channel: "facebook", campaign_id: a.campaignId, group_id: a.adsetId, group_name: a.adsetName,
+          ad_id: a.adId, name: a.name, day: a.day, spend_cents: a.spendCents, clicks: a.clicks,
+          impressions: a.impressions, conv_value_cents: a.convValueCents, conversions: a.conversions,
+          updated_at: new Date().toISOString(),
+        }))
+      );
+    }
+  } catch (e) {
+    campaignErrors.push(`meta ads: ${e instanceof Error ? e.message : "failed"}`);
+  }
+  try {
+    const { adsConfigured, googleAdDaily } = await import("@/lib/google-ads");
+    if (adsConfigured()) {
+      const ads = await googleAdDaily(db, since, until);
+      await upsertAds(
+        ads.map((a) => ({
+          channel: "google", campaign_id: a.campaignId, group_id: a.adGroupId, group_name: a.adGroupName,
+          ad_id: a.adId, name: a.name, day: a.day, spend_cents: a.spendCents, clicks: a.clicks,
+          impressions: a.impressions, conv_value_cents: a.convValueCents, conversions: a.conversions,
+          updated_at: new Date().toISOString(),
+        }))
+      );
+    }
+  } catch (e) {
+    campaignErrors.push(`google ads-level: ${e instanceof Error ? e.message : "failed"}`);
   }
 
   // ── 2. Roll campaigns up to channel-level ad_spend ──
@@ -130,6 +172,7 @@ export async function GET(req: Request) {
     spendDays,
     campaignRows,
     clickRows,
+    adRows,
     spendRows,
     ...(campaignErrors.length ? { campaignErrors } : {}),
     ...(spendErrors.length ? { spendErrors } : {}),
