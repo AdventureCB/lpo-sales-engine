@@ -1017,6 +1017,15 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
       }
       setVmPlaying(false);
     }
+    // End the leg ourselves once the recording has played. Previously nothing
+    // hung up here — the call lingered until the far-end voicemail system
+    // timed out, leaving trailing dead air on every message (median drop was
+    // 23s connected) and billing the silence. Drops are 18s+ by then, so the
+    // short-call floor never defers this.
+    if (dialMethod === "browser") {
+      hangupOutbound(telnyxCallRef.current);
+      setBrowserCallState(null);
+    }
     hangUp();
     finalize("vm_dropped");
   };

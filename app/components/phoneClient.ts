@@ -768,7 +768,12 @@ export async function newOutboundCall(phone: string): Promise<any> {
 // long — the mic is muted and the BYE is sent when the floor is reached. The
 // rep's UI moves on immediately; only the next dial waits (see newOutboundCall).
 // Unanswered (still-ringing) calls hang up at once — they aren't billed calls.
-const MIN_CONNECTED_MS = 7500;
+// 7.0s is the tightest safe floor: our "active" event trails Telnyx's answer
+// timestamp by a few hundred ms, so 7.0s here is ≥7s on their clock even if
+// they truncate to whole seconds. Kept minimal on purpose — every extra
+// second held open is a second in which a short greeting could reach its
+// beep and record a blank voicemail.
+const MIN_CONNECTED_MS = 7000;
 
 /**
  * Hang up the live outbound call, honoring the short-duration floor. Returns
