@@ -3071,8 +3071,6 @@ function CommBar({
   };
 
   const endCall = () => {
-    // Honors Telnyx's short-duration floor (holds an answered call open,
-    // muted, until ~7.5s connected) — the UI moves to disposition now.
     hangupOutbound(callRef.current);
     setCallState(null);
     setAwaitingDispo(true);

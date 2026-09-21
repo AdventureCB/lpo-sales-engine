@@ -806,9 +806,6 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const endCall = async () => {
     if (!inCall) return;
     if (dialMethod === "browser") {
-      // Honors Telnyx's short-duration floor: an answered call is held open
-      // (muted) until ~7.5s connected, then BYE. Disposition UI opens now; only
-      // the NEXT dial waits for the deferred hangup (newOutboundCall).
       hangupOutbound(telnyxCallRef.current);
       setBrowserCallState(null);
     } else if (window.__TAURI__ && dialMethod !== "web") {
@@ -1019,9 +1016,8 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     }
     // End the leg ourselves once the recording has played. Previously nothing
     // hung up here — the call lingered until the far-end voicemail system
-    // timed out, leaving trailing dead air on every message (median drop was
-    // 23s connected) and billing the silence. Drops are 18s+ by then, so the
-    // short-call floor never defers this.
+    // timed out, leaving trailing dead air on the message and billing the
+    // silence.
     if (dialMethod === "browser") {
       hangupOutbound(telnyxCallRef.current);
       setBrowserCallState(null);
