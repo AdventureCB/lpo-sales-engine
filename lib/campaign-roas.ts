@@ -151,8 +151,16 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
   const resolve = (contact: any): DealAttribution | null => {
     const touches: any[] = [];
     for (const e of emailsOf(contact)) for (const vid of emailToVids.get(e) ?? []) touches.push(...(touchesByVid.get(vid) ?? []));
+    // Off-site captures live in the contact's attribution blob, not the site
+    // beacon: Typeform survey hidden fields (utm_* / fbclid / gclid carried from
+    // a Meta or Google ad straight into the survey — Quote Survey / Survey West
+    // / Survey East leads never touch the website) plus Klaviyo/cart attr_*
+    // props. Same shape as a web_touch (source, campaign, content = ad id,
+    // click ids, at), so they join the same last-paid-click pick.
+    const blob = (contact?.attribution ?? {}) as { first?: any; last?: any; touches?: any[] };
+    for (const t of [...(blob.touches ?? []), blob.last, blob.first]) if (t && typeof t === "object") touches.push(t);
     if (touches.length === 0) return null;
-    touches.sort((a, b) => (b.at ?? "").localeCompare(a.at ?? "")); // newest first
+    touches.sort((a, b) => String(b.at ?? "").localeCompare(String(a.at ?? ""))); // newest first
     for (const t of touches) {
       const paid = classifyPaid(t, clickMap);
       if (paid) return { channel: paid.channel, campaignId: paid.campaignId ?? "", adId: paid.adId, source: t.source ?? paid.channel };
