@@ -6,7 +6,7 @@ import Link from "next/link";
 interface Prev { spendCents: number; convValueCents: number; platformRoas: number | null; revenueCents: number; firstPartyRoas: number | null; leads: number; wonDeals: number }
 interface Chan extends Prev { channel: string; conversions: number; cplCents: number | null; cacCents: number | null; prev: Prev | null }
 interface Totals { spendCents: number; convValueCents: number; platformRoas: number | null; leads: number; wonDeals: number; revenueCents: number; firstPartyRoas: number | null; cplCents: number | null; cacCents: number | null }
-interface Report { start: string; end: string; spanDays: number; compare: { start: string; end: string } | null; channels: Chan[]; totals: Totals; prevTotals: Totals | null; trend: { day: string; byChannel: Record<string, number> }[] }
+interface Report { start: string; end: string; spanDays: number; compare: { start: string; end: string } | null; channels: Chan[]; totals: Totals; prevTotals: Totals | null; trend: { day: string; byChannel: Record<string, number>; revenueCents: number }[] }
 
 const usd = (c: number | null) => (c == null ? "—" : `$${(c / 100).toLocaleString(undefined, { maximumFractionDigits: 0 })}`);
 const roasFmt = (r: number | null) => (r == null ? "—" : `${r.toFixed(2)}×`);
@@ -27,40 +27,62 @@ function Delta({ cur, prev, higherIsBetter = true }: { cur: number | null; prev:
   return <span style={{ fontSize: 11.5, color: good ? "#3a9d5d" : "#e0574a", fontWeight: 600 }}> {chg > 0 ? "▲" : "▼"}{Math.abs(chg * 100).toFixed(0)}%</span>;
 }
 
+const REV_COLOR = "#3a9d5d";
+
+/** Stacked daily spend by channel with attributed won revenue as a line —
+ * both are dollars, so one shared $ axis (never a dual axis). */
 function SpendTrend({ trend }: { trend: Report["trend"] }) {
   if (trend.length < 2) return null;
   const channels = [...new Set(trend.flatMap((d) => Object.keys(d.byChannel)))];
-  const totals = trend.map((d) => channels.reduce((s, c) => s + (d.byChannel[c] ?? 0), 0));
-  const max = Math.max(1, ...totals);
-  const W = 760, H = 150, pad = 4;
+  const spendTotals = trend.map((d) => channels.reduce((s, c) => s + (d.byChannel[c] ?? 0), 0));
+  const max = Math.max(1, ...spendTotals, ...trend.map((d) => d.revenueCents));
+  const W = 760, H = 160, pad = 4;
   const bw = (W - pad * 2) / trend.length;
+  const yOf = (v: number) => H - ((H - 4) * v) / max;
+  const revPts = trend.map((d, i) => ({ x: pad + i * bw + bw / 2, y: yOf(d.revenueCents), v: d.revenueCents, day: d.day }));
+  const hasRevenue = revPts.some((p) => p.v > 0);
   return (
     <div className="card" style={{ padding: "14px 16px", marginBottom: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
-        <div className="panel-h" style={{ margin: 0 }}>Daily spend by channel</div>
-        <div style={{ display: "flex", gap: 12, fontSize: 12 }}>
+        <div className="panel-h" style={{ margin: 0 }}>Daily spend by channel · attributed won revenue</div>
+        <div style={{ display: "flex", gap: 12, fontSize: 12, flexWrap: "wrap" }}>
           {channels.map((c) => (
             <span key={c} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
               <span style={{ width: 10, height: 10, borderRadius: 2, background: colorFor(c) }} /> {CHAN_LABEL[c] ?? c}
             </span>
           ))}
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 14, height: 0, borderTop: `2px solid ${REV_COLOR}` }} /> Won revenue (CRM)
+          </span>
         </div>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 150, marginTop: 8, overflow: "visible" }} preserveAspectRatio="none">
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 160, marginTop: 8, overflow: "visible" }} preserveAspectRatio="none">
         {trend.map((d, i) => {
           let y = H;
           const x = pad + i * bw;
           return channels.map((c) => {
             const v = d.byChannel[c] ?? 0;
             if (v <= 0) return null;
-            const h = ((H - 2) * v) / max;
+            const h = ((H - 4) * v) / max;
             y -= h;
             return <rect key={c} x={x + 1} y={y} width={Math.max(1, bw - 2)} height={h} fill={colorFor(c)} rx={1}><title>{`${d.day} · ${CHAN_LABEL[c] ?? c}: ${usd(v)}`}</title></rect>;
           });
         })}
+        {hasRevenue && (
+          <>
+            <polyline points={revPts.map((p) => `${p.x},${p.y}`).join(" ")} fill="none" stroke={REV_COLOR} strokeWidth={2} vectorEffect="non-scaling-stroke" />
+            {revPts.filter((p) => p.v > 0).map((p) => (
+              <circle key={p.day} cx={p.x} cy={p.y} r={3.5} fill={REV_COLOR} stroke="var(--surface-1)" strokeWidth={1.5} vectorEffect="non-scaling-stroke">
+                <title>{`${p.day} · won revenue: ${usd(p.v)}`}</title>
+              </circle>
+            ))}
+          </>
+        )}
       </svg>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-3)", marginTop: 2 }}>
-        <span>{trend[0].day}</span><span>{trend[trend.length - 1].day}</span>
+        <span>{trend[0].day}</span>
+        <span>peak {usd(max)}</span>
+        <span>{trend[trend.length - 1].day}</span>
       </div>
     </div>
   );

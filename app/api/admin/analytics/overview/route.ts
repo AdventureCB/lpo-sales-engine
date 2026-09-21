@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
-import { campaignRevenue } from "@/lib/campaign-roas";
+import { attributeDeals } from "@/lib/campaign-roas";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
@@ -84,14 +84,26 @@ async function period(db: SupabaseClient, startDay: string, endDay: string, with
     convByChannel.set(r.channel, c);
   }
 
-  // First-party revenue attribution, rolled up to channel.
-  const rev = await campaignRevenue(db, `${startDay}T00:00:00Z`, `${endDay}T23:59:59.999Z`);
+  // First-party revenue attribution (shared cached resolver), rolled up to
+  // channel — plus attributed won revenue per day for the trend line.
+  const { created, won } = await attributeDeals(db, `${startDay}T00:00:00Z`, `${endDay}T23:59:59.999Z`);
   const fpByChannel = new Map<string, { leads: number; won: number; value: number }>();
-  for (const [key, v] of rev) {
-    const ch = key.split("|")[0];
+  const bump = (ch: string, patch: { leads?: number; won?: number; value?: number }) => {
     const cur = fpByChannel.get(ch) ?? { leads: 0, won: 0, value: 0 };
-    cur.leads += v.leads; cur.won += v.wonDeals; cur.value += v.wonValueCents;
+    cur.leads += patch.leads ?? 0; cur.won += patch.won ?? 0; cur.value += patch.value ?? 0;
     fpByChannel.set(ch, cur);
+  };
+  const laDayOf = (iso: string | null) =>
+    iso ? new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date(iso)) : null;
+  const revenueByDay = new Map<string, number>();
+  for (const d of created) if (d.attr?.channel) bump(d.attr.channel, { leads: 1 });
+  for (const d of won) {
+    if (!d.attr?.channel) continue;
+    bump(d.attr.channel, { won: 1, value: d.valueCents });
+    if (withTrend) {
+      const day = laDayOf(d.at);
+      if (day) revenueByDay.set(day, (revenueByDay.get(day) ?? 0) + d.valueCents);
+    }
   }
 
   const allChannels = new Set<string>([...spendByChannel.keys(), ...convByChannel.keys(), ...fpByChannel.keys()]);
@@ -126,8 +138,11 @@ async function period(db: SupabaseClient, startDay: string, endDay: string, with
     cacCents: t.wonDeals > 0 && t.spendCents > 0 ? Math.round(t.spendCents / t.wonDeals) : null,
   };
 
+  // Trend = every day with spend OR attributed revenue, in order.
   const trend = withTrend
-    ? [...trendMap.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([day, byCh]) => ({ day, byChannel: byCh }))
+    ? [...new Set([...trendMap.keys(), ...revenueByDay.keys()])]
+        .sort()
+        .map((day) => ({ day, byChannel: trendMap.get(day) ?? {}, revenueCents: revenueByDay.get(day) ?? 0 }))
     : [];
 
   return { channels, byChannel, totals, trend };

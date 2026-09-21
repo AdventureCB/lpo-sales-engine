@@ -77,29 +77,23 @@ async function fetchAll(build: (from: number, to: number) => any): Promise<any[]
 }
 
 export async function computeLeadCost(db: SupabaseClient, days: number): Promise<LeadCostReport> {
+  const endIso = new Date().toISOString();
   const startIso = new Date(Date.now() - days * 86_400_000).toISOString();
   const startDay = startIso.slice(0, 10);
 
-  const [spendRows, created, won] = await Promise.all([
+  // Attribution is FIRST-PARTY (web_touches via the shared resolver — see
+  // lib/campaign-roas). The legacy contact.attribution blob (Triple Whale-era
+  // stamping, no longer refreshed) is only a fallback for pre-beacon deals.
+  const { attributeDeals } = await import("./campaign-roas");
+  const [spendRows, { created, won }] = await Promise.all([
     fetchAll((f, t) => db.from("ad_spend").select("day, channel, spend_cents").gte("day", startDay).range(f, t)),
-    // "Created" = original Pipedrive add time — mirror created_at reflects
-    // import batches, not real deal creation (blended CAC would be garbage).
-    fetchAll((f, t) =>
-      db
-        .from("crm_deals")
-        .select("id, contact_id, pd_add_time, created_at, crm_contacts ( attribution )")
-        .or(`pd_add_time.gte.${startIso},and(pd_add_time.is.null,created_at.gte.${startIso})`)
-        .range(f, t)
-    ),
-    fetchAll((f, t) =>
-      db
-        .from("crm_deals")
-        .select("id, value_cents, crm_contacts ( attribution )")
-        .eq("status", "won")
-        .gte("won_at", startIso)
-        .range(f, t)
-    ),
+    attributeDeals(db, startIso, endIso),
   ]);
+  const channelOf = (d: { attr: { channel: string | null; source: string | null } | null; contact: any }) => {
+    if (d.attr) return { channel: d.attr.channel, source: d.attr.source };
+    const legacy = contactAdInfo(d.contact?.attribution);
+    return { channel: legacy.channel, source: legacy.source };
+  };
 
   const spendByChannel = new Map<string, number>();
   for (const r of spendRows) {
@@ -110,9 +104,7 @@ export async function computeLeadCost(db: SupabaseClient, days: number): Promise
   const organicSources: Record<string, number> = {};
   let attributedDeals = 0;
   for (const d of created) {
-    const attr = (d as any).crm_contacts?.attribution;
-    if (!attr) continue;
-    const { source, channel } = contactAdInfo(attr);
+    const { source, channel } = channelOf(d);
     if (channel) {
       attributedDeals++;
       leadsByChannel.set(channel, (leadsByChannel.get(channel) ?? 0) + 1);
@@ -127,12 +119,12 @@ export async function computeLeadCost(db: SupabaseClient, days: number): Promise
   let wonTotal = 0, wonValueTotal = 0;
   for (const d of won) {
     wonTotal++;
-    wonValueTotal += (d as any).value_cents ?? 0;
-    const { channel } = contactAdInfo((d as any).crm_contacts?.attribution);
+    wonValueTotal += d.valueCents;
+    const { channel } = channelOf(d);
     if (!channel) continue;
     const cur = wonByChannel.get(channel) ?? { n: 0, value: 0 };
     cur.n++;
-    cur.value += (d as any).value_cents ?? 0;
+    cur.value += d.valueCents;
     wonByChannel.set(channel, cur);
   }
 
