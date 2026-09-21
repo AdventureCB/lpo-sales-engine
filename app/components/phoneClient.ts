@@ -17,8 +17,11 @@ export interface PhoneIncoming {
 
 interface OutboundCall {
   number: string;
-  state: "dialing" | "ringing" | "active";
+  // "ending" = the rep hung up but the leg is being held open (muted) until it
+  // clears Telnyx's short-duration floor — see hangupOutbound.
+  state: "dialing" | "ringing" | "active" | "ending";
   startedAt: number | null; // ms when it went active (for the timer)
+  endsAt: number | null; // ms when a deferred hangup will actually send BYE
   muted: boolean;
 }
 
@@ -32,6 +35,9 @@ interface PhoneState {
 
 const state: PhoneState = { conn: "off", incoming: null, callerNumber: null, callPhase: "none", outbound: null };
 let outboundCall: any = null; // the TelnyxRTC call object for mute/hangup
+let currentOutboundId: string | null = null; // call id that owns state.outbound (stale-event guard)
+let outboundActiveAt: number | null = null; // ms the live outbound went active (short-call floor)
+let pendingHangup: Promise<void> | null = null; // a deferred BYE still holding the previous call open
 let client: any = null;
 let readyPromise: Promise<any> | null = null;
 let outboundHandler: ((call: any, callState: string) => void) | null = null;
@@ -674,17 +680,30 @@ export async function ensurePhone(): Promise<any> {
         emit();
         return;
       }
+      // A call whose hangup was DEFERRED (short-call floor) can still emit its
+      // terminal events after the rep has dialed the next lead. Those belong to
+      // a call that no longer owns the outbound state — ignore them, or they'd
+      // tear down the new call's UI.
+      if (currentOutboundId && call?.id && call.id !== currentOutboundId) return;
       // Outbound phase for the activity tracker (a ringing inbound the rep
       // hasn't answered is NOT engagement, so only outbound counts as dialing).
       if (s === "active") {
         state.callPhase = "talking";
         outboundLive = true;
-        if (state.outbound) state.outbound = { ...state.outbound, state: "active", startedAt: state.outbound.startedAt ?? Date.now() };
+        outboundActiveAt ??= Date.now();
+        if (state.outbound) {
+          state.outbound = {
+            ...state.outbound,
+            state: state.outbound.state === "ending" ? "ending" : "active",
+            startedAt: state.outbound.startedAt ?? Date.now(),
+          };
+        }
         outboundCall = call;
         ensureRemoteAudio();
       } else if (s === "hangup" || s === "destroy") {
         state.callPhase = "none";
         outboundLive = false;
+        outboundActiveAt = null;
         state.outbound = null;
         outboundCall = null;
       } else {
@@ -718,9 +737,18 @@ export async function ensurePhone(): Promise<any> {
 }
 
 export async function newOutboundCall(phone: string): Promise<any> {
+  // Never start the next dial while a deferred hangup is still holding the
+  // previous call open — one live outbound at a time keeps the shared audio
+  // element and the dialer's state machine sane.
+  if (pendingHangup) {
+    await pendingHangup.catch(() => {});
+    await new Promise((r) => setTimeout(r, 300));
+    pendingHangup = null;
+  }
   const c = await ensurePhone();
+  outboundActiveAt = null;
   state.callPhase = "dialing"; // count call setup from the click, not the first event
-  state.outbound = { number: phone, state: "dialing", startedAt: null, muted: false };
+  state.outbound = { number: phone, state: "dialing", startedAt: null, endsAt: null, muted: false };
   emit();
   const call = c.newCall({
     destinationNumber: phone,
@@ -729,17 +757,73 @@ export async function newOutboundCall(phone: string): Promise<any> {
     video: false,
   });
   outboundCall = call;
+  currentOutboundId = call?.id ?? null;
   return call;
+}
+
+// Telnyx flags calls with ≤6s of connected time as "short duration" and
+// surcharges the whole account once they exceed 15% of answered calls (we hit
+// 16.9% in Sept 2026: reps hanging up 1–4s after voicemail/screening picked
+// up). An ANSWERED call is therefore never torn down before it's been up this
+// long — the mic is muted and the BYE is sent when the floor is reached. The
+// rep's UI moves on immediately; only the next dial waits (see newOutboundCall).
+// Unanswered (still-ringing) calls hang up at once — they aren't billed calls.
+const MIN_CONNECTED_MS = 7500;
+
+/**
+ * Hang up the live outbound call, honoring the short-duration floor. Returns
+ * how many ms the BYE was deferred (0 = sent immediately).
+ */
+export function hangupOutbound(call?: any): number {
+  const c = call ?? outboundCall;
+  if (!c) return 0;
+  const id: string | null = c.id ?? currentOutboundId;
+  const wait = outboundActiveAt == null ? 0 : Math.max(0, MIN_CONNECTED_MS - (Date.now() - outboundActiveAt));
+  const bye = () => {
+    try {
+      c.hangup();
+    } catch {}
+  };
+  if (wait <= 0) {
+    bye();
+    return 0;
+  }
+  try {
+    c.muteAudio?.();
+  } catch {}
+  if (state.outbound && currentOutboundId === id) {
+    state.outbound = { ...state.outbound, state: "ending", endsAt: Date.now() + wait, muted: true };
+    emit();
+  }
+  pendingHangup = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      bye();
+      // If the terminal notification never lands, don't leave the dock stuck.
+      setTimeout(() => {
+        if (currentOutboundId === id && state.outbound?.state === "ending") {
+          state.outbound = null;
+          outboundCall = null;
+          outboundActiveAt = null;
+          state.callPhase = "none";
+          emit();
+        }
+      }, 3000);
+      resolve();
+    }, wait);
+  });
+  return wait;
 }
 
 /** End the live outbound call (global CallDock / any caller). */
 export function endOutbound() {
-  try {
-    outboundCall?.hangup();
-  } catch {}
-  outboundCall = null;
-  state.outbound = null;
-  emit();
+  const wait = hangupOutbound();
+  if (wait === 0) {
+    outboundCall = null;
+    outboundActiveAt = null;
+    state.outbound = null;
+    emit();
+  }
+  // Deferred: state shows "ending" until the hangup notification clears it.
 }
 
 /** Toggle mute on the live outbound call. */

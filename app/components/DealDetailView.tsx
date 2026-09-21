@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { newOutboundCall, setOutboundHandler } from "./phoneClient";
+import { newOutboundCall, setOutboundHandler, hangupOutbound } from "./phoneClient";
 import { INTERESTS } from "./interests";
 import { combineDue, timedIso } from "@/lib/allday";
 import { TimeSelect } from "./TimeSelect";
@@ -3071,9 +3071,9 @@ function CommBar({
   };
 
   const endCall = () => {
-    try {
-      callRef.current?.hangup();
-    } catch {}
+    // Honors Telnyx's short-duration floor (holds an answered call open,
+    // muted, until ~7.5s connected) — the UI moves to disposition now.
+    hangupOutbound(callRef.current);
     setCallState(null);
     setAwaitingDispo(true);
   };

@@ -74,7 +74,13 @@ export function CallDock() {
           {name?.trim() || outbound.number}
         </div>
         <div style={{ fontSize: 12.5, color: outbound.state === "active" ? "var(--good)" : "var(--text-3)" }}>
-          {outbound.state === "active" ? `On call · ${mmss(sec)}` : outbound.state === "ringing" ? "Ringing…" : "Connecting…"}
+          {outbound.state === "active"
+            ? `On call · ${mmss(sec)}`
+            : outbound.state === "ending"
+              ? `Ending in ${Math.max(1, Math.ceil(((outbound.endsAt ?? Date.now()) - Date.now()) / 1000))}s · short-call minimum`
+              : outbound.state === "ringing"
+                ? "Ringing…"
+                : "Connecting…"}
         </div>
       </div>
       {outbound.state === "active" && (
@@ -87,13 +93,15 @@ export function CallDock() {
           {outbound.muted ? "🔇" : "🎤"}
         </button>
       )}
-      <button
-        className="btn"
-        style={{ padding: "6px 14px", fontSize: 13.5, background: "var(--crit)", color: "#fff" }}
-        onClick={endOutbound}
-      >
-        ⏹ End
-      </button>
+      {outbound.state !== "ending" && (
+        <button
+          className="btn"
+          style={{ padding: "6px 14px", fontSize: 13.5, background: "var(--crit)", color: "#fff" }}
+          onClick={endOutbound}
+        >
+          ⏹ End
+        </button>
+      )}
     </div>
   );
 }

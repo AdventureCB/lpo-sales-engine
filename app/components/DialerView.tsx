@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ensurePhone, getPhoneState, newOutboundCall, setOutboundHandler, subscribePhone } from "./phoneClient";
+import { ensurePhone, getPhoneState, newOutboundCall, setOutboundHandler, subscribePhone, hangupOutbound } from "./phoneClient";
 import type { VmDrop } from "./VmPanel";
 import { DealDetailView, prefetchDeal, fmtWhen, BAND_COLOR, humanize, type AiProfile, type DialerDeal } from "./DealDetailView";
 import { timedIso } from "@/lib/allday";
@@ -806,7 +806,10 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const endCall = async () => {
     if (!inCall) return;
     if (dialMethod === "browser") {
-      try { telnyxCallRef.current?.hangup(); } catch {}
+      // Honors Telnyx's short-duration floor: an answered call is held open
+      // (muted) until ~7.5s connected, then BYE. Disposition UI opens now; only
+      // the NEXT dial waits for the deferred hangup (newOutboundCall).
+      hangupOutbound(telnyxCallRef.current);
       setBrowserCallState(null);
     } else if (window.__TAURI__ && dialMethod !== "web") {
       await window.__TAURI__.core.invoke("end_call").catch((e) => console.error("end_call", e));
