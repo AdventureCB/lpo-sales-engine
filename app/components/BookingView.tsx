@@ -208,6 +208,7 @@ export function BookingView({ repSlug, repFirst }: Props) {
             {KINDS.map((k) => (
               <button
                 key={k.id}
+                className="book-kind"
                 onClick={() => { setKind(k.id); setStep(2); }}
                 style={{
                   ...card, textAlign: "left", cursor: "pointer", display: "grid", gap: 6, alignContent: "start",
@@ -331,6 +332,9 @@ export function BookingView({ repSlug, repFirst }: Props) {
         )}
       </div>
       <style>{`
+        .book-kind { transition: border-color .15s, box-shadow .15s, transform .15s, background .15s; }
+        .book-kind:hover, .book-kind:focus-visible { border-color: var(--accent) !important; background: var(--accent-soft) !important; box-shadow: 0 6px 20px rgba(0,0,0,.10); transform: translateY(-2px); outline: none; }
+        @media (prefers-reduced-motion: reduce) { .book-kind { transition: none; } .book-kind:hover { transform: none; } }
         @media (max-width: 720px) { .book-cols { grid-template-columns: 1fr !important; } .book-cols3 { grid-template-columns: 1fr !important; } }
         @media (max-width: 560px) { .book-steps .step-lbl { display: none; } }
       `}</style>
