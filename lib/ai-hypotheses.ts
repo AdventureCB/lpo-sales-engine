@@ -81,7 +81,7 @@ export async function buildFeatureChunk(
   const { data: deals } = await db
     .from("crm_deals")
     .select(
-      "id, pipedrive_deal_id, contact_id, status, value_cents, pd_add_time, created_at, updated_at, truck_model, interests, deal_sources ( name ), crm_stages ( crm_pipelines ( name ) ), crm_contacts ( phones, tz_offset, attribution )"
+      "id, pipedrive_deal_id, contact_id, status, value_cents, pd_add_time, created_at, updated_at, won_at, lost_at, truck_model, interests, deal_sources ( name ), crm_stages ( crm_pipelines ( name ) ), crm_contacts ( phones, tz_offset, attribution )"
     )
     .in("status", ["won", "lost"])
     .order("updated_at", { ascending: true })
@@ -93,9 +93,58 @@ export async function buildFeatureChunk(
   return { processed: rows.length, total: total ?? rows.length };
 }
 
+/**
+ * Nightly delta refresh of the closed-deal snapshot: every won/lost deal that
+ * is MISSING from ai_deal_features, or has changed since its row was computed.
+ *
+ * Replaces the old "row count − 20 as an offset into an updated_at-ordered
+ * list" cursor, which silently stopped adding new closures once the snapshot
+ * fell behind the universe (9/22: 366 closed deals — every close since the
+ * hypotheses were registered on 8/26 — had no feature row, so prospective
+ * evidence never grew). Existing rows keep their closed_at so an old closure
+ * edited today can never masquerade as a fresh one.
+ */
+export async function buildFeatureDelta(db: SupabaseClient, budgetMs = 40_000): Promise<{ candidates: number; processed: number; done: boolean }> {
+  const started = Date.now();
+  const page = async (build: (from: number, to: number) => any) => {
+    const out: any[] = [];
+    for (let from = 0; from < 20_000; from += 1000) {
+      const { data } = await build(from, from + 999);
+      out.push(...(data ?? []));
+      if (!data || data.length < 1000) break;
+    }
+    return out;
+  };
+  const [closed, snap] = await Promise.all([
+    page((f, t) => db.from("crm_deals").select("id, updated_at").in("status", ["won", "lost"]).range(f, t)),
+    page((f, t) => db.from("ai_deal_features").select("deal_id, closed_at, computed_at").range(f, t)),
+  ]);
+  const snapById = new Map(snap.map((s) => [s.deal_id as string, s]));
+  const delta = closed.filter((d) => {
+    const s = snapById.get(d.id);
+    return !s || (s.computed_at && d.updated_at > s.computed_at);
+  });
+
+  let processed = 0;
+  for (let i = 0; i < delta.length; i += 120) {
+    if (Date.now() - started > budgetMs) return { candidates: delta.length, processed, done: false };
+    const ids = delta.slice(i, i + 120).map((d) => d.id);
+    const { data: deals } = await db.from("crm_deals").select(DEAL_FEATURE_SELECT).in("id", ids);
+    if (!deals?.length) continue;
+    const rows = (await computeRowsFor(db, deals)).map((r) => {
+      const prev = snapById.get(r.deal_id);
+      return prev?.closed_at ? { ...r, closed_at: prev.closed_at } : r;
+    });
+    const { error } = await db.from("ai_deal_features").upsert(rows, { onConflict: "deal_id" });
+    if (error) throw new Error(error.message);
+    processed += rows.length;
+  }
+  return { candidates: delta.length, processed, done: true };
+}
+
 /** The deal-page feature vector for a batch of deal rows (any status). */
 export const DEAL_FEATURE_SELECT =
-  "id, pipedrive_deal_id, contact_id, status, value_cents, pd_add_time, created_at, updated_at, truck_model, interests, deal_sources ( name ), crm_stages ( crm_pipelines ( name ) ), crm_contacts ( phones, tz_offset, attribution )";
+  "id, pipedrive_deal_id, contact_id, status, value_cents, pd_add_time, created_at, updated_at, won_at, lost_at, truck_model, interests, deal_sources ( name ), crm_stages ( crm_pipelines ( name ) ), crm_contacts ( phones, tz_offset, attribution )";
 
 async function computeRowsFor(db: SupabaseClient, deals: any[]): Promise<any[]> {
   const ids = deals.map((d) => d.id);
@@ -201,7 +250,10 @@ async function computeRowsFor(db: SupabaseClient, deals: any[]): Promise<any[]> 
 
   const rows = deals.map((d: any) => {
     const created = Date.parse(d.pd_add_time ?? d.created_at);
-    const closed = Date.parse(d.updated_at);
+    // Real close time. updated_at moves on ANY later edit, which both dated
+    // old closures as "fresh" and made fast_close depend on unrelated edits.
+    const closedIso: string = d.won_at ?? d.lost_at ?? d.updated_at;
+    const closed = Date.parse(closedIso);
     const calls = (callsByDeal.get(d.id) ?? []).sort((a, b) => (a.started_at < b.started_at ? -1 : 1));
     const outCalls = calls.filter((c) => c.direction === "outgoing");
     const convo = (c: any) => c.classification === "conversation" || (c.duration_s ?? 0) >= 120;
@@ -291,7 +343,7 @@ async function computeRowsFor(db: SupabaseClient, deals: any[]): Promise<any[]> 
       fast_close: d.status === "won" && closed - created <= 30 * 86_400_000,
       replied_48h: firstReply != null && Number.isFinite(firstOutTs) && firstReply - firstOutTs <= 48 * 3600_000,
     };
-    return { deal_id: d.id, status: d.status, closed_at: d.updated_at, features, outcomes, computed_at: new Date().toISOString() };
+    return { deal_id: d.id, status: d.status, closed_at: closedIso, features, outcomes, computed_at: new Date().toISOString() };
   });
 
   return rows;

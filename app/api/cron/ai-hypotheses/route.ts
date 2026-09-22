@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isAuthorizedCron } from "@/lib/cron";
-import { buildFeatureChunk, runHypothesisGeneration, scoreProspective, stampHotFlagScores } from "@/lib/ai-hypotheses";
+import { buildFeatureChunk, buildFeatureDelta, runHypothesisGeneration, scoreProspective, stampHotFlagScores } from "@/lib/ai-hypotheses";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,15 +41,13 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, mode, ...r });
   }
 
-  // score: fold newly closed deals into the snapshot first (universe is
-  // ordered by close time, so the row count is an incremental cursor; the
-  // small overlap just re-upserts), then update every registered hypothesis.
+  // score: fold every newly closed (or changed) deal into the snapshot first —
+  // a true delta, not an offset guess — then update every registered hypothesis.
   if (mode === "score") {
-    const { count } = await db.from("ai_deal_features").select("deal_id", { count: "exact", head: true });
-    await buildFeatureChunk(db, Math.max(0, (count ?? 0) - 20));
+    const delta = await buildFeatureDelta(db, 40_000);
     const r = await scoreProspective(db);
     const hot = await stampHotFlagScores(db).catch(() => ({ stamped: 0 }));
-    return NextResponse.json({ ok: true, mode, ...r, hotStamped: hot.stamped });
+    return NextResponse.json({ ok: true, mode, snapshot: delta, ...r, hotStamped: hot.stamped });
   }
 
   return NextResponse.json({ error: "unknown mode" }, { status: 400 });
