@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
-import { loadBookingConfig, repBookingUrl, type RepHours } from "@/lib/booking";
+import { DEFAULT_CONFIRMATION, loadBookingConfig, repBookingUrl, TEMPLATE_VARS, type EmailTemplate, type RepHours } from "@/lib/booking";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
   if ("error" in t) return t.error;
   const db = supabaseAdmin();
   const [{ data: rep }, cfg] = await Promise.all([
-    db.from("reps").select("id, name, booking_enabled, booking_slug, booking_hours").eq("id", t.repId).maybeSingle(),
+    db.from("reps").select("id, name, booking_enabled, booking_slug, booking_hours, booking_email").eq("id", t.repId).maybeSingle(),
     loadBookingConfig(db),
   ]);
   if (!rep) return NextResponse.json({ error: "rep not found" }, { status: 404 });
@@ -32,17 +32,35 @@ export async function GET(req: NextRequest) {
     rep: { id: rep.id, name: rep.name, enabled: !!rep.booking_enabled, slug: rep.booking_slug, url: rep.booking_slug ? repBookingUrl(rep.booking_slug) : null },
     hours: (rep.booking_hours as RepHours | null) ?? null,
     team: { days: cfg.days, start: cfg.start, end: cfg.end, slot_minutes: cfg.slot_minutes },
+    email: (rep.booking_email as EmailTemplate | null) ?? null,
+    teamEmail: cfg.confirmation ?? DEFAULT_CONFIRMATION,
+    vars: TEMPLATE_VARS,
   });
 }
+
+const cleanTemplate = (t: unknown): EmailTemplate | null | "bad" => {
+  if (t == null) return null;
+  if (typeof t !== "object") return "bad";
+  const subject = String((t as any).subject ?? "").trim().slice(0, 200);
+  const body = String((t as any).body ?? "").trim().slice(0, 4000);
+  if (!subject || !body) return null;
+  return { subject, body };
+};
 
 export async function POST(req: NextRequest) {
   const t = await targetRep(req);
   if ("error" in t) return t.error;
-  let body: { hours?: RepHours | null };
+  let body: { hours?: RepHours | null; email?: EmailTemplate | null };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
+  }
+  const patch: Record<string, unknown> = {};
+  if ("email" in body) {
+    const tpl = cleanTemplate(body.email);
+    if (tpl === "bad") return NextResponse.json({ error: "Bad email template." }, { status: 400 });
+    patch.booking_email = tpl;
   }
   let hours: RepHours | null = null;
   if (body.hours) {
@@ -62,7 +80,9 @@ export async function POST(req: NextRequest) {
     };
     if (Object.keys(hours).length === 0) hours = null;
   }
-  const { error } = await supabaseAdmin().from("reps").update({ booking_hours: hours }).eq("id", t.repId);
+  if ("hours" in body) patch.booking_hours = hours;
+  if (Object.keys(patch).length === 0) return NextResponse.json({ error: "nothing to save" }, { status: 400 });
+  const { error } = await supabaseAdmin().from("reps").update(patch).eq("id", t.repId);
   if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
-  return NextResponse.json({ ok: true, hours });
+  return NextResponse.json({ ok: true, ...patch });
 }

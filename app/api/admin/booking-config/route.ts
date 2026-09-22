@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
-import { bookingBase, DEFAULT_CONFIG, loadBookingConfig, repBookingUrl, type BookingConfig } from "@/lib/booking";
+import { bookingBase, DEFAULT_CONFIG, DEFAULT_CONFIRMATION, loadBookingConfig, repBookingUrl, TEMPLATE_VARS, type BookingConfig } from "@/lib/booking";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,8 +21,9 @@ export async function GET() {
       .limit(25),
   ]);
   return NextResponse.json({
-    config: cfg,
-    defaults: DEFAULT_CONFIG,
+    config: { ...cfg, confirmation: cfg.confirmation ?? DEFAULT_CONFIRMATION },
+    defaults: { ...DEFAULT_CONFIG, confirmation: DEFAULT_CONFIRMATION },
+    vars: TEMPLATE_VARS,
     base: bookingBase(),
     reps: (reps ?? []).map((r: any) => ({
       id: r.id, name: r.name, email: r.email, slug: r.booking_slug ?? "", enabled: !!r.booking_enabled, hasPhone: !!r.telnyx_number,
@@ -60,6 +61,12 @@ export async function POST(req: NextRequest) {
     };
     if (next.start >= next.end) return NextResponse.json({ error: "Start time must be before end time." }, { status: 400 });
     if (next.days.length === 0) return NextResponse.json({ error: "Pick at least one day." }, { status: 400 });
+    // Team-default confirmation template (reps may override with their own).
+    if (c.confirmation && typeof c.confirmation === "object") {
+      const subject = String(c.confirmation.subject ?? "").trim().slice(0, 200);
+      const tbody = String(c.confirmation.body ?? "").trim().slice(0, 4000);
+      if (subject && tbody) next.confirmation = { subject, body: tbody };
+    }
     await db.from("crm_sync_state").upsert({ key: "booking_config", value: next, updated_at: new Date().toISOString() }, { onConflict: "key" });
   }
 

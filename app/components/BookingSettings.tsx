@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { MyBookingAvailability } from "./MyBookingAvailability";
 
-interface Cfg { slot_minutes: number; days: number[]; start: string; end: string; min_notice_hours: number; horizon_days: number }
+interface Tpl { subject: string; body: string }
+interface Cfg { slot_minutes: number; days: number[]; start: string; end: string; min_notice_hours: number; horizon_days: number; confirmation?: Tpl }
 interface Rep { id: string; name: string; email: string; slug: string; enabled: boolean; hasPhone: boolean; url: string | null; custom: boolean }
 interface Recent { id: string; name: string; email: string | null; phone: string | null; startAt: string; via: string; status: string; dealId: string | null; createdAt: string; rep: string | null }
 
@@ -19,11 +20,13 @@ export function BookingSettings() {
   const [msg, setMsg] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [hoursFor, setHoursFor] = useState<string | null>(null); // rep id whose own hours are open inline
+  const [defaultTpl, setDefaultTpl] = useState<Tpl | null>(null);
+  const [vars, setVars] = useState<string[]>([]);
 
   const load = () =>
     fetch("/api/admin/booking-config")
       .then((r) => r.json())
-      .then((d) => { if (!d.error) { setCfg(d.config); setReps(d.reps); setRecent(d.recent); setBase(d.base); } else setMsg(d.error); });
+      .then((d) => { if (!d.error) { setCfg(d.config); setReps(d.reps); setRecent(d.recent); setBase(d.base); setDefaultTpl(d.defaults?.confirmation ?? null); setVars(d.vars ?? []); } else setMsg(d.error); });
   useEffect(() => { void load(); }, []);
 
   const save = async () => {
@@ -89,6 +92,23 @@ export function BookingSettings() {
           <div className="field"><label>Book up to (days ahead)</label><input type="number" min={1} max={90} className="vmsel" style={field} value={cfg.horizon_days} onChange={(e) => setCfg({ ...cfg, horizon_days: Number(e.target.value) })} /></div>
         </div>
         <div className="viewsub" style={{ fontSize: 12.5 }}>Slots already booked, or clashing with a guide's timed activities, are never offered. Applies to every guide.</div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="panel-h">✉️ Team-default confirmation email</div>
+        <div className="viewsub" style={{ marginTop: 0 }}>
+          Sent <b>from the guide the customer booked with</b>, so write it in first person. Guides can replace it with their own from My Profile. The reschedule/cancel link is appended automatically.
+        </div>
+        <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+          <input className="vmsel" style={{ width: "100%" }} value={cfg.confirmation?.subject ?? ""} placeholder="Subject" onChange={(e) => setCfg({ ...cfg, confirmation: { subject: e.target.value, body: cfg.confirmation?.body ?? "" } })} />
+          <textarea className="vmsel" style={{ width: "100%", minHeight: 180, resize: "vertical", fontFamily: "inherit", lineHeight: 1.45 }} value={cfg.confirmation?.body ?? ""} onChange={(e) => setCfg({ ...cfg, confirmation: { subject: cfg.confirmation?.subject ?? "", body: e.target.value } })} />
+        </div>
+        <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 6 }}>
+          Placeholders: {vars.map((v) => <code key={v} style={{ marginRight: 6 }}>{`{{${v}}}`}</code>)}
+          {defaultTpl && (
+            <button className="btn ghost" style={{ padding: "1px 8px", fontSize: 12, marginLeft: 8 }} onClick={() => setCfg({ ...cfg, confirmation: defaultTpl })}>Reset to built-in</button>
+          )}
+        </div>
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>

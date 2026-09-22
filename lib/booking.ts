@@ -24,6 +24,10 @@ export function bookingBase(): string {
 export const repBookingUrl = (slug: string) => `${bookingBase()}/${slug}`;
 export const manageBookingUrl = (token: string) => `${bookingBase()}/manage/${token}`;
 
+export interface EmailTemplate {
+  subject: string;
+  body: string;
+}
 export interface BookingConfig {
   slot_minutes: number;
   days: number[]; // 0=Sun … 6=Sat, in PT
@@ -31,7 +35,36 @@ export interface BookingConfig {
   end: string; // "HH:MM" PT
   min_notice_hours: number;
   horizon_days: number;
+  confirmation?: EmailTemplate; // team-default customer confirmation (reps may override)
 }
+
+/** Placeholders every confirmation template can use. */
+export const TEMPLATE_VARS = ["first_name", "name", "when", "date", "time", "phone", "rep_first", "rep_name"] as const;
+
+// Sent FROM the guide, so it speaks in first person. The reschedule/cancel
+// link is appended automatically — it is never part of the editable text.
+export const DEFAULT_CONFIRMATION: EmailTemplate = {
+  subject: "Thanks for booking a call with me — {{when}}",
+  body: [
+    "Hi {{first_name}},",
+    "",
+    "Thanks for booking a call with me! I'm looking forward to talking through your build and answering any questions you have.",
+    "",
+    "When: {{when}}",
+    "I'll call you at {{phone}}.",
+    "",
+    "If anything comes up before then, just reply to this email.",
+    "",
+    "Talk soon,",
+    "{{rep_name}}",
+    "Lone Peak Overland",
+  ].join("\n"),
+};
+
+export function renderTemplate(text: string, vars: Record<string, string>): string {
+  return text.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (m, k) => (k in vars ? vars[k] : m));
+}
+
 export const DEFAULT_CONFIG: BookingConfig = {
   slot_minutes: 30,
   days: [1, 2, 3, 4, 5],
@@ -62,12 +95,13 @@ export interface BookableRep {
   slug: string;
   pipedriveUserId: number | null;
   hours: RepHours | null;
+  emailTemplate: EmailTemplate | null; // the guide's own confirmation, or null = team default
 }
 
 export async function bookableReps(db: SupabaseClient): Promise<BookableRep[]> {
   const { data } = await db
     .from("reps")
-    .select("id, name, email, booking_slug, pipedrive_user_id, sort_order, booking_hours")
+    .select("id, name, email, booking_slug, pipedrive_user_id, sort_order, booking_hours, booking_email")
     .eq("active", true)
     .eq("booking_enabled", true)
     .not("booking_slug", "is", null)
@@ -82,7 +116,14 @@ export async function bookableReps(db: SupabaseClient): Promise<BookableRep[]> {
     slug: r.booking_slug,
     pipedriveUserId: r.pipedrive_user_id ?? null,
     hours: (r.booking_hours as RepHours | null) ?? null,
+    emailTemplate: (r.booking_email as EmailTemplate | null) ?? null,
   }));
+}
+
+/** The confirmation a given guide sends: their own template, else the team's, else the built-in. */
+export function confirmationTemplate(cfg: BookingConfig, rep: BookableRep): EmailTemplate {
+  const pick = (t?: EmailTemplate | null) => (t && t.subject?.trim() && t.body?.trim() ? t : null);
+  return pick(rep.emailTemplate) ?? pick(cfg.confirmation) ?? DEFAULT_CONFIRMATION;
 }
 
 /** Team config with the rep's own hours layered on, plus their days off. */
@@ -368,7 +409,7 @@ export async function createBooking(
   // 6) Emails — rep alert from cainen@, confirmation from the rep. Never fail
   // the booking on mail.
   try {
-    await sendBookingEmails(db, rep, req, { email, phone, dealId, dealCreated, token, rescheduledFrom });
+    await sendBookingEmails(db, rep, req, { email, phone, dealId, dealCreated, token, rescheduledFrom }, cfg);
   } catch (e) {
     console.error("booking emails failed", e);
   }
@@ -484,7 +525,8 @@ async function sendBookingEmails(
   db: SupabaseClient,
   rep: BookableRep,
   req: BookingRequest,
-  ctx: { email: string | null; phone: string | null; dealId: string | null; dealCreated: boolean; token: string; rescheduledFrom: number | null }
+  ctx: { email: string | null; phone: string | null; dealId: string | null; dealCreated: boolean; token: string; rescheduledFrom: number | null },
+  cfg: BookingConfig
 ) {
   const { sendGmail } = await import("./gmail");
   const { data: cainen } = await db.from("gmail_accounts").select("*").eq("user_email", SENDER_EMAIL).eq("status", "active").maybeSingle();
@@ -517,28 +559,34 @@ async function sendBookingEmails(
   }
 
   // Customer confirmation — from the rep they booked with (their connected
-  // Gmail), falling back to cainen@ if the rep's mailbox isn't connected.
+  // Gmail, cainen@ fallback), in the rep's own words: their template, else the
+  // team default, else the built-in. The reschedule/cancel link is always
+  // appended and is not part of the editable text.
   if (ctx.email) {
     const from = (await repSender(db, rep)) ?? cainen;
     if (!from) return;
-    const custFirst = req.name.split(/\s+/)[0];
+    const tpl = confirmationTemplate(cfg, rep);
+    const vars: Record<string, string> = {
+      first_name: req.name.split(/\s+/)[0],
+      name: req.name,
+      when: custWhen,
+      date: new Intl.DateTimeFormat("en-US", { timeZone: req.tz, weekday: "long", month: "long", day: "numeric" }).format(new Date(req.startAt)),
+      time: `${new Intl.DateTimeFormat("en-US", { timeZone: req.tz, hour: "numeric", minute: "2-digit" }).format(new Date(req.startAt))} ${tzAbbrev(req.startAt, req.tz)}`,
+      phone: ctx.phone ?? "the number you provided",
+      rep_first: rep.first,
+      rep_name: rep.name,
+    };
+    const subject = renderTemplate(tpl.subject, vars);
+    const body = renderTemplate(tpl.body, vars);
     await sendGmail(db, from, {
       to: ctx.email,
-      subject: resched ? `Your call with ${rep.first} has been moved` : `Your call with ${rep.first} at Lone Peak Overland is confirmed`,
+      subject: resched ? `Updated: ${subject}` : subject,
       body: [
-        `Hi ${custFirst},`,
-        ``,
-        resched
-          ? `Your call with ${rep.first} is now on ${custWhen}.`
-          : `You're booked with ${rep.first}, one of our Gravel Guides, on ${custWhen}.`,
-        `${rep.first} will call you at ${ctx.phone ?? "the number you provided"}.`,
+        resched ? `(Your call has been moved — here are the new details.)\n` : null,
+        body,
         ``,
         `Need to reschedule or cancel? ${manageBookingUrl(ctx.token)}`,
-        ``,
-        `Talk soon,`,
-        `${rep.name}`,
-        `Lone Peak Overland`,
-      ].join("\n"),
+      ].filter((l) => l != null).join("\n"),
     });
   }
 }
