@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { AppShell } from "../../components/AppShell";
 import { ProfileView } from "../../components/ProfileView";
+import { MyBookingAvailability } from "../../components/MyBookingAvailability";
 import { getSessionUser } from "@/lib/auth";
 
 export const metadata = { title: "My Profile · LPO Sales Engine" };
@@ -11,6 +12,8 @@ export default async function ProfilePage() {
   return (
     <AppShell active="/settings/profile" user={{ name: user.repName ?? user.email, role: user.role }}>
       <ProfileView isAdmin={user.role === "admin"} />
+      {/* Guides manage their own "Schedule with a Gravel Guide" hours here. */}
+      {user.repId && <MyBookingAvailability />}
     </AppShell>
   );
 }

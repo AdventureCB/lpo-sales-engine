@@ -13,7 +13,7 @@ export async function GET() {
   const db = supabaseAdmin();
   const [cfg, { data: reps }, { data: recent }] = await Promise.all([
     loadBookingConfig(db),
-    db.from("reps").select("id, name, email, booking_slug, booking_enabled, telnyx_number, sort_order").eq("active", true).not("email", "is", null).order("sort_order").order("name"),
+    db.from("reps").select("id, name, email, booking_slug, booking_enabled, booking_hours, telnyx_number, sort_order").eq("active", true).not("email", "is", null).order("sort_order").order("name"),
     db
       .from("bookings")
       .select("id, customer_name, customer_email, customer_phone, start_at, via, status, deal_id, created_at, reps ( name )")
@@ -27,6 +27,7 @@ export async function GET() {
     reps: (reps ?? []).map((r: any) => ({
       id: r.id, name: r.name, email: r.email, slug: r.booking_slug ?? "", enabled: !!r.booking_enabled, hasPhone: !!r.telnyx_number,
       url: r.booking_slug ? repBookingUrl(r.booking_slug) : null,
+      custom: !!r.booking_hours,
     })),
     recent: (recent ?? []).map((b: any) => ({
       id: b.id, name: b.customer_name, email: b.customer_email, phone: b.customer_phone, startAt: b.start_at, via: b.via, status: b.status,

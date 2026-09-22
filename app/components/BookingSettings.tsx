@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { MyBookingAvailability } from "./MyBookingAvailability";
 
 interface Cfg { slot_minutes: number; days: number[]; start: string; end: string; min_notice_hours: number; horizon_days: number }
-interface Rep { id: string; name: string; email: string; slug: string; enabled: boolean; hasPhone: boolean; url: string | null }
+interface Rep { id: string; name: string; email: string; slug: string; enabled: boolean; hasPhone: boolean; url: string | null; custom: boolean }
 interface Recent { id: string; name: string; email: string | null; phone: string | null; startAt: string; via: string; status: string; dealId: string | null; createdAt: string; rep: string | null }
 
 const DAY_LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -17,6 +18,7 @@ export function BookingSettings() {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [hoursFor, setHoursFor] = useState<string | null>(null); // rep id whose own hours are open inline
 
   const load = () =>
     fetch("/api/admin/booking-config")
@@ -94,18 +96,26 @@ export function BookingSettings() {
         <table style={{ borderCollapse: "collapse", width: "100%" }}>
           <thead>
             <tr style={{ fontSize: 12, color: "var(--text-3)", textAlign: "left" }}>
-              <th style={{ padding: "6px 8px" }}>Bookable</th><th style={{ padding: "6px 8px" }}>Rep</th><th style={{ padding: "6px 8px" }}>Slug</th><th style={{ padding: "6px 8px" }}>Link</th>
+              <th style={{ padding: "6px 8px" }}>Bookable</th><th style={{ padding: "6px 8px" }}>Rep</th><th style={{ padding: "6px 8px" }}>Slug</th><th style={{ padding: "6px 8px" }}>Link</th><th style={{ padding: "6px 8px" }}>Hours</th>
             </tr>
           </thead>
           <tbody>
-            {reps.map((r) => (
+            {reps.map((r) => [
               <tr key={r.id} style={{ borderTop: "1px solid var(--border)" }}>
                 <td style={{ padding: "6px 8px" }}><input type="checkbox" checked={r.enabled} onChange={(e) => setReps(reps.map((x) => (x.id === r.id ? { ...x, enabled: e.target.checked } : x)))} /></td>
                 <td style={{ padding: "6px 8px" }}>{r.name}{!r.hasPhone && <span style={{ color: "var(--text-3)", fontSize: 12 }}> · no phone line</span>}</td>
                 <td style={{ padding: "6px 8px" }}><input className="vmsel" style={{ width: 140 }} value={r.slug} placeholder="e.g. jesse" onChange={(e) => setReps(reps.map((x) => (x.id === r.id ? { ...x, slug: e.target.value } : x)))} /></td>
                 <td style={{ padding: "6px 8px", fontSize: 13, color: "var(--text-2)" }}>{r.slug ? `${base}/${r.slug.trim().toLowerCase()}` : "—"}</td>
-              </tr>
-            ))}
+                <td style={{ padding: "6px 8px" }}>
+                  <button className="btn ghost" style={{ padding: "2px 10px", fontSize: 12.5 }} onClick={() => setHoursFor(hoursFor === r.id ? null : r.id)}>
+                    {hoursFor === r.id ? "Close" : r.custom ? "Custom ✎" : "Default ✎"}
+                  </button>
+                </td>
+              </tr>,
+              ...(hoursFor === r.id
+                ? [<tr key={`${r.id}:hours`}><td colSpan={5} style={{ padding: "4px 8px 10px" }}><MyBookingAvailability repId={r.id} compact /></td></tr>]
+                : []),
+            ])}
           </tbody>
         </table>
         <div className="viewsub" style={{ fontSize: 12.5 }}>Round robin rotates through every bookable guide, in this order, skipping anyone already booked at that time.</div>

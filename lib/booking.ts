@@ -46,6 +46,14 @@ export async function loadBookingConfig(db: SupabaseClient): Promise<BookingConf
   return { ...DEFAULT_CONFIG, ...((data?.value as Partial<BookingConfig>) ?? {}) };
 }
 
+/** A rep's own override of the team defaults; any field absent = team value. */
+export interface RepHours {
+  days?: number[];
+  start?: string;
+  end?: string;
+  blocked?: string[]; // days off, YYYY-MM-DD in Pacific
+}
+
 export interface BookableRep {
   id: string;
   name: string;
@@ -53,12 +61,13 @@ export interface BookableRep {
   email: string;
   slug: string;
   pipedriveUserId: number | null;
+  hours: RepHours | null;
 }
 
 export async function bookableReps(db: SupabaseClient): Promise<BookableRep[]> {
   const { data } = await db
     .from("reps")
-    .select("id, name, email, booking_slug, pipedrive_user_id, sort_order")
+    .select("id, name, email, booking_slug, pipedrive_user_id, sort_order, booking_hours")
     .eq("active", true)
     .eq("booking_enabled", true)
     .not("booking_slug", "is", null)
@@ -72,7 +81,22 @@ export async function bookableReps(db: SupabaseClient): Promise<BookableRep[]> {
     email: r.email,
     slug: r.booking_slug,
     pipedriveUserId: r.pipedrive_user_id ?? null,
+    hours: (r.booking_hours as RepHours | null) ?? null,
   }));
+}
+
+/** Team config with the rep's own hours layered on, plus their days off. */
+export function effectiveFor(cfg: BookingConfig, rep: BookableRep): { cfg: BookingConfig; blocked: Set<string> } {
+  const h = rep.hours ?? {};
+  return {
+    cfg: {
+      ...cfg,
+      days: h.days && h.days.length ? h.days : cfg.days,
+      start: h.start ?? cfg.start,
+      end: h.end ?? cfg.end,
+    },
+    blocked: new Set(h.blocked ?? []),
+  };
 }
 
 // ── Time-zone math (no dependencies) ────────────────────────────────────────
@@ -107,8 +131,9 @@ export function fmtIn(utcMs: number, tz: string, opts: Intl.DateTimeFormatOption
 
 // ── Availability ────────────────────────────────────────────────────────────
 
-/** Every candidate slot start (UTC ms) inside the config window from now. */
-export function candidateSlots(cfg: BookingConfig, now = Date.now()): number[] {
+/** Every candidate slot start (UTC ms) inside the config window from now,
+ * skipping any `blocked` Pacific dates (a rep's days off). */
+export function candidateSlots(cfg: BookingConfig, now = Date.now(), blocked?: Set<string>): number[] {
   const out: number[] = [];
   const earliest = now + cfg.min_notice_hours * 3600_000;
   const startDay = dateIn(now, REP_TZ);
@@ -117,6 +142,7 @@ export function candidateSlots(cfg: BookingConfig, now = Date.now()): number[] {
     const date = new Date(dayMs).toISOString().slice(0, 10);
     const dow = new Date(dayMs).getUTCDay();
     if (!cfg.days.includes(dow)) continue;
+    if (blocked?.has(date)) continue;
     const open = zonedToUtc(date, cfg.start, REP_TZ);
     const close = zonedToUtc(date, cfg.end, REP_TZ);
     for (let t = open; t + cfg.slot_minutes * 60_000 <= close; t += cfg.slot_minutes * 60_000) {
@@ -163,12 +189,20 @@ export async function availableSlots(
   target: { rep?: BookableRep; reps?: BookableRep[] },
   cfg: BookingConfig
 ): Promise<number[]> {
-  const cands = candidateSlots(cfg);
   const slotMs = cfg.slot_minutes * 60_000;
   const reps = target.rep ? [target.rep] : target.reps ?? [];
   if (reps.length === 0) return [];
-  const busyByRep = await Promise.all(reps.map((r) => busySlots(db, r, cands, slotMs)));
-  return cands.filter((s) => busyByRep.some((busy) => !busy.has(s)));
+  // Each rep offers their OWN hours (team defaults unless they've set their
+  // own) minus their days off and existing commitments; round robin = union.
+  const perRep = await Promise.all(
+    reps.map(async (r) => {
+      const eff = effectiveFor(cfg, r);
+      const cands = candidateSlots(eff.cfg, Date.now(), eff.blocked);
+      const busy = await busySlots(db, r, cands, slotMs);
+      return cands.filter((s) => !busy.has(s));
+    })
+  );
+  return [...new Set(perRep.flat())].sort((a, b) => a - b);
 }
 
 /** Round robin: next rep in rotation who is free at `slot`. Advances the pointer. */
@@ -180,6 +214,8 @@ export async function pickRoundRobin(db: SupabaseClient, reps: BookableRep[], sl
   for (let step = 1; step <= reps.length; step++) {
     const idx = (last + step) % reps.length;
     const rep = reps[idx];
+    const eff = effectiveFor(cfg, rep);
+    if (!candidateSlots(eff.cfg, Date.now(), eff.blocked).includes(slot)) continue; // outside this rep's hours / a day off
     const busy = await busySlots(db, rep, [slot], slotMs);
     if (busy.has(slot)) continue;
     await db.from("crm_sync_state").upsert({ key: "booking_rr", value: { idx }, updated_at: new Date().toISOString() }, { onConflict: "key" });
