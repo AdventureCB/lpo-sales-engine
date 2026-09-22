@@ -20,13 +20,14 @@ import { findContact, normEmail, normPhone, processIntake, type IntakeSource } f
  */
 
 const TRAILHUB_PUBLIC = "https://trailhead.lonepeakoverland.com";
-const ENTRY_COLS = "id, event_id, user_id, name, email, phone, contact_opt_in, contact_opt_in_at, is_winner, won_at, created_at, raffle_events ( name, slug, status, discount_cents, min_purchase_cents )";
+// No PostgREST embed: raffle_events ↔ raffle_entries has two FKs (event_id and
+// winner_entry_id), which makes the embed ambiguous — events are fetched by id.
+const ENTRY_COLS = "id, event_id, user_id, name, email, phone, contact_opt_in, contact_opt_in_at, is_winner, won_at, created_at";
 
-interface RaffleEvent { name: string; slug: string; status: string; discount_cents: number | null; min_purchase_cents: number | null }
+interface RaffleEvent { id: string; name: string; slug: string; status: string; discount_cents: number | null; min_purchase_cents: number | null }
 interface Entry {
   id: string; event_id: string; user_id: string; name: string | null; email: string | null; phone: string | null;
   contact_opt_in: boolean | null; contact_opt_in_at: string | null; is_winner: boolean | null; won_at: string | null; created_at: string;
-  raffle_events: RaffleEvent | RaffleEvent[] | null;
 }
 interface Profile { id: string; handle: string | null; full_name: string | null; phone: string | null }
 interface WinnerCode { entry_id: string; code: string | null; discount_cents: number | null; min_purchase_cents: number | null; expires_at: string | null }
@@ -38,7 +39,6 @@ export function trailhubClient(): SupabaseClient | null {
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
-const ev = (e: Entry): RaffleEvent | null => (Array.isArray(e.raffle_events) ? e.raffle_events[0] ?? null : e.raffle_events);
 const usd = (cents: number | null | undefined) => (cents == null ? "" : `$${Math.round(cents / 100).toLocaleString()}`);
 const fmtDate = (iso: string | null | undefined) =>
   iso ? new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric", year: "numeric" }).format(new Date(iso)) : "";
@@ -59,12 +59,16 @@ export async function runTrailhubRaffle(db: SupabaseClient, source: IntakeSource
   const entries = (fresh ?? []) as unknown as Entry[];
   const winners = (wins ?? []) as unknown as Entry[];
 
-  // Profiles (handle / fallback name+phone) and prize codes, one round-trip each.
+  // Events, profiles (handle / fallback name+phone) and prize codes — one round-trip each.
+  const eventIds = [...new Set([...entries, ...winners].map((e) => e.event_id))];
   const userIds = [...new Set([...entries, ...winners].map((e) => e.user_id))];
-  const [{ data: profs }, { data: codes }] = await Promise.all([
+  const [{ data: evs }, { data: profs }, { data: codes }] = await Promise.all([
+    eventIds.length ? th.from("raffle_events").select("id, name, slug, status, discount_cents, min_purchase_cents").in("id", eventIds) : Promise.resolve({ data: [] as RaffleEvent[] }),
     userIds.length ? th.from("profiles").select("id, handle, full_name, phone").in("id", userIds) : Promise.resolve({ data: [] as Profile[] }),
     winners.length ? th.from("raffle_winner_codes").select("entry_id, code, discount_cents, min_purchase_cents, expires_at").in("entry_id", winners.map((w) => w.id)) : Promise.resolve({ data: [] as WinnerCode[] }),
   ]);
+  const events = new Map(((evs ?? []) as RaffleEvent[]).map((x) => [x.id, x]));
+  const ev = (e: Entry): RaffleEvent | null => events.get(e.event_id) ?? null;
   const profile = new Map(((profs ?? []) as Profile[]).map((p) => [p.id, p]));
   const codeFor = new Map(((codes ?? []) as WinnerCode[]).map((c) => [c.entry_id, c]));
 
