@@ -15,6 +15,15 @@ export const APP_URL = "https://lpo-sales-engine.vercel.app";
 export const SENDER_EMAIL = "cainen@lonepeakoverland.com";
 export const BOOKING_SOURCE = "Gravel Guide Call";
 
+/** Public base for booking links: the custom domain when configured (e.g.
+ * https://book.lonepeakoverland.com, served by the middleware host rewrite),
+ * else the app's /book path. */
+export function bookingBase(): string {
+  return (process.env.BOOKING_BASE_URL ?? `${APP_URL}/book`).replace(/\/$/, "");
+}
+export const repBookingUrl = (slug: string) => `${bookingBase()}/${slug}`;
+export const manageBookingUrl = (token: string) => `${bookingBase()}/manage/${token}`;
+
 export interface BookingConfig {
   slot_minutes: number;
   days: number[]; // 0=Sun … 6=Sat, in PT
@@ -189,6 +198,7 @@ export interface BookingRequest {
   note: string | null;
   startAt: number; // UTC ms
   via: "direct" | "round_robin";
+  rebookToken?: string | null; // reschedule: cancel this prior booking once the new one exists
 }
 
 async function defaultStageId(db: SupabaseClient): Promise<string | null> {
@@ -213,18 +223,19 @@ export async function createBooking(
   rep: BookableRep,
   req: BookingRequest,
   cfg: BookingConfig
-): Promise<{ bookingId: string; dealId: string | null; dealCreated: boolean; contactId: string | null }> {
+): Promise<{ bookingId: string; dealId: string | null; dealCreated: boolean; contactId: string | null; token: string }> {
   const email = normEmail(req.email);
   const phone = normPhone(req.phone);
   const startIso = new Date(req.startAt).toISOString();
   const endIso = new Date(req.startAt + cfg.slot_minutes * 60_000).toISOString();
+  const token = crypto.randomUUID().replace(/-/g, "").slice(0, 24);
 
   // 1) Reserve the slot (unique index rejects a race for the same rep+slot).
   const { data: booking, error: bErr } = await db
     .from("bookings")
     .insert({
       rep_id: rep.id, via: req.via, customer_name: req.name, customer_email: email, customer_phone: phone,
-      customer_tz: req.tz, note: req.note, start_at: startIso, end_at: endIso,
+      customer_tz: req.tz, note: req.note, start_at: startIso, end_at: endIso, cancel_token: token,
     })
     .select("id")
     .single();
@@ -311,14 +322,121 @@ export async function createBooking(
     .update({ contact_id: contact?.id ?? null, deal_id: dealId, deal_created: dealCreated, activity_id: act?.id ?? null })
     .eq("id", booking.id);
 
-  // 5) Emails from cainen@ — rep + customer. Never fail the booking on mail.
+  // 5) Reschedule: the prior booking is cancelled now that the new one exists.
+  let rescheduledFrom: number | null = null;
+  if (req.rebookToken) {
+    const prev = await cancelBooking(db, req.rebookToken, { reason: "rescheduled", rescheduledTo: booking.id, quiet: true });
+    if (prev) rescheduledFrom = Date.parse(prev.start_at);
+  }
+
+  // 6) Emails — rep alert from cainen@, confirmation from the rep. Never fail
+  // the booking on mail.
   try {
-    await sendBookingEmails(db, rep, req, { email, phone, dealId, dealCreated });
+    await sendBookingEmails(db, rep, req, { email, phone, dealId, dealCreated, token, rescheduledFrom });
   } catch (e) {
     console.error("booking emails failed", e);
   }
 
-  return { bookingId: booking.id, dealId, dealCreated, contactId: contact?.id ?? null };
+  return { bookingId: booking.id, dealId, dealCreated, contactId: contact?.id ?? null, token };
+}
+
+// ── Self-service: look up / cancel by token ──────────────────────────────────
+
+export interface ManagedBooking {
+  id: string;
+  status: string;
+  start_at: string;
+  end_at: string;
+  customer_name: string;
+  customer_email: string | null;
+  customer_phone: string | null;
+  customer_tz: string | null;
+  note: string | null;
+  rep: BookableRep | null;
+  deal_id: string | null;
+  activity_id: string | null;
+}
+
+export async function getBookingByToken(db: SupabaseClient, token: string): Promise<ManagedBooking | null> {
+  if (!/^[a-f0-9]{24}$/.test(token)) return null;
+  const { data: b } = await db
+    .from("bookings")
+    .select("id, status, start_at, end_at, customer_name, customer_email, customer_phone, customer_tz, note, deal_id, activity_id, rep_id")
+    .eq("cancel_token", token)
+    .maybeSingle();
+  if (!b) return null;
+  const reps = await bookableReps(db);
+  const rep = reps.find((r) => r.id === b.rep_id) ?? null;
+  return { ...(b as any), rep };
+}
+
+/**
+ * Cancel a booking: status → cancelled, the ⭐ activity is closed out (marked
+ * done + relabelled so it stops counting as an upcoming call), a system note
+ * lands on the deal, and — unless quiet (a reschedule sends its own
+ * confirmation) — the rep is emailed from cainen@ and the customer from the rep.
+ */
+export async function cancelBooking(
+  db: SupabaseClient,
+  token: string,
+  opts: { reason: "cancelled" | "rescheduled"; rescheduledTo?: string | null; quiet?: boolean }
+): Promise<ManagedBooking | null> {
+  const b = await getBookingByToken(db, token);
+  if (!b || b.status !== "booked") return b;
+  const now = new Date().toISOString();
+  await db
+    .from("bookings")
+    .update({ status: "cancelled", cancelled_at: now, cancel_reason: opts.reason, rescheduled_to: opts.rescheduledTo ?? null })
+    .eq("id", b.id);
+  const when = `${fmtIn(Date.parse(b.start_at), REP_TZ)} PT`;
+  if (b.activity_id) {
+    await db
+      .from("crm_activities")
+      .update({ done_at: now, subject: `❌ ${opts.reason === "rescheduled" ? "Rescheduled" : "Cancelled"} — scheduled call with ${b.customer_name}` })
+      .eq("id", b.activity_id);
+  }
+  if (b.deal_id) {
+    await db.from("crm_activities").insert({
+      deal_id: b.deal_id,
+      contact_id: null,
+      type: "system",
+      subject: opts.reason === "rescheduled" ? `📅 Customer rescheduled their call (was ${when})` : `❌ Customer cancelled their scheduled call (was ${when})`,
+      actor: b.rep?.email ?? "system",
+      occurred_at: now,
+    });
+  }
+  if (!opts.quiet && b.rep) {
+    try {
+      const { sendGmail } = await import("./gmail");
+      const { data: cainen } = await db.from("gmail_accounts").select("*").eq("user_email", SENDER_EMAIL).eq("status", "active").maybeSingle();
+      if (cainen) {
+        await sendGmail(db, cainen, {
+          to: b.rep.email,
+          subject: `❌ Call cancelled — ${b.customer_name} · ${fmtIn(Date.parse(b.start_at), REP_TZ)} PT`,
+          body: [`${b.customer_name} cancelled the call that was booked for ${when}.`, ``, `Phone: ${b.customer_phone ?? "—"} · Email: ${b.customer_email ?? "—"}`, b.deal_id ? `Deal: ${APP_URL}/crm/deal/${b.deal_id}` : null].filter(Boolean).join("\n"),
+        });
+      }
+      if (b.customer_email) {
+        const from = (await repSender(db, b.rep)) ?? cainen;
+        if (from) {
+          await sendGmail(db, from, {
+            to: b.customer_email,
+            subject: `Your call with ${b.rep.first} has been cancelled`,
+            body: [`Hi ${b.customer_name.split(/\s+/)[0]},`, ``, `Your call with ${b.rep.first} on ${fmtIn(Date.parse(b.start_at), b.customer_tz ?? REP_TZ, { weekday: "long" })} ${tzAbbrev(Date.parse(b.start_at), b.customer_tz ?? REP_TZ)} is cancelled.`, ``, `Want to pick a new time? ${repBookingUrl(b.rep.slug)}`, ``, `Lone Peak Overland`].join("\n"),
+          });
+        }
+      }
+    } catch (e) {
+      console.error("cancel emails failed", e);
+    }
+  }
+  return { ...b, status: "cancelled" };
+}
+
+/** The rep's own connected Gmail (customer-facing mail comes from the rep). */
+async function repSender(db: SupabaseClient, rep: BookableRep): Promise<any | null> {
+  const { data } = await db.from("gmail_accounts").select("*").eq("user_email", rep.email).eq("status", "active").maybeSingle();
+  return data ?? null;
 }
 
 export function tzAbbrev(utcMs: number, tz: string): string {
@@ -330,49 +448,59 @@ async function sendBookingEmails(
   db: SupabaseClient,
   rep: BookableRep,
   req: BookingRequest,
-  ctx: { email: string | null; phone: string | null; dealId: string | null; dealCreated: boolean }
+  ctx: { email: string | null; phone: string | null; dealId: string | null; dealCreated: boolean; token: string; rescheduledFrom: number | null }
 ) {
-  const { data: account } = await db.from("gmail_accounts").select("*").eq("user_email", SENDER_EMAIL).eq("status", "active").maybeSingle();
-  if (!account) return;
   const { sendGmail } = await import("./gmail");
+  const { data: cainen } = await db.from("gmail_accounts").select("*").eq("user_email", SENDER_EMAIL).eq("status", "active").maybeSingle();
   const ptWhen = `${fmtIn(req.startAt, REP_TZ, { weekday: "long" })} PT`;
   const custWhen = `${fmtIn(req.startAt, req.tz, { weekday: "long" })} ${tzAbbrev(req.startAt, req.tz)}`;
   const dealLink = ctx.dealId ? `${APP_URL}/crm/deal/${ctx.dealId}` : null;
+  const resched = ctx.rescheduledFrom != null ? `${fmtIn(ctx.rescheduledFrom, REP_TZ)} PT` : null;
 
-  // Rep notification.
-  await sendGmail(db, account, {
-    to: rep.email,
-    subject: `📅 New call booked — ${req.name} · ${fmtIn(req.startAt, REP_TZ)} PT`,
-    body: [
-      `${req.name} booked a call with you${req.via === "round_robin" ? " (assigned by round robin)" : ""}.`,
-      ``,
-      `When: ${ptWhen}`,
-      req.tz !== REP_TZ ? `Customer's local time: ${custWhen}` : null,
-      `Phone: ${ctx.phone ?? "—"}`,
-      `Email: ${ctx.email ?? "—"}`,
-      req.note ? `Note: ${req.note}` : null,
-      ``,
-      ctx.dealId ? `Deal: ${dealLink}${ctx.dealCreated ? " (new deal created and assigned to you)" : " (existing deal)"}` : `No deal could be linked.`,
-      ``,
-      `A ⭐ priority reminder is set — the countdown will start 10 minutes before the call.`,
-    ].filter((l) => l != null).join("\n"),
-  });
+  // Rep alert — from cainen@ (Kyle's choice), for direct AND round-robin bookings.
+  if (cainen) {
+    await sendGmail(db, cainen, {
+      to: rep.email,
+      subject: `📅 ${resched ? "Call rescheduled" : "New call booked"} — ${req.name} · ${fmtIn(req.startAt, REP_TZ)} PT`,
+      body: [
+        resched
+          ? `${req.name} moved their call with you from ${resched} to a new time.`
+          : `${req.name} booked a call with you${req.via === "round_robin" ? " (assigned by round robin)" : ""}.`,
+        ``,
+        `When: ${ptWhen}`,
+        req.tz !== REP_TZ ? `Customer's local time: ${custWhen}` : null,
+        `Phone: ${ctx.phone ?? "—"}`,
+        `Email: ${ctx.email ?? "—"}`,
+        req.note ? `Note: ${req.note}` : null,
+        ``,
+        ctx.dealId ? `Deal: ${dealLink}${ctx.dealCreated ? " (new deal created and assigned to you)" : " (existing deal)"}` : `No deal could be linked.`,
+        ``,
+        `A ⭐ priority reminder is set — the countdown will start 10 minutes before the call.`,
+      ].filter((l) => l != null).join("\n"),
+    });
+  }
 
-  // Customer confirmation.
+  // Customer confirmation — from the rep they booked with (their connected
+  // Gmail), falling back to cainen@ if the rep's mailbox isn't connected.
   if (ctx.email) {
+    const from = (await repSender(db, rep)) ?? cainen;
+    if (!from) return;
     const custFirst = req.name.split(/\s+/)[0];
-    await sendGmail(db, account, {
+    await sendGmail(db, from, {
       to: ctx.email,
-      subject: `Your call with ${rep.first} at Lone Peak Overland is confirmed`,
+      subject: resched ? `Your call with ${rep.first} has been moved` : `Your call with ${rep.first} at Lone Peak Overland is confirmed`,
       body: [
         `Hi ${custFirst},`,
         ``,
-        `You're booked with ${rep.first}, one of our Gravel Guides, on ${custWhen}.`,
+        resched
+          ? `Your call with ${rep.first} is now on ${custWhen}.`
+          : `You're booked with ${rep.first}, one of our Gravel Guides, on ${custWhen}.`,
         `${rep.first} will call you at ${ctx.phone ?? "the number you provided"}.`,
         ``,
-        `Need to change the time? Just reply to this email and we'll sort it out.`,
+        `Need to reschedule or cancel? ${manageBookingUrl(ctx.token)}`,
         ``,
         `Talk soon,`,
+        `${rep.name}`,
         `Lone Peak Overland`,
       ].join("\n"),
     });

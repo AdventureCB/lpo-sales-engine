@@ -42,6 +42,22 @@ export function BookingView({ repSlug, repFirst }: Props) {
   const [form, setForm] = useState({ name: "", phone: "", email: "", note: "" });
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState<{ startAt: string; repFirst: string } | null>(null);
+  // Reschedule flow: /book/<slug>?rebook=<token> prefills the customer's details
+  // and cancels the old booking once the new one is confirmed.
+  const [rebook, setRebook] = useState<{ token: string; oldStartAt: string } | null>(null);
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get("rebook");
+    if (!token) return;
+    fetch(`/api/book/manage?token=${encodeURIComponent(token)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d || d.status !== "booked") return;
+        setRebook({ token, oldStartAt: d.startAt });
+        setForm({ name: d.name ?? "", phone: d.phone ?? "", email: d.email ?? "", note: "" });
+        if (d.tz) setTz(d.tz);
+      })
+      .catch(() => {});
+  }, []);
 
   const load = () => {
     setSlots(null);
@@ -82,7 +98,7 @@ export function BookingView({ repSlug, repFirst }: Props) {
       const r = await fetch("/api/book", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rep: repSlug ?? "rr", ...form, tz, startAt: slot }),
+        body: JSON.stringify({ rep: repSlug ?? "rr", ...form, tz, startAt: slot, rebook: rebook?.token ?? undefined }),
       });
       const d = await r.json();
       if (!r.ok || d.error) {
@@ -118,7 +134,7 @@ export function BookingView({ repSlug, repFirst }: Props) {
       <Shell repFirst={repFirst}>
         <div style={{ ...card, textAlign: "center", padding: 32 }}>
           <div style={{ fontSize: 44 }}>✅</div>
-          <h2 style={{ margin: "10px 0 6px" }}>You're booked with {done.repFirst}</h2>
+          <h2 style={{ margin: "10px 0 6px" }}>{rebook ? `Your call with ${done.repFirst} has been moved` : `You're booked with ${done.repFirst}`}</h2>
           <div style={{ fontSize: 17, fontWeight: 600 }}>{fmtLong(done.startAt, tz)}</div>
           <p style={{ color: "var(--text-2)", marginTop: 12 }}>
             {done.repFirst} will call you at {form.phone}. A confirmation is on its way to {form.email}.
@@ -198,6 +214,11 @@ export function BookingView({ repSlug, repFirst }: Props) {
 
         {/* Details */}
         <div style={card}>
+          {rebook && (
+            <div style={{ background: "var(--accent-soft, rgba(217,91,49,0.14))", border: "1px solid var(--accent)", borderRadius: 10, padding: "8px 12px", marginBottom: 12, fontSize: 14 }}>
+              📅 Rescheduling your call from <b>{fmtLong(rebook.oldStartAt, tz)}</b> — pick a new time above and we'll release the old one.
+            </div>
+          )}
           <div style={{ fontWeight: 700, marginBottom: 4 }}>{slot ? `Your call: ${fmtLong(slot, tz)}` : "Choose a time above, then tell us how to reach you"}</div>
           <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1fr 1fr", marginTop: 12 }} className="book-cols">
             <input style={input} placeholder="Your name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} autoComplete="name" />

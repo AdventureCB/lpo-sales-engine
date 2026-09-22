@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
  * stale page can't book a taken or out-of-hours time).
  */
 export async function POST(req: NextRequest) {
-  let body: { rep?: string; name?: string; email?: string; phone?: string; tz?: string; note?: string; startAt?: string };
+  let body: { rep?: string; name?: string; email?: string; phone?: string; tz?: string; note?: string; startAt?: string; rebook?: string };
   try {
     body = await req.json();
   } catch {
@@ -50,8 +50,9 @@ export async function POST(req: NextRequest) {
   if (!rep) rep = await pickRoundRobin(db, reps, startAt, cfg);
   if (!rep) return NextResponse.json({ error: "No guide is free at that time — please pick another." }, { status: 409 });
 
+  const rebookToken = body.rebook && /^[a-f0-9]{24}$/.test(body.rebook) ? body.rebook : null;
   try {
-    const r = await createBooking(db, rep, { name, email, phone, tz, note, startAt, via }, cfg);
+    const r = await createBooking(db, rep, { name, email, phone, tz, note, startAt, via, rebookToken }, cfg);
     return NextResponse.json({ ok: true, rep: { first: rep.first }, startAt: new Date(startAt).toISOString(), ...r });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "failed";

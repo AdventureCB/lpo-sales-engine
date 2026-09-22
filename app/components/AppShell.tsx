@@ -72,6 +72,7 @@ const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[]
       { label: "🔀 Intake", href: "/settings/intake", adminOnly: true },
       { label: "🧠 AI Profiler", href: "/settings/profiler", adminOnly: true },
       { label: "✉️ Comms", href: "/settings/comms", adminOnly: true },
+      { label: "📅 Booking", href: "/settings/booking", adminOnly: true },
     ],
   },
 ];

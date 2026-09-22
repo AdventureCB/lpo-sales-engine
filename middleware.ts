@@ -14,6 +14,16 @@ const PUBLIC_PREFIXES = ["/login", "/api/webhooks/", "/api/cron/", "/api/health"
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
+  // Custom booking domain (book.lonepeakoverland.com): the whole host IS the
+  // booking app — "/" → /book, "/jesse" → /book/jesse, "/manage/…" →
+  // /book/manage/…; /api/book stays put. Public, no session.
+  const host = (req.headers.get("host") ?? "").toLowerCase();
+  if (host.startsWith("book.") && !pathname.startsWith("/api/") && !pathname.startsWith("/book")) {
+    const url = req.nextUrl.clone();
+    url.pathname = pathname === "/" ? "/book" : `/book${pathname}`;
+    return NextResponse.rewrite(url);
+  }
+
   if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {
     return NextResponse.next();
   }
