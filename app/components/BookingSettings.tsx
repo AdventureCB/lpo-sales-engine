@@ -11,11 +11,11 @@ interface Recent { id: string; kind: Kind; name: string; email: string | null; p
 
 const DAY_LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 /** iframe + auto-height listener for the main website. Origin-checked so only our booking page can resize it. */
-function embedSnippet(base: string): string {
+function embedSnippet(base: string, theme: "light" | "dark"): string {
   let origin = base;
   try { origin = new URL(base).origin; } catch {}
   return [
-    `<iframe id="lpo-book" src="${base}/?embed=1" title="Schedule with a Gravel Guide" style="width:100%;border:0;display:block;min-height:640px" loading="lazy"></iframe>`,
+    `<iframe id="lpo-book" src="${base}/?embed=1&theme=${theme}" title="Schedule with a Gravel Guide" style="width:100%;border:0;display:block;min-height:640px" loading="lazy"></iframe>`,
     `<script>`,
     `window.addEventListener("message",function(e){`,
     `  if(e.origin!=="${origin}"||!e.data)return;`,
@@ -42,6 +42,7 @@ export function BookingSettings() {
   const [kinds, setKinds] = useState<{ id: Kind; label: string; emoji: string }[]>([]);
   const [tab, setTab] = useState<Kind>("call");
   const [vars, setVars] = useState<string[]>([]);
+  const [embedTheme, setEmbedTheme] = useState<"light" | "dark">("light");
 
   const load = () =>
     fetch("/api/admin/booking-config")
@@ -102,11 +103,17 @@ export function BookingSettings() {
         <div className="panel-h">Embed on the website</div>
         <div className="viewsub" style={{ marginTop: 0 }}>
           Paste this where the booking flow should appear (a Shopify "Custom Liquid" section works). <code>?embed=1</code> hides the LPO header and the frame
-          auto-sizes as the customer moves through the steps. Add <code>&amp;kind=showroom</code> (or <code>call</code> / <code>confirm</code>) to skip the type step.
+          auto-sizes as the customer moves through the steps; <code>theme=</code> matches the page it sits on. Add <code>&amp;kind=showroom</code> (or <code>call</code> / <code>confirm</code>) to skip the type step.
           Which guides the round robin rotates over, and the deal source / stage, are set on the <a href="/settings/intake" style={{ color: "var(--accent)" }}>Gravel Guide Booking intake engine</a>.
         </div>
-        <pre style={{ fontSize: 12, background: "var(--surface-2)", borderRadius: 8, padding: 10, overflowX: "auto", margin: "8px 0", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{embedSnippet(base)}</pre>
-        <button className="btn ghost" style={{ padding: "2px 10px", fontSize: 12.5 }} onClick={() => copy(embedSnippet(base))}>{copied === embedSnippet(base) ? "Copied ✓" : "Copy embed code"}</button>
+        <div style={{ display: "flex", gap: 6, margin: "8px 0 0" }}>
+          {(["light", "dark"] as const).map((t) => (
+            <button key={t} className={`btn ${embedTheme === t ? "primary" : "ghost"}`} style={{ padding: "2px 12px", fontSize: 12.5 }} onClick={() => setEmbedTheme(t)}>{t === "light" ? "☀️ Light" : "🌙 Dark"}</button>
+          ))}
+          <a href={`${base}/?embed=1&theme=${embedTheme}`} target="_blank" rel="noreferrer" className="btn ghost" style={{ padding: "2px 12px", fontSize: 12.5 }}>Preview ↗</a>
+        </div>
+        <pre style={{ fontSize: 12, background: "var(--surface-2)", borderRadius: 8, padding: 10, overflowX: "auto", margin: "8px 0", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{embedSnippet(base, embedTheme)}</pre>
+        <button className="btn ghost" style={{ padding: "2px 10px", fontSize: 12.5 }} onClick={() => copy(embedSnippet(base, embedTheme))}>{copied === embedSnippet(base, embedTheme) ? "Copied ✓" : "Copy embed code"}</button>
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>

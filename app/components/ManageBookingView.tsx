@@ -44,7 +44,7 @@ export function ManageBookingView({ token, booking }: Props) {
   const card: React.CSSProperties = { background: "var(--surface-1)", border: "1px solid var(--border)", borderRadius: 14, padding: 24, maxWidth: 560, margin: "0 auto" };
 
   return (
-    <main style={{ minHeight: "100vh", background: "var(--bg, #14120f)", color: "var(--text-1)", padding: "28px 16px 60px" }}>
+    <main style={{ minHeight: "100vh", background: "var(--surface-0)", color: "var(--text-1)", padding: "28px 16px 60px" }}>
       <div style={{ maxWidth: 560, margin: "0 auto 20px", display: "flex", alignItems: "center", gap: 12 }}>
         <div style={{ width: 40, height: 40, borderRadius: 10, background: "var(--accent)", display: "grid", placeItems: "center", color: "#fff", fontWeight: 900, fontSize: 20 }}>▲</div>
         <div>

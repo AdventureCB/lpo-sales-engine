@@ -14,10 +14,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" data-theme="dark">
       <head>
-        {/* Apply the saved theme before paint to avoid a flash of dark. */}
+        {/* Apply the saved theme before paint to avoid a flash of dark. A
+            ?theme=light|dark URL param wins (the public booking embed uses it
+            to match the website). */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{var t=localStorage.getItem('theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}`,
+            __html: `try{var q=new URLSearchParams(location.search).get('theme');var t=(q==='light'||q==='dark')?q:localStorage.getItem('theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}`,
           }}
         />
       </head>
