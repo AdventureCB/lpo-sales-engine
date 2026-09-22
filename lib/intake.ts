@@ -146,12 +146,12 @@ export async function nextIntakeOwner(db: SupabaseClient, source: IntakeSource):
   return pool[next].pipedrive_id;
 }
 
-function normEmail(e: string | null | undefined): string | null {
+export function normEmail(e: string | null | undefined): string | null {
   const s = e?.trim().toLowerCase();
   return s && s.includes("@") ? s : null;
 }
 
-function normPhone(p: string | null | undefined): string | null {
+export function normPhone(p: string | null | undefined): string | null {
   if (!p) return null;
   const digits = p.replace(/\D/g, "");
   if (digits.length === 10) return `+1${digits}`;
@@ -159,7 +159,7 @@ function normPhone(p: string | null | undefined): string | null {
   return digits.length > 7 ? `+${digits}` : null;
 }
 
-async function findContact(db: SupabaseClient, email: string | null, phone: string | null) {
+export async function findContact(db: SupabaseClient, email: string | null, phone: string | null) {
   if (email) {
     const { data } = await db
       .from("crm_contacts")

@@ -11,7 +11,7 @@ const OVERDUE_WINDOW_MS = 14 * 86_400_000; // don't resurface ancient tasks
 type NotifGroup = "deals" | "notes" | "comms" | "tasks";
 interface Notif {
   key: string; // stable id for dismissal
-  kind: "sms" | "whatsapp" | "missed_call" | "inbound_email" | "overdue" | "intake" | "mention";
+  kind: "sms" | "whatsapp" | "missed_call" | "inbound_email" | "booking" | "overdue" | "intake" | "mention";
   group: NotifGroup;
   title: string;
   sub: string | null;
@@ -70,8 +70,18 @@ export async function GET() {
     .limit(15);
   if (!isAdmin) emailQ = emailQ.eq("meta->>mailbox", user.email);
 
+  // Online bookings ("Schedule with a Gravel Guide") for this rep.
+  let bookQ = db
+    .from("bookings")
+    .select("id, customer_name, start_at, via, deal_id, created_at, reps ( email )")
+    .eq("status", "booked")
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(15);
+  if (!isAdmin && user.repId) bookQ = bookQ.eq("rep_id", user.repId);
+
   const mentionSince = new Date(Date.now() - 7 * 86_400_000).toISOString();
-  const [{ data: sms }, { data: wa }, { data: missed }, { data: due }, { data: intake }, { data: mentions }, { data: emails }] = await Promise.all([
+  const [{ data: sms }, { data: wa }, { data: missed }, { data: due }, { data: intake }, { data: mentions }, { data: emails }, { data: bookings }] = await Promise.all([
     smsQ,
     db
       .from("whatsapp_messages")
@@ -108,6 +118,7 @@ export async function GET() {
       .order("occurred_at", { ascending: false })
       .limit(20),
     emailQ,
+    bookQ,
   ]);
 
   const intakeItems = (intake ?? []).filter((e: any) => {
@@ -199,6 +210,16 @@ export async function GET() {
         isNew: e.occurred_at > seenAt,
       };
     }),
+    ...(bookings ?? []).map((b: any): Notif => ({
+      key: `booking:${b.id}`,
+      kind: "booking",
+      group: "tasks",
+      title: `📅 New call booked — ${b.customer_name}`,
+      sub: `${new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(b.start_at))} PT${b.via === "round_robin" ? " · round robin" : ""}`,
+      at: b.created_at,
+      href: b.deal_id ? `/crm/deal/${b.deal_id}` : "/calendar",
+      isNew: b.created_at > seenAt,
+    })),
     ...(mentions ?? []).map((a: any): Notif => ({
       key: `mention:${a.id}`,
       kind: "mention",

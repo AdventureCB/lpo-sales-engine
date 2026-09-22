@@ -74,7 +74,8 @@ export function PageLock() {
   useEffect(() => {
     // /texts/chat: every popout shares this pathname (the conversation lives
     // in the query string) — locking it would block a second chat popout.
-    if (!pathname || pathname.startsWith("/login") || pathname.startsWith("/texts/chat")) {
+    // /book: public customer pages — a customer with two tabs must never see a lock.
+    if (!pathname || pathname.startsWith("/login") || pathname.startsWith("/texts/chat") || pathname.startsWith("/book")) {
       setBlocked(false);
       return;
     }
