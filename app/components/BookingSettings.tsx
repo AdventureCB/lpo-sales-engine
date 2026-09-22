@@ -4,11 +4,13 @@ import { useEffect, useState } from "react";
 import { MyBookingAvailability } from "./MyBookingAvailability";
 
 interface Tpl { subject: string; body: string }
-interface Cfg { slot_minutes: number; days: number[]; start: string; end: string; min_notice_hours: number; horizon_days: number; confirmation?: Tpl }
+type Kind = "call" | "confirm" | "showroom";
+interface Cfg { slot_minutes: number; days: number[]; start: string; end: string; min_notice_hours: number; horizon_days: number; confirmations: Record<Kind, Tpl> }
 interface Rep { id: string; name: string; email: string; slug: string; enabled: boolean; hasPhone: boolean; url: string | null; custom: boolean }
-interface Recent { id: string; name: string; email: string | null; phone: string | null; startAt: string; via: string; status: string; dealId: string | null; createdAt: string; rep: string | null }
+interface Recent { id: string; kind: Kind; name: string; email: string | null; phone: string | null; startAt: string; via: string; status: string; dealId: string | null; createdAt: string; rep: string | null }
 
 const DAY_LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const KIND_SHORT: Record<Kind, string> = { call: "📞 Call", confirm: "✅ Confirm order", showroom: "🏠 Showroom" };
 const pt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 
 export function BookingSettings() {
@@ -20,13 +22,15 @@ export function BookingSettings() {
   const [msg, setMsg] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [hoursFor, setHoursFor] = useState<string | null>(null); // rep id whose own hours are open inline
-  const [defaultTpl, setDefaultTpl] = useState<Tpl | null>(null);
+  const [defaultTpls, setDefaultTpls] = useState<Record<Kind, Tpl> | null>(null);
+  const [kinds, setKinds] = useState<{ id: Kind; label: string; emoji: string }[]>([]);
+  const [tab, setTab] = useState<Kind>("call");
   const [vars, setVars] = useState<string[]>([]);
 
   const load = () =>
     fetch("/api/admin/booking-config")
       .then((r) => r.json())
-      .then((d) => { if (!d.error) { setCfg(d.config); setReps(d.reps); setRecent(d.recent); setBase(d.base); setDefaultTpl(d.defaults?.confirmation ?? null); setVars(d.vars ?? []); } else setMsg(d.error); });
+      .then((d) => { if (!d.error) { setCfg(d.config); setReps(d.reps); setRecent(d.recent); setBase(d.base); setDefaultTpls(d.defaults?.confirmations ?? null); setKinds(d.kinds ?? []); setVars(d.vars ?? []); } else setMsg(d.error); });
   useEffect(() => { void load(); }, []);
 
   const save = async () => {
@@ -58,7 +62,10 @@ export function BookingSettings() {
     <>
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="panel-h">Links</div>
-        <div className="viewsub" style={{ marginTop: 0 }}>Share these anywhere Calendly links used to go. Times are offered in Pacific; customers see their own zone.</div>
+        <div className="viewsub" style={{ marginTop: 0 }}>
+          Share these anywhere Calendly links used to go. Times are offered in Pacific; customers see their own zone.
+          Add <code>?kind=call</code>, <code>?kind=confirm</code> or <code>?kind=showroom</code> to skip straight to the calendar for one booking type.
+        </div>
         <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <b style={{ minWidth: 160 }}>Round robin (any guide)</b>
@@ -95,18 +102,23 @@ export function BookingSettings() {
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
-        <div className="panel-h">✉️ Team-default confirmation email</div>
+        <div className="panel-h">✉️ Team-default confirmation emails</div>
         <div className="viewsub" style={{ marginTop: 0 }}>
-          Sent <b>from the guide the customer booked with</b>, so write it in first person. Guides can replace it with their own from My Profile. The reschedule/cancel link is appended automatically.
+          One per booking type. Sent <b>from the guide the customer booked with</b>, so write them in first person. Guides can replace any of them with their own from My Profile. The reschedule/cancel link is appended automatically.
         </div>
-        <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-          <input className="vmsel" style={{ width: "100%" }} value={cfg.confirmation?.subject ?? ""} placeholder="Subject" onChange={(e) => setCfg({ ...cfg, confirmation: { subject: e.target.value, body: cfg.confirmation?.body ?? "" } })} />
-          <textarea className="vmsel" style={{ width: "100%", minHeight: 180, resize: "vertical", fontFamily: "inherit", lineHeight: 1.45 }} value={cfg.confirmation?.body ?? ""} onChange={(e) => setCfg({ ...cfg, confirmation: { subject: cfg.confirmation?.subject ?? "", body: e.target.value } })} />
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "8px 0" }}>
+          {kinds.map((k) => (
+            <button key={k.id} className={`btn ${tab === k.id ? "primary" : "ghost"}`} style={{ padding: "3px 12px", fontSize: 13 }} onClick={() => setTab(k.id)}>{k.emoji} {k.label}</button>
+          ))}
+        </div>
+        <div style={{ display: "grid", gap: 8 }}>
+          <input className="vmsel" style={{ width: "100%" }} value={cfg.confirmations[tab]?.subject ?? ""} placeholder="Subject" onChange={(e) => setCfg({ ...cfg, confirmations: { ...cfg.confirmations, [tab]: { subject: e.target.value, body: cfg.confirmations[tab]?.body ?? "" } } })} />
+          <textarea className="vmsel" style={{ width: "100%", minHeight: 180, resize: "vertical", fontFamily: "inherit", lineHeight: 1.45 }} value={cfg.confirmations[tab]?.body ?? ""} onChange={(e) => setCfg({ ...cfg, confirmations: { ...cfg.confirmations, [tab]: { subject: cfg.confirmations[tab]?.subject ?? "", body: e.target.value } } })} />
         </div>
         <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 6 }}>
           Placeholders: {vars.map((v) => <code key={v} style={{ marginRight: 6 }}>{`{{${v}}}`}</code>)}
-          {defaultTpl && (
-            <button className="btn ghost" style={{ padding: "1px 8px", fontSize: 12, marginLeft: 8 }} onClick={() => setCfg({ ...cfg, confirmation: defaultTpl })}>Reset to built-in</button>
+          {defaultTpls && (
+            <button className="btn ghost" style={{ padding: "1px 8px", fontSize: 12, marginLeft: 8 }} onClick={() => setCfg({ ...cfg, confirmations: { ...cfg.confirmations, [tab]: defaultTpls[tab] } })}>Reset to built-in</button>
           )}
         </div>
       </div>
@@ -153,13 +165,14 @@ export function BookingSettings() {
           <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13.5 }}>
             <thead>
               <tr style={{ fontSize: 12, color: "var(--text-3)", textAlign: "left" }}>
-                <th style={{ padding: "6px 8px" }}>Customer</th><th style={{ padding: "6px 8px" }}>Call (PT)</th><th style={{ padding: "6px 8px" }}>Guide</th><th style={{ padding: "6px 8px" }}>Via</th><th style={{ padding: "6px 8px" }}>Status</th><th style={{ padding: "6px 8px" }}>Booked</th>
+                <th style={{ padding: "6px 8px" }}>Customer</th><th style={{ padding: "6px 8px" }}>Type</th><th style={{ padding: "6px 8px" }}>When (PT)</th><th style={{ padding: "6px 8px" }}>Guide</th><th style={{ padding: "6px 8px" }}>Via</th><th style={{ padding: "6px 8px" }}>Status</th><th style={{ padding: "6px 8px" }}>Booked</th>
               </tr>
             </thead>
             <tbody>
               {recent.map((b) => (
                 <tr key={b.id} style={{ borderTop: "1px solid var(--border)", opacity: b.status === "cancelled" ? 0.55 : 1 }}>
                   <td style={{ padding: "6px 8px" }}>{b.dealId ? <a href={`/crm/deal/${b.dealId}`} style={{ color: "var(--accent)" }}>{b.name}</a> : b.name}<div style={{ fontSize: 12, color: "var(--text-3)" }}>{b.phone} · {b.email}</div></td>
+                  <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{KIND_SHORT[b.kind] ?? b.kind}</td>
                   <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{pt(b.startAt)}</td>
                   <td style={{ padding: "6px 8px" }}>{b.rep ?? "—"}</td>
                   <td style={{ padding: "6px 8px" }}>{b.via === "round_robin" ? "round robin" : "direct"}</td>

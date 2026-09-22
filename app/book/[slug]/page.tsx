@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const rep = (await bookableReps(supabaseAdmin())).find((r) => r.slug === slug.toLowerCase());
-  return { title: rep ? `Schedule a call with ${rep.first} · Lone Peak Overland` : "Schedule with a Gravel Guide" };
+  return { title: rep ? `Schedule with ${rep.first} · Lone Peak Overland` : "Schedule with a Gravel Guide" };
 }
 
 /** Public per-rep booking page: /book/<slug>. */

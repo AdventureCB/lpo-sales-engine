@@ -73,7 +73,7 @@ export async function GET() {
   // Online bookings ("Schedule with a Gravel Guide") for this rep.
   let bookQ = db
     .from("bookings")
-    .select("id, customer_name, start_at, via, deal_id, created_at, reps ( email )")
+    .select("id, kind, customer_name, start_at, via, deal_id, created_at, reps ( email )")
     .eq("status", "booked")
     .gte("created_at", since)
     .order("created_at", { ascending: false })
@@ -214,7 +214,7 @@ export async function GET() {
       key: `booking:${b.id}`,
       kind: "booking",
       group: "tasks",
-      title: `📅 New call booked — ${b.customer_name}`,
+      title: `${b.kind === "showroom" ? "🏠 Showroom appointment booked" : b.kind === "confirm" ? "✅ Order confirmation booked" : "📅 New call booked"} — ${b.customer_name}`,
       sub: `${new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(b.start_at))} PT${b.via === "round_robin" ? " · round robin" : ""}`,
       at: b.created_at,
       href: b.deal_id ? `/crm/deal/${b.deal_id}` : "/calendar",

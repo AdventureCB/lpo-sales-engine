@@ -6,6 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const shape = (b: NonNullable<Awaited<ReturnType<typeof getBookingByToken>>>) => ({
+  kind: b.kind,
   status: b.status,
   startAt: b.start_at,
   name: b.customer_name,

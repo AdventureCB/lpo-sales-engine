@@ -28,6 +28,48 @@ export interface EmailTemplate {
   subject: string;
   body: string;
 }
+
+/** The three things a customer can book. */
+export type BookingKind = "call" | "confirm" | "showroom";
+export const BOOKING_KINDS: BookingKind[] = ["call", "confirm", "showroom"];
+export const SHOWROOM_ADDRESS = "13 Pangborn Rd, East Wenatchee, WA 98802";
+
+export const KIND_META: Record<
+  BookingKind,
+  { label: string; blurb: string; noun: string; activityType: "call" | "meeting"; emoji: string; activitySubject: (name: string) => string; alertTitle: string }
+> = {
+  call: {
+    label: "Gravel Guide Call",
+    blurb: "Talk through your build, options and questions with one of our guides.",
+    noun: "call",
+    activityType: "call",
+    emoji: "📅",
+    activitySubject: (n) => `📅 Scheduled call — ${n}`,
+    alertTitle: "New call booked",
+  },
+  confirm: {
+    label: "Confirm Your Order",
+    blurb: "Already placed a deposit? Book a time to finalize your build together.",
+    noun: "order confirmation call",
+    activityType: "call",
+    emoji: "✅",
+    activitySubject: (n) => `✅ Order confirmation call — ${n}`,
+    alertTitle: "Order confirmation booked",
+  },
+  showroom: {
+    label: "Showroom Appointment",
+    blurb: `See the campers in person at our shop — ${SHOWROOM_ADDRESS}.`,
+    noun: "showroom visit",
+    activityType: "meeting",
+    emoji: "🏠",
+    activitySubject: (n) => `🏠 Showroom appointment — ${n}`,
+    alertTitle: "Showroom appointment booked",
+  },
+};
+export const isBookingKind = (k: unknown): k is BookingKind => typeof k === "string" && (BOOKING_KINDS as string[]).includes(k);
+
+export type ConfirmationMap = Partial<Record<BookingKind, EmailTemplate>>;
+
 export interface BookingConfig {
   slot_minutes: number;
   days: number[]; // 0=Sun … 6=Sat, in PT
@@ -35,31 +77,82 @@ export interface BookingConfig {
   end: string; // "HH:MM" PT
   min_notice_hours: number;
   horizon_days: number;
-  confirmation?: EmailTemplate; // team-default customer confirmation (reps may override)
+  confirmation?: EmailTemplate; // legacy single template (= the 'call' default)
+  confirmations?: ConfirmationMap; // team-default customer confirmation PER TYPE (guides may override)
 }
 
 /** Placeholders every confirmation template can use. */
-export const TEMPLATE_VARS = ["first_name", "name", "when", "date", "time", "phone", "rep_first", "rep_name"] as const;
+export const TEMPLATE_VARS = ["first_name", "name", "when", "date", "time", "phone", "rep_first", "rep_name", "address"] as const;
 
-// Sent FROM the guide, so it speaks in first person. The reschedule/cancel
+// Sent FROM the guide, so they speak in first person. The reschedule/cancel
 // link is appended automatically — it is never part of the editable text.
-export const DEFAULT_CONFIRMATION: EmailTemplate = {
-  subject: "Thanks for booking a call with me — {{when}}",
-  body: [
-    "Hi {{first_name}},",
-    "",
-    "Thanks for booking a call with me! I'm looking forward to talking through your build and answering any questions you have.",
-    "",
-    "When: {{when}}",
-    "I'll call you at {{phone}}.",
-    "",
-    "If anything comes up before then, just reply to this email.",
-    "",
-    "Talk soon,",
-    "{{rep_name}}",
-    "Lone Peak Overland",
-  ].join("\n"),
+export const DEFAULT_CONFIRMATIONS: Record<BookingKind, EmailTemplate> = {
+  call: {
+    subject: "Thanks for booking a call with me — {{when}}",
+    body: [
+      "Hi {{first_name}},",
+      "",
+      "Thanks for booking a call with me! I'm looking forward to talking through your build and answering any questions you have.",
+      "",
+      "When: {{when}}",
+      "I'll call you at {{phone}}.",
+      "",
+      "If anything comes up before then, just reply to this email.",
+      "",
+      "Talk soon,",
+      "{{rep_name}}",
+      "Lone Peak Overland",
+    ].join("\n"),
+  },
+  confirm: {
+    subject: "Thanks for scheduling your order confirmation — {{when}}",
+    body: [
+      "Hi {{first_name}},",
+      "",
+      "Thanks for booking a time with me to confirm your order! On our call I'll help you finalize your build — we'll go through every option together and make sure it's exactly what you want before it's locked in.",
+      "",
+      "When: {{when}}",
+      "I'll call you at {{phone}}.",
+      "",
+      "If there's anything you'd like to look over beforehand, just reply to this email and I'll send it your way.",
+      "",
+      "Talk soon,",
+      "{{rep_name}}",
+      "Lone Peak Overland",
+    ].join("\n"),
+  },
+  showroom: {
+    subject: "See you at the showroom — {{when}}",
+    body: [
+      "Hi {{first_name}},",
+      "",
+      "Thanks for setting up a showroom visit! I'll see you on {{when}} at our shop:",
+      "",
+      "Lone Peak Overland",
+      "{{address}}",
+      "",
+      "You'll get to walk through the campers in person, and we can talk through your build while you're here. If anything changes, just reply to this email.",
+      "",
+      "See you then,",
+      "{{rep_name}}",
+      "Lone Peak Overland",
+    ].join("\n"),
+  },
 };
+/** @deprecated single-template alias kept for older callers. */
+export const DEFAULT_CONFIRMATION = DEFAULT_CONFIRMATIONS.call;
+
+/** Parse a stored template value: a per-kind map, or a legacy single {subject, body} (= call). */
+export function parseTemplates(v: unknown): ConfirmationMap | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as any;
+  if (typeof o.subject === "string" && typeof o.body === "string") return { call: { subject: o.subject, body: o.body } };
+  const out: ConfirmationMap = {};
+  for (const k of BOOKING_KINDS) {
+    if (o[k] && typeof o[k].subject === "string" && typeof o[k].body === "string" && o[k].subject.trim() && o[k].body.trim()) out[k] = { subject: o[k].subject, body: o[k].body };
+  }
+  return Object.keys(out).length ? out : null;
+}
 
 export function renderTemplate(text: string, vars: Record<string, string>): string {
   return text.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (m, k) => (k in vars ? vars[k] : m));
@@ -95,7 +188,7 @@ export interface BookableRep {
   slug: string;
   pipedriveUserId: number | null;
   hours: RepHours | null;
-  emailTemplate: EmailTemplate | null; // the guide's own confirmation, or null = team default
+  emailTemplates: ConfirmationMap | null; // the guide's own confirmations per type; missing = team default
 }
 
 export async function bookableReps(db: SupabaseClient): Promise<BookableRep[]> {
@@ -116,14 +209,24 @@ export async function bookableReps(db: SupabaseClient): Promise<BookableRep[]> {
     slug: r.booking_slug,
     pipedriveUserId: r.pipedrive_user_id ?? null,
     hours: (r.booking_hours as RepHours | null) ?? null,
-    emailTemplate: (r.booking_email as EmailTemplate | null) ?? null,
+    emailTemplates: parseTemplates(r.booking_email),
   }));
 }
 
-/** The confirmation a given guide sends: their own template, else the team's, else the built-in. */
-export function confirmationTemplate(cfg: BookingConfig, rep: BookableRep): EmailTemplate {
-  const pick = (t?: EmailTemplate | null) => (t && t.subject?.trim() && t.body?.trim() ? t : null);
-  return pick(rep.emailTemplate) ?? pick(cfg.confirmation) ?? DEFAULT_CONFIRMATION;
+/** Team-default templates per type (legacy single `confirmation` = the call one). */
+export function teamTemplates(cfg: BookingConfig): Record<BookingKind, EmailTemplate> {
+  const team = parseTemplates(cfg.confirmations) ?? {};
+  const legacy = parseTemplates(cfg.confirmation) ?? {};
+  return {
+    call: team.call ?? legacy.call ?? DEFAULT_CONFIRMATIONS.call,
+    confirm: team.confirm ?? DEFAULT_CONFIRMATIONS.confirm,
+    showroom: team.showroom ?? DEFAULT_CONFIRMATIONS.showroom,
+  };
+}
+
+/** The confirmation a given guide sends for a booking type: their own, else the team's, else the built-in. */
+export function confirmationTemplate(cfg: BookingConfig, rep: BookableRep, kind: BookingKind): EmailTemplate {
+  return rep.emailTemplates?.[kind] ?? teamTemplates(cfg)[kind];
 }
 
 /** Team config with the rep's own hours layered on, plus their days off. */
@@ -275,6 +378,7 @@ export interface BookingRequest {
   note: string | null;
   startAt: number; // UTC ms
   via: "direct" | "round_robin";
+  kind: BookingKind;
   rebookToken?: string | null; // reschedule: cancel this prior booking once the new one exists
 }
 
@@ -311,7 +415,7 @@ export async function createBooking(
   const { data: booking, error: bErr } = await db
     .from("bookings")
     .insert({
-      rep_id: rep.id, via: req.via, customer_name: req.name, customer_email: email, customer_phone: phone,
+      rep_id: rep.id, via: req.via, kind: req.kind, customer_name: req.name, customer_email: email, customer_phone: phone,
       customer_tz: req.tz, note: req.note, start_at: startIso, end_at: endIso, cancel_token: token,
     })
     .select("id")
@@ -369,8 +473,10 @@ export async function createBooking(
     }
   }
 
-  // 4) ⭐ Priority call activity at the slot — actor = the rep, so THEIR
-  // countdown fires 10 min before and it shows on their calendar.
+  // 4) ⭐ Priority activity at the slot (a call, or a meeting for a showroom
+  // visit) — actor = the rep, so THEIR countdown fires 10 min before and it
+  // shows on their calendar.
+  const meta = KIND_META[req.kind];
   const when = `${fmtIn(req.startAt, REP_TZ)} PT`;
   const localWhen = req.tz && req.tz !== REP_TZ ? ` · ${fmtIn(req.startAt, req.tz)} ${tzAbbrev(req.startAt, req.tz)} for the customer` : "";
   const { data: act } = await db
@@ -378,18 +484,19 @@ export async function createBooking(
     .insert({
       deal_id: dealId,
       contact_id: contact?.id ?? null,
-      type: "call",
-      subject: `📅 Scheduled call — ${req.name}`,
+      type: meta.activityType,
+      subject: meta.activitySubject(req.name),
       body: [
-        `Booked online via ${req.via === "direct" ? `your link (/book/${rep.slug})` : "the round-robin link (/book)"}.`,
+        `${meta.label} booked online via ${req.via === "direct" ? `your link (/book/${rep.slug})` : "the round-robin link (/book)"}.`,
         `When: ${when}${localWhen}`,
+        req.kind === "showroom" ? `Where: ${SHOWROOM_ADDRESS}` : null,
         `Phone: ${phone ?? "—"} · Email: ${email ?? "—"}`,
         req.note ? `Customer note: ${req.note}` : null,
       ].filter(Boolean).join("\n"),
       actor: rep.email,
       due_at: startIso,
       occurred_at: new Date().toISOString(),
-      meta: { priority: true, booking_id: booking.id, booked_online: true, customer_tz: req.tz },
+      meta: { priority: true, booking_id: booking.id, booked_online: true, booking_kind: req.kind, customer_tz: req.tz },
     })
     .select("id")
     .single();
@@ -421,6 +528,7 @@ export async function createBooking(
 
 export interface ManagedBooking {
   id: string;
+  kind: BookingKind;
   status: string;
   start_at: string;
   end_at: string;
@@ -438,13 +546,13 @@ export async function getBookingByToken(db: SupabaseClient, token: string): Prom
   if (!/^[a-f0-9]{24}$/.test(token)) return null;
   const { data: b } = await db
     .from("bookings")
-    .select("id, status, start_at, end_at, customer_name, customer_email, customer_phone, customer_tz, note, deal_id, activity_id, rep_id")
+    .select("id, kind, status, start_at, end_at, customer_name, customer_email, customer_phone, customer_tz, note, deal_id, activity_id, rep_id")
     .eq("cancel_token", token)
     .maybeSingle();
   if (!b) return null;
   const reps = await bookableReps(db);
   const rep = reps.find((r) => r.id === b.rep_id) ?? null;
-  return { ...(b as any), rep };
+  return { ...(b as any), kind: isBookingKind(b.kind) ? b.kind : "call", rep };
 }
 
 /**
@@ -466,10 +574,11 @@ export async function cancelBooking(
     .update({ status: "cancelled", cancelled_at: now, cancel_reason: opts.reason, rescheduled_to: opts.rescheduledTo ?? null })
     .eq("id", b.id);
   const when = `${fmtIn(Date.parse(b.start_at), REP_TZ)} PT`;
+  const noun = KIND_META[b.kind].noun;
   if (b.activity_id) {
     await db
       .from("crm_activities")
-      .update({ done_at: now, subject: `❌ ${opts.reason === "rescheduled" ? "Rescheduled" : "Cancelled"} — scheduled call with ${b.customer_name}` })
+      .update({ done_at: now, subject: `❌ ${opts.reason === "rescheduled" ? "Rescheduled" : "Cancelled"} — ${noun} with ${b.customer_name}` })
       .eq("id", b.activity_id);
   }
   if (b.deal_id) {
@@ -477,7 +586,7 @@ export async function cancelBooking(
       deal_id: b.deal_id,
       contact_id: null,
       type: "system",
-      subject: opts.reason === "rescheduled" ? `📅 Customer rescheduled their call (was ${when})` : `❌ Customer cancelled their scheduled call (was ${when})`,
+      subject: opts.reason === "rescheduled" ? `📅 Customer rescheduled their ${noun} (was ${when})` : `❌ Customer cancelled their ${noun} (was ${when})`,
       actor: b.rep?.email ?? "system",
       occurred_at: now,
     });
@@ -489,8 +598,8 @@ export async function cancelBooking(
       if (cainen) {
         await sendGmail(db, cainen, {
           to: b.rep.email,
-          subject: `❌ Call cancelled — ${b.customer_name} · ${fmtIn(Date.parse(b.start_at), REP_TZ)} PT`,
-          body: [`${b.customer_name} cancelled the call that was booked for ${when}.`, ``, `Phone: ${b.customer_phone ?? "—"} · Email: ${b.customer_email ?? "—"}`, b.deal_id ? `Deal: ${APP_URL}/crm/deal/${b.deal_id}` : null].filter(Boolean).join("\n"),
+          subject: `❌ ${KIND_META[b.kind].label} cancelled — ${b.customer_name} · ${fmtIn(Date.parse(b.start_at), REP_TZ)} PT`,
+          body: [`${b.customer_name} cancelled the ${noun} that was booked for ${when}.`, ``, `Phone: ${b.customer_phone ?? "—"} · Email: ${b.customer_email ?? "—"}`, b.deal_id ? `Deal: ${APP_URL}/crm/deal/${b.deal_id}` : null].filter(Boolean).join("\n"),
         });
       }
       if (b.customer_email) {
@@ -498,8 +607,8 @@ export async function cancelBooking(
         if (from) {
           await sendGmail(db, from, {
             to: b.customer_email,
-            subject: `Your call with ${b.rep.first} has been cancelled`,
-            body: [`Hi ${b.customer_name.split(/\s+/)[0]},`, ``, `Your call with ${b.rep.first} on ${fmtIn(Date.parse(b.start_at), b.customer_tz ?? REP_TZ, { weekday: "long" })} ${tzAbbrev(Date.parse(b.start_at), b.customer_tz ?? REP_TZ)} is cancelled.`, ``, `Want to pick a new time? ${repBookingUrl(b.rep.slug)}`, ``, `Lone Peak Overland`].join("\n"),
+            subject: `Your ${noun} with ${b.rep.first} has been cancelled`,
+            body: [`Hi ${b.customer_name.split(/\s+/)[0]},`, ``, `Your ${noun} with me on ${fmtIn(Date.parse(b.start_at), b.customer_tz ?? REP_TZ, { weekday: "long" })} ${tzAbbrev(Date.parse(b.start_at), b.customer_tz ?? REP_TZ)} is cancelled.`, ``, `Want to pick a new time? ${repBookingUrl(b.rep.slug)}`, ``, `${b.rep.name}`, `Lone Peak Overland`].join("\n"),
           });
         }
       }
@@ -536,16 +645,19 @@ async function sendBookingEmails(
   const resched = ctx.rescheduledFrom != null ? `${fmtIn(ctx.rescheduledFrom, REP_TZ)} PT` : null;
 
   // Rep alert — from cainen@ (Kyle's choice), for direct AND round-robin bookings.
+  const km = KIND_META[req.kind];
   if (cainen) {
     await sendGmail(db, cainen, {
       to: rep.email,
-      subject: `📅 ${resched ? "Call rescheduled" : "New call booked"} — ${req.name} · ${fmtIn(req.startAt, REP_TZ)} PT`,
+      subject: `${km.emoji} ${resched ? `${km.label} rescheduled` : km.alertTitle} — ${req.name} · ${fmtIn(req.startAt, REP_TZ)} PT`,
       body: [
         resched
-          ? `${req.name} moved their call with you from ${resched} to a new time.`
-          : `${req.name} booked a call with you${req.via === "round_robin" ? " (assigned by round robin)" : ""}.`,
+          ? `${req.name} moved their ${km.noun} with you from ${resched} to a new time.`
+          : `${req.name} booked a ${km.noun} with you${req.via === "round_robin" ? " (assigned by round robin)" : ""}.`,
         ``,
+        `Type: ${km.label}`,
         `When: ${ptWhen}`,
+        req.kind === "showroom" ? `Where: ${SHOWROOM_ADDRESS}` : null,
         req.tz !== REP_TZ ? `Customer's local time: ${custWhen}` : null,
         `Phone: ${ctx.phone ?? "—"}`,
         `Email: ${ctx.email ?? "—"}`,
@@ -565,10 +677,11 @@ async function sendBookingEmails(
   if (ctx.email) {
     const from = (await repSender(db, rep)) ?? cainen;
     if (!from) return;
-    const tpl = confirmationTemplate(cfg, rep);
+    const tpl = confirmationTemplate(cfg, rep, req.kind);
     const vars: Record<string, string> = {
       first_name: req.name.split(/\s+/)[0],
       name: req.name,
+      address: SHOWROOM_ADDRESS,
       when: custWhen,
       date: new Intl.DateTimeFormat("en-US", { timeZone: req.tz, weekday: "long", month: "long", day: "numeric" }).format(new Date(req.startAt)),
       time: `${new Intl.DateTimeFormat("en-US", { timeZone: req.tz, hour: "numeric", minute: "2-digit" }).format(new Date(req.startAt))} ${tzAbbrev(req.startAt, req.tz)}`,
@@ -582,7 +695,7 @@ async function sendBookingEmails(
       to: ctx.email,
       subject: resched ? `Updated: ${subject}` : subject,
       body: [
-        resched ? `(Your call has been moved — here are the new details.)\n` : null,
+        resched ? `(Your ${km.noun} has been moved — here are the new details.)\n` : null,
         body,
         ``,
         `Need to reschedule or cancel? ${manageBookingUrl(ctx.token)}`,

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
-import { bookingBase, DEFAULT_CONFIG, DEFAULT_CONFIRMATION, loadBookingConfig, repBookingUrl, TEMPLATE_VARS, type BookingConfig } from "@/lib/booking";
+import { BOOKING_KINDS, bookingBase, DEFAULT_CONFIG, DEFAULT_CONFIRMATIONS, KIND_META, loadBookingConfig, repBookingUrl, teamTemplates, TEMPLATE_VARS, type BookingConfig, type ConfirmationMap } from "@/lib/booking";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,13 +16,15 @@ export async function GET() {
     db.from("reps").select("id, name, email, booking_slug, booking_enabled, booking_hours, telnyx_number, sort_order").eq("active", true).not("email", "is", null).order("sort_order").order("name"),
     db
       .from("bookings")
-      .select("id, customer_name, customer_email, customer_phone, start_at, via, status, deal_id, created_at, reps ( name )")
+      .select("id, kind, customer_name, customer_email, customer_phone, start_at, via, status, deal_id, created_at, reps ( name )")
       .order("created_at", { ascending: false })
       .limit(25),
   ]);
+  const { confirmation: _legacy, ...rest } = cfg;
   return NextResponse.json({
-    config: { ...cfg, confirmation: cfg.confirmation ?? DEFAULT_CONFIRMATION },
-    defaults: { ...DEFAULT_CONFIG, confirmation: DEFAULT_CONFIRMATION },
+    config: { ...rest, confirmations: teamTemplates(cfg) },
+    defaults: { ...DEFAULT_CONFIG, confirmations: DEFAULT_CONFIRMATIONS },
+    kinds: BOOKING_KINDS.map((k) => ({ id: k, label: KIND_META[k].label, emoji: KIND_META[k].emoji })),
     vars: TEMPLATE_VARS,
     base: bookingBase(),
     reps: (reps ?? []).map((r: any) => ({
@@ -31,7 +33,7 @@ export async function GET() {
       custom: !!r.booking_hours,
     })),
     recent: (recent ?? []).map((b: any) => ({
-      id: b.id, name: b.customer_name, email: b.customer_email, phone: b.customer_phone, startAt: b.start_at, via: b.via, status: b.status,
+      id: b.id, kind: b.kind ?? "call", name: b.customer_name, email: b.customer_email, phone: b.customer_phone, startAt: b.start_at, via: b.via, status: b.status,
       dealId: b.deal_id, createdAt: b.created_at, rep: b.reps?.name ?? null,
     })),
   });
@@ -61,12 +63,18 @@ export async function POST(req: NextRequest) {
     };
     if (next.start >= next.end) return NextResponse.json({ error: "Start time must be before end time." }, { status: 400 });
     if (next.days.length === 0) return NextResponse.json({ error: "Pick at least one day." }, { status: 400 });
-    // Team-default confirmation template (reps may override with their own).
-    if (c.confirmation && typeof c.confirmation === "object") {
-      const subject = String(c.confirmation.subject ?? "").trim().slice(0, 200);
-      const tbody = String(c.confirmation.body ?? "").trim().slice(0, 4000);
-      if (subject && tbody) next.confirmation = { subject, body: tbody };
+    // Team-default confirmation templates, one per booking type (guides may
+    // override with their own). A type left blank falls back to the built-in.
+    const src = (c.confirmations && typeof c.confirmations === "object" ? c.confirmations : {}) as ConfirmationMap;
+    const map: ConfirmationMap = {};
+    for (const k of BOOKING_KINDS) {
+      const t = src[k];
+      if (!t || typeof t !== "object") continue;
+      const subject = String(t.subject ?? "").trim().slice(0, 200);
+      const tbody = String(t.body ?? "").trim().slice(0, 4000);
+      if (subject && tbody) map[k] = { subject, body: tbody };
     }
+    if (Object.keys(map).length) next.confirmations = map;
     await db.from("crm_sync_state").upsert({ key: "booking_config", value: next, updated_at: new Date().toISOString() }, { onConflict: "key" });
   }
 

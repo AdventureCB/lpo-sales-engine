@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
-import { DEFAULT_CONFIRMATION, loadBookingConfig, repBookingUrl, TEMPLATE_VARS, type EmailTemplate, type RepHours } from "@/lib/booking";
+import { BOOKING_KINDS, KIND_META, loadBookingConfig, parseTemplates, repBookingUrl, teamTemplates, TEMPLATE_VARS, type BookingKind, type ConfirmationMap, type EmailTemplate, type RepHours } from "@/lib/booking";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,6 +9,8 @@ export const dynamic = "force-dynamic";
 /**
  * A rep's own booking availability (My Profile), or — for admins — any rep's
  * (?repId=). Hours are a per-rep override of the team defaults; null = default.
+ * Confirmation emails are per booking type: {call, confirm, showroom} → template,
+ * with any missing type falling back to the team default.
  */
 async function targetRep(req: NextRequest) {
   const user = await getSessionUser();
@@ -32,8 +34,9 @@ export async function GET(req: NextRequest) {
     rep: { id: rep.id, name: rep.name, enabled: !!rep.booking_enabled, slug: rep.booking_slug, url: rep.booking_slug ? repBookingUrl(rep.booking_slug) : null },
     hours: (rep.booking_hours as RepHours | null) ?? null,
     team: { days: cfg.days, start: cfg.start, end: cfg.end, slot_minutes: cfg.slot_minutes },
-    email: (rep.booking_email as EmailTemplate | null) ?? null,
-    teamEmail: cfg.confirmation ?? DEFAULT_CONFIRMATION,
+    kinds: BOOKING_KINDS.map((k) => ({ id: k, label: KIND_META[k].label, emoji: KIND_META[k].emoji })),
+    emails: parseTemplates(rep.booking_email) ?? {},
+    teamEmails: teamTemplates(cfg),
     vars: TEMPLATE_VARS,
   });
 }
@@ -50,17 +53,24 @@ const cleanTemplate = (t: unknown): EmailTemplate | null | "bad" => {
 export async function POST(req: NextRequest) {
   const t = await targetRep(req);
   if ("error" in t) return t.error;
-  let body: { hours?: RepHours | null; email?: EmailTemplate | null };
+  let body: { hours?: RepHours | null; emails?: Partial<Record<BookingKind, EmailTemplate | null>> | null };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
   const patch: Record<string, unknown> = {};
-  if ("email" in body) {
-    const tpl = cleanTemplate(body.email);
-    if (tpl === "bad") return NextResponse.json({ error: "Bad email template." }, { status: 400 });
-    patch.booking_email = tpl;
+  if ("emails" in body) {
+    // Whole map replaces the stored one; a type omitted or null = use team default.
+    const map: ConfirmationMap = {};
+    if (body.emails && typeof body.emails === "object") {
+      for (const k of BOOKING_KINDS) {
+        const tpl = cleanTemplate(body.emails[k]);
+        if (tpl === "bad") return NextResponse.json({ error: "Bad email template." }, { status: 400 });
+        if (tpl) map[k] = tpl;
+      }
+    }
+    patch.booking_email = Object.keys(map).length ? map : null;
   }
   let hours: RepHours | null = null;
   if (body.hours) {

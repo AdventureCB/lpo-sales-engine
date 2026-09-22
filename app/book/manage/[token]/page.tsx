@@ -15,6 +15,7 @@ export default async function ManageBookingPage({ params }: { params: Promise<{ 
     <ManageBookingView
       token={token}
       booking={{
+        kind: b.kind,
         status: b.status,
         startAt: b.start_at,
         name: b.customer_name,

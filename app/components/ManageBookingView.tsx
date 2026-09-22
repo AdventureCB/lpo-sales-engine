@@ -2,11 +2,14 @@
 
 import { useState } from "react";
 
+type Kind = "call" | "confirm" | "showroom";
 interface Props {
   token: string;
-  booking: { status: string; startAt: string; name: string; tz: string | null; rep: { first: string; slug: string } | null };
+  booking: { kind: Kind; status: string; startAt: string; name: string; tz: string | null; rep: { first: string; slug: string } | null };
 }
 
+const NOUN: Record<Kind, string> = { call: "call", confirm: "order confirmation call", showroom: "showroom visit" };
+const SHOWROOM_ADDRESS = "13 Pangborn Rd, East Wenatchee, WA 98802";
 const fmtLong = (iso: string, tz: string) =>
   new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(iso));
 
@@ -18,6 +21,9 @@ export function ManageBookingView({ token, booking }: Props) {
   const tz = booking.tz || (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return "America/Los_Angeles"; } })();
   const repFirst = booking.rep?.first ?? "your Gravel Guide";
   const past = Date.parse(booking.startAt) < Date.now();
+  const noun = NOUN[booking.kind] ?? "call";
+  const Noun = noun.charAt(0).toUpperCase() + noun.slice(1);
+  const bookAgain = booking.rep ? `/book/${booking.rep.slug}?kind=${booking.kind}` : null;
 
   const cancel = async () => {
     setBusy(true);
@@ -43,17 +49,17 @@ export function ManageBookingView({ token, booking }: Props) {
         <div style={{ width: 40, height: 40, borderRadius: 10, background: "var(--accent)", display: "grid", placeItems: "center", color: "#fff", fontWeight: 900, fontSize: 20 }}>▲</div>
         <div>
           <div style={{ fontSize: 12, letterSpacing: 1.2, textTransform: "uppercase", color: "var(--text-3)" }}>Lone Peak Overland</div>
-          <h1 style={{ margin: 0, fontSize: 22 }}>Your call with {repFirst}</h1>
+          <h1 style={{ margin: 0, fontSize: 22 }}>Your {noun} with {repFirst}</h1>
         </div>
       </div>
 
       <div style={card}>
         {status === "cancelled" ? (
           <>
-            <div style={{ fontSize: 17, fontWeight: 700 }}>This call is cancelled.</div>
+            <div style={{ fontSize: 17, fontWeight: 700 }}>This {noun} is cancelled.</div>
             <p style={{ color: "var(--text-2)" }}>Changed your mind? You can pick a new time any time.</p>
-            {booking.rep && (
-              <a className="btn primary" href={`/book/${booking.rep.slug}`} style={{ display: "inline-block", padding: "10px 18px" }}>
+            {bookAgain && (
+              <a className="btn primary" href={bookAgain} style={{ display: "inline-block", padding: "10px 18px" }}>
                 Book a new time with {repFirst}
               </a>
             )}
@@ -62,8 +68,9 @@ export function ManageBookingView({ token, booking }: Props) {
           <>
             <div style={{ fontSize: 13, color: "var(--text-3)" }}>Hi {booking.name.split(/\s+/)[0]} — you're booked for</div>
             <div style={{ fontSize: 19, fontWeight: 700, margin: "6px 0 14px" }}>{fmtLong(booking.startAt, tz)}</div>
+            {booking.kind === "showroom" && <div style={{ color: "var(--text-2)", fontSize: 14, marginTop: -8, marginBottom: 14 }}>🏠 {SHOWROOM_ADDRESS}</div>}
             {past ? (
-              <p style={{ color: "var(--text-2)" }}>This call time has passed. Want another? {booking.rep && <a href={`/book/${booking.rep.slug}`} style={{ color: "var(--accent)" }}>Book a new time</a>}</p>
+              <p style={{ color: "var(--text-2)" }}>This time has passed. Want another? {bookAgain && <a href={bookAgain} style={{ color: "var(--accent)" }}>Book a new time</a>}</p>
             ) : (
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 {booking.rep && (
@@ -73,7 +80,7 @@ export function ManageBookingView({ token, booking }: Props) {
                 )}
                 {!confirm ? (
                   <button className="btn ghost" style={{ padding: "10px 18px" }} onClick={() => setConfirm(true)} disabled={busy}>
-                    Cancel this call
+                    Cancel this {noun}
                   </button>
                 ) : (
                   <button className="btn" style={{ padding: "10px 18px", background: "var(--crit, #e0574a)", color: "#fff" }} onClick={cancel} disabled={busy}>
@@ -83,7 +90,7 @@ export function ManageBookingView({ token, booking }: Props) {
               </div>
             )}
             {error && <div style={{ color: "var(--crit, #e0574a)", marginTop: 10, fontSize: 14 }}>{error}</div>}
-            <p style={{ color: "var(--text-3)", fontSize: 12.5, marginTop: 16 }}>Rescheduling keeps you with {repFirst} and releases your current slot.</p>
+            <p style={{ color: "var(--text-3)", fontSize: 12.5, marginTop: 16 }}>{Noun} rescheduling keeps you with {repFirst} and releases your current slot.</p>
           </>
         )}
       </div>

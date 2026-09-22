@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { availableSlots, bookableReps, createBooking, loadBookingConfig, pickRoundRobin } from "@/lib/booking";
+import { availableSlots, bookableReps, createBooking, isBookingKind, loadBookingConfig, pickRoundRobin } from "@/lib/booking";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
  * stale page can't book a taken or out-of-hours time).
  */
 export async function POST(req: NextRequest) {
-  let body: { rep?: string; name?: string; email?: string; phone?: string; tz?: string; note?: string; startAt?: string; rebook?: string };
+  let body: { rep?: string; kind?: string; name?: string; email?: string; phone?: string; tz?: string; note?: string; startAt?: string; rebook?: string };
   try {
     body = await req.json();
   } catch {
@@ -51,8 +51,9 @@ export async function POST(req: NextRequest) {
   if (!rep) return NextResponse.json({ error: "No guide is free at that time — please pick another." }, { status: 409 });
 
   const rebookToken = body.rebook && /^[a-f0-9]{24}$/.test(body.rebook) ? body.rebook : null;
+  const kind = isBookingKind(body.kind) ? body.kind : "call";
   try {
-    const r = await createBooking(db, rep, { name, email, phone, tz, note, startAt, via, rebookToken }, cfg);
+    const r = await createBooking(db, rep, { name, email, phone, tz, note, startAt, via, kind, rebookToken }, cfg);
     return NextResponse.json({ ok: true, rep: { first: rep.first }, startAt: new Date(startAt).toISOString(), ...r });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "failed";
