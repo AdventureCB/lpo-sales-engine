@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { availableSlots, bookableReps, createBooking, isBookingKind, loadBookingConfig, pickRoundRobin } from "@/lib/booking";
+import { availableSlots, bookableReps, createBooking, isBookingKind, loadBookingConfig, loadBookingEngine, pickRoundRobin, roundRobinReps } from "@/lib/booking";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,19 +35,21 @@ export async function POST(req: NextRequest) {
   }
 
   const db = supabaseAdmin();
-  const [cfg, reps] = await Promise.all([loadBookingConfig(db), bookableReps(db)]);
+  const [cfg, allReps, engine] = await Promise.all([loadBookingConfig(db), bookableReps(db), loadBookingEngine(db)]);
   const slug = (body.rep ?? "rr").toLowerCase();
   const via: "direct" | "round_robin" = slug === "rr" ? "round_robin" : "direct";
+  // Round robin rotates over the booking engine's pool; direct links book that guide regardless.
+  const rrReps = roundRobinReps(allReps, engine);
 
-  let rep = slug === "rr" ? null : reps.find((r) => r.slug === slug) ?? null;
+  let rep = slug === "rr" ? null : allReps.find((r) => r.slug === slug) ?? null;
   if (via === "direct" && !rep) return NextResponse.json({ error: "unknown guide" }, { status: 404 });
 
   // The requested time must be a currently-offered slot.
-  const offered = await availableSlots(db, rep ? { rep } : { reps }, cfg);
+  const offered = await availableSlots(db, rep ? { rep } : { reps: rrReps }, cfg);
   if (!offered.includes(startAt)) {
     return NextResponse.json({ error: "That time was just taken — please pick another." }, { status: 409 });
   }
-  if (!rep) rep = await pickRoundRobin(db, reps, startAt, cfg);
+  if (!rep) rep = await pickRoundRobin(db, rrReps, startAt, cfg);
   if (!rep) return NextResponse.json({ error: "No guide is free at that time — please pick another." }, { status: 409 });
 
   const rebookToken = body.rebook && /^[a-f0-9]{24}$/.test(body.rebook) ? body.rebook : null;

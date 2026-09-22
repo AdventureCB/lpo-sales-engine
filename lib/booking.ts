@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { findContact, normEmail, normPhone } from "./intake";
+import { findContact, normEmail, normPhone, resolveDefaultStageId, type IntakeSource } from "./intake";
+import { setDealSourceByName } from "./deal-create";
 
 /**
  * "Schedule with a Gravel Guide" — the native Calendly replacement.
@@ -350,6 +351,26 @@ export async function availableSlots(
 }
 
 /** Round robin: next rep in rotation who is free at `slot`. Advances the pointer. */
+/**
+ * The "Gravel Guide Booking" intake engine (Settings → Intake), when enabled.
+ * It governs the round-robin pool and how booking-created deals are shaped
+ * (source, stage, title, existing-deal behavior). Disabled/missing → the
+ * built-in defaults below and every bookable guide in the rotation.
+ */
+export async function loadBookingEngine(db: SupabaseClient): Promise<IntakeSource | null> {
+  const { data } = await db.from("intake_sources").select("*").eq("adapter", "booking").eq("enabled", true).limit(1).maybeSingle();
+  return (data as IntakeSource | null) ?? null;
+}
+
+/** Who the round-robin link rotates over: bookable guides ticked in the engine's
+ *  pool. No ticked guides → every bookable guide. (Direct /book/<slug> links
+ *  always book that guide, pool or not.) */
+export function roundRobinReps(reps: BookableRep[], engine: IntakeSource | null): BookableRep[] {
+  const pool = new Set((engine?.config.owner_pool ?? []).filter((p) => p.enabled && p.pipedrive_id).map((p) => p.pipedrive_id));
+  if (pool.size === 0) return reps;
+  return reps.filter((r) => r.pipedriveUserId != null && pool.has(r.pipedriveUserId));
+}
+
 export async function pickRoundRobin(db: SupabaseClient, reps: BookableRep[], slot: number, cfg: BookingConfig): Promise<BookableRep | null> {
   if (reps.length === 0) return null;
   const { data } = await db.from("crm_sync_state").select("value").eq("key", "booking_rr").maybeSingle();
@@ -394,11 +415,6 @@ async function defaultStageId(db: SupabaseClient): Promise<string | null> {
   return row?.id ?? null;
 }
 
-async function sourceId(db: SupabaseClient): Promise<string | null> {
-  const { data } = await db.from("deal_sources").select("id").eq("name", BOOKING_SOURCE).maybeSingle();
-  return data?.id ?? null;
-}
-
 export async function createBooking(
   db: SupabaseClient,
   rep: BookableRep,
@@ -422,6 +438,11 @@ export async function createBooking(
     .single();
   if (bErr || !booking) throw new Error(bErr?.code === "23505" ? "slot_taken" : bErr?.message ?? "booking failed");
 
+  const meta = KIND_META[req.kind];
+  const engine = await loadBookingEngine(db);
+  const ecfg = engine?.config ?? {};
+  const sourceName = ecfg.source_name ?? engine?.label ?? BOOKING_SOURCE;
+
   // 2) Contact: match by email, then phone; else create.
   let contact = await findContact(db, email, phone);
   if (!contact) {
@@ -432,51 +453,111 @@ export async function createBooking(
         name: req.name, first_name: first || null, last_name: rest.join(" ") || null,
         emails: email ? [{ value: email, primary: true }] : [],
         phones: phone ? [{ value: phone, e164: phone, primary: true }] : [],
-        source: BOOKING_SOURCE,
+        source: sourceName,
       })
       .select("id, name, dnc")
       .single();
     contact = created;
   }
 
-  // 3) Deal: newest OPEN deal on the contact, else a new one owned by the rep.
+  // 3) Deal — per the booking engine's existing-deal rules. A booking always
+  // needs a home for its ⭐ activity, so on an OPEN deal "note"/"skip" both
+  // attach to it; on a CLOSED deal "reopen_assign" reopens it under the booked
+  // guide, "skip" leaves the booking deal-less (calendar only). Owner is always
+  // the booked guide — never the engine's rotation.
   let dealId: string | null = null;
   let dealCreated = false;
+  let action: "created" | "noted" | "reopened" | "skipped" = "skipped";
   if (contact) {
-    const { data: open } = await db
+    const { data: deals } = await db
       .from("crm_deals")
-      .select("id")
+      .select("id, status, stage_id")
       .eq("contact_id", contact.id)
-      .eq("status", "open")
       .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    dealId = open?.id ?? null;
-    if (!dealId) {
-      const [stageId, srcId] = await Promise.all([defaultStageId(db), sourceId(db)]);
+      .limit(5);
+    const open = (deals ?? []).find((d) => d.status === "open");
+    const closed = (deals ?? [])[0];
+    const onOpen = ecfg.on_existing_open ?? "note";
+    const onClosed = ecfg.on_existing_closed ?? "reopen_assign";
+    const mode: "attach" | "reopen" | "create" | "none" = open
+      ? onOpen === "new_deal" ? "create" : "attach"
+      : closed
+        ? onClosed === "new_deal" ? "create" : onClosed === "skip" ? "none" : "reopen"
+        : "create";
+
+    if (mode === "attach" && open) {
+      dealId = open.id;
+      action = "noted";
+    } else if (mode === "reopen" && closed) {
+      let stageMove: { stage_id: string; stage_changed_at: string } | null = null;
+      if (ecfg.reopen_to_default_stage) {
+        const target = await resolveDefaultStageId(db, ecfg);
+        if (target && target !== closed.stage_id) stageMove = { stage_id: target, stage_changed_at: new Date().toISOString() };
+      }
+      await db
+        .from("crm_deals")
+        .update({ status: "open", lost_at: null, lost_reason: null, owner_pipedrive_id: rep.pipedriveUserId, owner_email: rep.email, ...(stageMove ?? {}), updated_at: new Date().toISOString() })
+        .eq("id", closed.id);
+      await db.from("crm_activities").insert({
+        deal_id: closed.id,
+        contact_id: contact.id,
+        type: "system",
+        subject: `♻️ Reopened — ${meta.label} booked online`,
+        body: `${req.name} booked a ${meta.noun} with ${rep.first} for ${fmtIn(req.startAt, REP_TZ)} PT. Reassigned to ${rep.first}.`,
+        actor: "intake",
+        occurred_at: new Date().toISOString(),
+      });
+      dealId = closed.id;
+      action = "reopened";
+    } else if (mode === "create") {
+      const stageId = (await resolveDefaultStageId(db, ecfg)) ?? (await defaultStageId(db));
+      let title = (ecfg.title_template || "Scheduled Call - {name}")
+        .replace("{label}", engine?.label ?? "Booking")
+        .replace("{kind}", meta.label)
+        .replace("{email}", email ?? "")
+        .replace("{name}", req.name)
+        .replace(/\s+/g, " ")
+        .trim();
+      if (ecfg.title_marker) title = `${title} ${ecfg.title_marker}`.trim();
       const { data: deal } = await db
         .from("crm_deals")
         .insert({
-          title: `Scheduled Call - ${req.name}`,
+          title,
           contact_id: contact.id,
           stage_id: stageId,
           status: "open",
           owner_pipedrive_id: rep.pipedriveUserId,
           owner_email: rep.email,
-          source_id: srcId,
           stage_changed_at: new Date().toISOString(),
         })
         .select("id")
         .single();
       dealId = deal?.id ?? null;
       dealCreated = !!dealId;
+      if (dealId) {
+        await setDealSourceByName(db, dealId, sourceName); // creates the source row if it's new
+        action = "created";
+      }
     }
+  }
+  // Engine ledger — the Intake settings panel's 7-day counts read from here.
+  if (engine) {
+    try {
+      await db.from("intake_events").insert({
+        source_id: engine.id,
+        external_id: `booking:${booking.id}`,
+        email,
+        phone,
+        action,
+        deal_id: dealId,
+        detail: { kind: req.kind, via: req.via, rep: rep.email, start_at: startIso, note: dealCreated ? "deal created" : action },
+      });
+    } catch {}
   }
 
   // 4) ⭐ Priority activity at the slot (a call, or a meeting for a showroom
   // visit) — actor = the rep, so THEIR countdown fires 10 min before and it
   // shows on their calendar.
-  const meta = KIND_META[req.kind];
   const when = `${fmtIn(req.startAt, REP_TZ)} PT`;
   const localWhen = req.tz && req.tz !== REP_TZ ? ` · ${fmtIn(req.startAt, req.tz)} ${tzAbbrev(req.startAt, req.tz)} for the customer` : "";
   const { data: act } = await db

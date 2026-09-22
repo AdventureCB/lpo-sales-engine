@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 /**
  * Public "Schedule with a Gravel Guide" page — three steps:
@@ -43,6 +43,24 @@ const fmtLong = (iso: string, tz: string) => new Intl.DateTimeFormat("en-US", { 
 export function BookingView({ repSlug, repFirst }: Props) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [kind, setKind] = useState<Kind | null>(null);
+  // ?embed=1 — framed inside the main website: no LPO header, tight padding,
+  // and the frame's height / step changes are posted to the parent page.
+  const [embed, setEmbed] = useState(false);
+  const mainRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("embed") === "1") setEmbed(true);
+  }, []);
+  useEffect(() => {
+    if (!embed || window.parent === window) return;
+    const post = () => window.parent.postMessage({ type: "lpo-book:height", height: mainRef.current?.offsetHeight ?? document.body.scrollHeight }, "*");
+    post();
+    const ro = new ResizeObserver(post);
+    if (mainRef.current) ro.observe(mainRef.current);
+    return () => ro.disconnect();
+  }, [embed]);
+  useEffect(() => {
+    if (embed && window.parent !== window) window.parent.postMessage({ type: "lpo-book:step", step }, "*");
+  }, [embed, step]);
   const [tz, setTz] = useState<string>(() => {
     try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Los_Angeles"; } catch { return "America/Los_Angeles"; }
   });
@@ -150,7 +168,7 @@ export function BookingView({ repSlug, repFirst }: Props) {
 
   if (done && meta) {
     return (
-      <Shell repFirst={repFirst} kind={kind}>
+      <Shell repFirst={repFirst} kind={kind} embed={embed} mainRef={mainRef}>
         <div style={{ ...card, textAlign: "center", padding: 32, maxWidth: 640, margin: "0 auto" }}>
           <div style={{ fontSize: 44 }}>{kind === "showroom" ? "🏠" : "✅"}</div>
           <h2 style={{ margin: "10px 0 6px" }}>
@@ -174,7 +192,7 @@ export function BookingView({ repSlug, repFirst }: Props) {
   const canSubmit = !!slot && !submitting && form.name.trim().length < 2 === false && form.email.includes("@") && form.phone.replace(/\D/g, "").length >= 10;
 
   return (
-    <Shell repFirst={repFirst} kind={kind}>
+    <Shell repFirst={repFirst} kind={kind} embed={embed} mainRef={mainRef}>
       <div style={{ display: "grid", gap: 16, maxWidth: 920, margin: "0 auto" }}>
         <Stepper step={step} kind={meta?.label ?? null} slotLabel={slot ? fmtLong(slot, tz) : null} onGo={(s) => { if (s < step) setStep(s); }} />
 
@@ -359,7 +377,7 @@ function Stepper({ step, kind, slotLabel, onGo }: { step: 1 | 2 | 3; kind: strin
   );
 }
 
-function Shell({ repFirst, kind, children }: { repFirst: string | null; kind: Kind | null; children: React.ReactNode }) {
+function Shell({ repFirst, kind, embed, mainRef, children }: { repFirst: string | null; kind: Kind | null; embed: boolean; mainRef: React.MutableRefObject<HTMLElement | null>; children: React.ReactNode }) {
   const title = repFirst ? `Schedule with ${repFirst}` : "Schedule with a Gravel Guide";
   const sub =
     kind === "showroom"
@@ -370,14 +388,16 @@ function Shell({ repFirst, kind, children }: { repFirst: string | null; kind: Ki
           ? `Pick a time and ${repFirst} will give you a call to talk through your build.`
           : "Pick what you'd like to book, then a time — one of our Gravel Guides will take it from there. No pressure, just answers.";
   return (
-    <main style={{ minHeight: "100vh", background: "var(--bg, #14120f)", color: "var(--text-1)", padding: "28px 16px 60px" }}>
-      <div style={{ maxWidth: 920, margin: "0 auto 20px", display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{ width: 40, height: 40, borderRadius: 10, background: "var(--accent)", display: "grid", placeItems: "center", color: "#fff", fontWeight: 900, fontSize: 20 }}>▲</div>
-        <div>
-          <div style={{ fontSize: 12, letterSpacing: 1.2, textTransform: "uppercase", color: "var(--text-3)" }}>Lone Peak Overland</div>
-          <h1 style={{ margin: 0, fontSize: 22 }}>{title}</h1>
+    <main ref={mainRef} style={{ minHeight: embed ? 0 : "100vh", background: "var(--bg, #14120f)", color: "var(--text-1)", padding: embed ? "8px 8px 16px" : "28px 16px 60px" }}>
+      {!embed && (
+        <div style={{ maxWidth: 920, margin: "0 auto 20px", display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 10, background: "var(--accent)", display: "grid", placeItems: "center", color: "#fff", fontWeight: 900, fontSize: 20 }}>▲</div>
+          <div>
+            <div style={{ fontSize: 12, letterSpacing: 1.2, textTransform: "uppercase", color: "var(--text-3)" }}>Lone Peak Overland</div>
+            <h1 style={{ margin: 0, fontSize: 22 }}>{title}</h1>
+          </div>
         </div>
-      </div>
+      )}
       <p style={{ maxWidth: 920, margin: "0 auto 18px", color: "var(--text-2)", fontSize: 15 }}>{sub}</p>
       {children}
     </main>

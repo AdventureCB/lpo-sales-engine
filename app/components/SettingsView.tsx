@@ -483,14 +483,16 @@ export function IntakeAdmin() {
               <span style={{ fontSize: 12, color: "var(--text-3)", marginLeft: "auto" }}>
                 7d: {["created", "noted", "reopened", "skipped", "error"].filter((k) => c[k]).map((k) => `${c[k]} ${k}`).join(" · ") || "no activity"}
               </span>
-              <button
-                className="btn ghost"
-                style={{ padding: "5px 12px", fontSize: 13, color: cfg.write_pipedrive !== false ? undefined : "var(--warn)" }}
-                title="App is always written first. This controls whether the engine ALSO writes to Pipedrive — turn off at cutover."
-                onClick={() => save(s.id, { config: { ...cfg, write_pipedrive: cfg.write_pipedrive === false } })}
-              >
-                {cfg.write_pipedrive !== false ? "→ Pipedrive: on" : "→ Pipedrive: OFF"}
-              </button>
+              {s.adapter !== "booking" && (
+                <button
+                  className="btn ghost"
+                  style={{ padding: "5px 12px", fontSize: 13, color: cfg.write_pipedrive !== false ? undefined : "var(--warn)" }}
+                  title="App is always written first. This controls whether the engine ALSO writes to Pipedrive — turn off at cutover."
+                  onClick={() => save(s.id, { config: { ...cfg, write_pipedrive: cfg.write_pipedrive === false } })}
+                >
+                  {cfg.write_pipedrive !== false ? "→ Pipedrive: on" : "→ Pipedrive: OFF"}
+                </button>
+              )}
               <button
                 className={`btn ${s.enabled ? "primary" : "ghost"}`}
                 style={{ padding: "5px 12px", fontSize: 13 }}
@@ -499,6 +501,15 @@ export function IntakeAdmin() {
                 {s.enabled ? "Enabled" : "Disabled"}
               </button>
             </div>
+            {s.adapter === "booking" && (
+              <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 6 }}>
+                Online bookings (book.lonepeakoverland.com). <b>Round-robin pool</b> = who the shared link rotates over; a guide must also be
+                bookable under <a href="/settings/booking" style={{ color: "var(--accent)" }}>Settings → Booking</a>, and <code>/book/&lt;name&gt;</code> links always book that guide.
+                The booked guide always owns the deal. Title template also takes <code>{"{kind}"}</code> (Gravel Guide Call / Confirm Your Order / Showroom Appointment).
+                Existing open deal: "note" and "skip" both attach the booking to it. Existing closed deal: "skip" leaves the booking with no deal (calendar only).
+                Disabled = built-in defaults (every bookable guide, source "Gravel Guide Call", Prospecting intake stage).
+              </div>
+            )}
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10 }}>
               {s.adapter === "typeform" && (
                 <label style={{ fontSize: 12.5, color: "var(--text-3)" }} title="Exact Typeform title (id caches automatically on first submission)">

@@ -10,6 +10,22 @@ interface Rep { id: string; name: string; email: string; slug: string; enabled: 
 interface Recent { id: string; kind: Kind; name: string; email: string | null; phone: string | null; startAt: string; via: string; status: string; dealId: string | null; createdAt: string; rep: string | null }
 
 const DAY_LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/** iframe + auto-height listener for the main website. Origin-checked so only our booking page can resize it. */
+function embedSnippet(base: string): string {
+  let origin = base;
+  try { origin = new URL(base).origin; } catch {}
+  return [
+    `<iframe id="lpo-book" src="${base}/?embed=1" title="Schedule with a Gravel Guide" style="width:100%;border:0;display:block;min-height:640px" loading="lazy"></iframe>`,
+    `<script>`,
+    `window.addEventListener("message",function(e){`,
+    `  if(e.origin!=="${origin}"||!e.data)return;`,
+    `  var f=document.getElementById("lpo-book");`,
+    `  if(e.data.type==="lpo-book:height")f.style.height=(e.data.height+8)+"px";`,
+    `  if(e.data.type==="lpo-book:step"&&f.getBoundingClientRect().top<0)f.scrollIntoView({behavior:"smooth",block:"start"});`,
+    `});`,
+    `</script>`,
+  ].join("\n");
+}
 const KIND_SHORT: Record<Kind, string> = { call: "📞 Call", confirm: "✅ Confirm order", showroom: "🏠 Showroom" };
 const pt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 
@@ -80,6 +96,17 @@ export function BookingSettings() {
             </div>
           ))}
         </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="panel-h">Embed on the website</div>
+        <div className="viewsub" style={{ marginTop: 0 }}>
+          Paste this where the booking flow should appear (a Shopify "Custom Liquid" section works). <code>?embed=1</code> hides the LPO header and the frame
+          auto-sizes as the customer moves through the steps. Add <code>&amp;kind=showroom</code> (or <code>call</code> / <code>confirm</code>) to skip the type step.
+          Which guides the round robin rotates over, and the deal source / stage, are set on the <a href="/settings/intake" style={{ color: "var(--accent)" }}>Gravel Guide Booking intake engine</a>.
+        </div>
+        <pre style={{ fontSize: 12, background: "var(--surface-2)", borderRadius: 8, padding: 10, overflowX: "auto", margin: "8px 0", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{embedSnippet(base)}</pre>
+        <button className="btn ghost" style={{ padding: "2px 10px", fontSize: 12.5 }} onClick={() => copy(embedSnippet(base))}>{copied === embedSnippet(base) ? "Copied ✓" : "Copy embed code"}</button>
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
