@@ -501,6 +501,13 @@ export function IntakeAdmin() {
                 {s.enabled ? "Enabled" : "Disabled"}
               </button>
             </div>
+            {s.adapter === "trailhub_raffle" && (
+              <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 6 }}>
+                Raffle/drawing entrants from the Trailhub app (read from its own Supabase project twice daily, 8am &amp; 4pm PT). Every entrant since 9/22 consented
+                to sales contact as a condition of entry; older non-consented rows only come through if they win, flagged prize-only. A repeat entrant across
+                drawings becomes a note on their existing deal. When a drawing is run, the winner's deal gets a ⭐ task with the discount code and expiry.
+              </div>
+            )}
             {s.adapter === "booking" && (
               <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 6 }}>
                 Online bookings (book.lonepeakoverland.com). <b>Round-robin pool</b> = who the shared link rotates over; a guide must also be
