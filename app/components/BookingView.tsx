@@ -388,7 +388,10 @@ function Shell({ repFirst, kind, embed, mainRef, children }: { repFirst: string 
           ? `Pick a time and ${repFirst} will give you a call to talk through your build.`
           : "Pick what you'd like to book, then a time — one of our Gravel Guides will take it from there. No pressure, just answers.";
   return (
-    <main ref={mainRef} style={{ minHeight: embed ? 0 : "100vh", background: "var(--surface-0)", color: "var(--text-1)", padding: embed ? "8px 8px 16px" : "28px 16px 60px" }}>
+    <main ref={mainRef} className={embed ? "book-embed" : undefined} style={{ minHeight: embed ? 0 : "100vh", background: "var(--surface-0)", color: "var(--text-1)", padding: embed ? "8px 8px 16px" : "28px 16px 60px" }}>
+      {/* Embedded + light: pure white, no header or intro copy — the website
+          around the frame carries the branding. */}
+      {embed && <style>{`html[data-theme="light"] body, html[data-theme="light"] .book-embed { background: #fff !important; }`}</style>}
       {!embed && (
         <div style={{ maxWidth: 920, margin: "0 auto 20px", display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 40, height: 40, borderRadius: 10, background: "var(--accent)", display: "grid", placeItems: "center", color: "#fff", fontWeight: 900, fontSize: 20 }}>▲</div>
@@ -398,7 +401,7 @@ function Shell({ repFirst, kind, embed, mainRef, children }: { repFirst: string 
           </div>
         </div>
       )}
-      <p style={{ maxWidth: 920, margin: "0 auto 18px", color: "var(--text-2)", fontSize: 15 }}>{sub}</p>
+      {!embed && <p style={{ maxWidth: 920, margin: "0 auto 18px", color: "var(--text-2)", fontSize: 15 }}>{sub}</p>}
       {children}
     </main>
   );
