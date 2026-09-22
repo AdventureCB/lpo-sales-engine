@@ -221,49 +221,8 @@ export async function reviewCall(
   const inputs = await gatherDealInputs(db, opts.dealId);
   if (!inputs) return { ok: false, reason: "deal not found" };
 
-  const tier = cfg.models.review ?? "sonnet";
-  const corrText = correctionsBlock(profile);
-  const call = await callClaudeTool({
-    tier,
-    systemCached: [
-      COMPANY,
-      `You are a supportive sales-call coach for LPO reps, grounded in StoryBrand: the BUYER is the hero on a quest; the rep is the GUIDE (empathy + authority); articulate the buyer's external problem and what it means to them internally; give a SIMPLE PLAN; land ONE clear call to action; use discovery to fill profile gaps. You review ONE call against what the deal's AI buyer profile knew, and produce specific, actionable coaching — direct but kind, never scolding. Quote the actual call wherever possible.`,
-      `Score all five principles: ${SCORECARD_PRINCIPLES.join(" / ")}. "hit" = clearly done well, "partial" = attempted but weak, "missed" = absent when it mattered. A short call (voicemail, quick reschedule) can legitimately miss principles — say so in the note without piling on.`,
-      RUBRIC,
-      `REP CORRECTIONS in the profile are human-verified truth. Never mark the rep down for contradicting an AI guess a human corrected.`,
-      `FORMATTING (the card renders these): wrap the 1-2 LOAD-BEARING words of a line in **double asterisks**; wrap anything spoken (by customer OR the suggested rep line) in *single asterisks*. Never bold whole sentences.`,
-      `If the transcript reads as a brief summary rather than a real transcript (common until our phone-system port completes), set thin_transcript=true, keep feedback high-level, and NEVER invent specific quotes.`,
-    ].join("\n\n"),
-    user: [
-      `# BUYER PROFILE (state at review time)\n${profileBlock(profile)}`,
-      corrText ? `\n# REP CORRECTIONS (authoritative)\n${corrText}` : "",
-      `\n# DEAL\n${inputs.header}`,
-      `\n# CALL HISTORY\n${inputs.callText}`,
-      `\n# THIS CALL${rep ? ` (rep: ${rep})` : ""}\n${facts.join(" · ") || "—"}`,
-      `\n# TRANSCRIPT\n${transcript.slice(0, 15000)}`,
-    ].join("\n"),
-    tool: REVIEW_TOOL,
-    maxTokens: 1200,
-  });
-  await logAiUsage(db, { dealId: opts.dealId, task: "call_review", tier, call });
-
-  // Normalize list fields at write time (model sometimes returns a string
-  // where the schema says array — a cached bad shape once crashed the UI).
-  const normalized = {
-    ...call.input,
-    worked: Array.isArray(call.input.worked) ? call.input.worked.map((x: unknown) => String(x)) : call.input.worked ? [String(call.input.worked)] : [],
-    scorecard: Array.isArray(call.input.scorecard) ? call.input.scorecard.filter((s: any) => s && typeof s === "object") : [],
-    do_differently: Array.isArray(call.input.do_differently) ? call.input.do_differently.filter((d: any) => d && typeof d === "object") : [],
-  };
-
-  // Score-eligibility (Kyle 9/15): a review is always created (rep can read it),
-  // but it only feeds the KPI/leaderboard if it qualifies:
-  //   • under 3 min → not scored
-  //   • the deal is LOST → not scored, at ANY length. (A long lost call is
-  //     still worth REVIEWING for coaching — the auto-review cron only bothers
-  //     when it ran 10+ min — but a lost outcome never counts toward the score.)
-  // ── Score eligibility + outcome bonus (Kyle 9/16) ────────────────────────
-  // Pull the deal's outcome + when a deposit happened, to decide scoring.
+  // ── Deal outcome — resolved BEFORE the model call so it can inform the CTA /
+  // plan verdicts, and reused after it for score eligibility + the bonus ──────
   const { data: dstat } = await db
     .from("crm_deals")
     .select("status, stage_changed_at, pipedrive_deal_id, crm_stages ( name )")
@@ -288,23 +247,88 @@ export async function reviewCall(
     depositAt = sj?.deposit_started_at ?? null;
   }
   if (!depositAt && isDepositStage) depositAt = stageAt;
+  const inWindow = (t: string | null) => {
+    if (!t || !callStart) return false;
+    const cs = Date.parse(callStart);
+    const x = Date.parse(t);
+    return x >= cs && x <= cs + 12 * 3600_000;
+  };
+  const wonOnCall = isWonStage && inWindow(stageAt);
+  const depositOnCall = !wonOnCall && !!depositAt && inWindow(depositAt);
+  const depositBeforeCall = !!depositAt && !!callStart && Date.parse(depositAt) < Date.parse(callStart);
+  const outcomeLine = wonOnCall
+    ? "The deal was PAID IN FULL / WON during or within 12 hours of this call."
+    : depositOnCall
+      ? "A DEPOSIT was placed during or within 12 hours of this call."
+      : depositBeforeCall
+        ? "The deposit was already placed BEFORE this call — a post-sale / confirmation conversation."
+        : "No deposit or purchase has been recorded from this call yet.";
 
+  // Full transcript up to 60k chars (a 36-minute call is ~35k). Longer calls
+  // keep the opening AND the close — the close is where the CTA lives. The old
+  // 15k head-only cap silently dropped the deposit ask on long calls (9/22:
+  // Jackson/Louis Williams scored CTA "partial" for a close the model never saw).
+  const TRANSCRIPT_CAP = 60_000;
+  const transcriptWindow =
+    transcript.length <= TRANSCRIPT_CAP
+      ? transcript
+      : `${transcript.slice(0, TRANSCRIPT_CAP - 20_000)}\n\n[… middle of the call omitted for length …]\n\n${transcript.slice(-20_000)}`;
+
+  const tier = cfg.models.review ?? "sonnet";
+  const corrText = correctionsBlock(profile);
+  const call = await callClaudeTool({
+    tier,
+    systemCached: [
+      COMPANY,
+      `You are a supportive sales-call coach for LPO reps, grounded in StoryBrand: the BUYER is the hero on a quest; the rep is the GUIDE (empathy + authority); articulate the buyer's external problem and what it means to them internally; give a SIMPLE PLAN; land ONE clear call to action; use discovery to fill profile gaps. You review ONE call against what the deal's AI buyer profile knew, and produce specific, actionable coaching — direct but kind, never scolding. Quote the actual call wherever possible.`,
+      `Score all five principles: ${SCORECARD_PRINCIPLES.join(" / ")}. "hit" = clearly done well, "partial" = attempted but weak, "missed" = absent when it mattered. A short call (voicemail, quick reschedule) can legitimately miss principles — say so in the note without piling on.`,
+      RUBRIC,
+      `OUTCOME RULE: the OUTCOME section states what actually happened. When a deposit or purchase happened on this call, the rep DID land the call to action — score "Clear CTA" as hit (and "Simple plan" no lower than partial) unless the transcript plainly shows the buyer drove the purchase with no ask from the rep. Never mark CTA partial for "no explicit next step" on a call that ended in a deposit. When the deposit was placed BEFORE the call, judge the principles as a post-sale conversation, not a prospecting close.`,
+      `REP CORRECTIONS in the profile are human-verified truth. Never mark the rep down for contradicting an AI guess a human corrected.`,
+      `FORMATTING (the card renders these): wrap the 1-2 LOAD-BEARING words of a line in **double asterisks**; wrap anything spoken (by customer OR the suggested rep line) in *single asterisks*. Never bold whole sentences.`,
+      `If the transcript reads as a brief summary rather than a real transcript (common until our phone-system port completes), set thin_transcript=true, keep feedback high-level, and NEVER invent specific quotes.`,
+    ].join("\n\n"),
+    user: [
+      `# BUYER PROFILE (state at review time)\n${profileBlock(profile)}`,
+      corrText ? `\n# REP CORRECTIONS (authoritative)\n${corrText}` : "",
+      `\n# DEAL\n${inputs.header}`,
+      `\n# CALL HISTORY\n${inputs.callText}`,
+      `\n# THIS CALL${rep ? ` (rep: ${rep})` : ""}\n${facts.join(" · ") || "—"}`,
+      `\n# OUTCOME\n${outcomeLine}`,
+      `\n# TRANSCRIPT\n${transcriptWindow}`,
+    ].join("\n"),
+    tool: REVIEW_TOOL,
+    maxTokens: 1200,
+  });
+  await logAiUsage(db, { dealId: opts.dealId, task: "call_review", tier, call });
+
+  // Normalize list fields at write time (model sometimes returns a string
+  // where the schema says array — a cached bad shape once crashed the UI).
+  const normalized = {
+    ...call.input,
+    worked: Array.isArray(call.input.worked) ? call.input.worked.map((x: unknown) => String(x)) : call.input.worked ? [String(call.input.worked)] : [],
+    scorecard: Array.isArray(call.input.scorecard) ? call.input.scorecard.filter((s: any) => s && typeof s === "object") : [],
+    do_differently: Array.isArray(call.input.do_differently) ? call.input.do_differently.filter((d: any) => d && typeof d === "object") : [],
+  };
+
+  // Score-eligibility (Kyle 9/15): a review is always created (rep can read it),
+  // but it only feeds the KPI/leaderboard if it qualifies:
+  //   • under 3 min → not scored
+  //   • the deal is LOST → not scored, at ANY length. (A long lost call is
+  //     still worth REVIEWING for coaching — the auto-review cron only bothers
+  //     when it ran 10+ min — but a lost outcome never counts toward the score.)
+  // ── Score eligibility + outcome bonus (Kyle 9/16) — uses the outcome
+  // resolved above the model call ─────────────────────────────────────────────
   let excluded = false;
   if (durationS != null && durationS < 180) excluded = true;
   if (!excluded && dstat?.status === "lost") excluded = true;
   // Confirmation / post-deposit call: the deposit was placed BEFORE this call,
   // so it's not StoryBrand prospecting — don't score it.
-  if (!excluded && depositAt && callStart && Date.parse(depositAt) < Date.parse(callStart)) excluded = true;
+  if (!excluded && depositBeforeCall) excluded = true;
 
   // Outcome bonus: this call ended in a deposit/won (the milestone happened
   // during or shortly after the call). +2 paid-in-full (won), +1 deposit.
-  let bonus = 0;
-  if (callStart) {
-    const cs = Date.parse(callStart);
-    const inWindow = (t: string | null) => !!t && Date.parse(t) >= cs && Date.parse(t) <= cs + 12 * 3600_000;
-    if (isWonStage && inWindow(stageAt)) bonus = 2;
-    else if (depositAt && inWindow(depositAt)) bonus = 1;
-  }
+  const bonus = wonOnCall ? 2 : depositOnCall ? 1 : 0;
 
   const now = new Date().toISOString();
   const row = {

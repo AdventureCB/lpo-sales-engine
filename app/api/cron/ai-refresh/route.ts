@@ -41,19 +41,24 @@ export async function GET(req: Request) {
   // reviews last updated before that get re-run, so a driver can loop to done.
   if (new URL(req.url).searchParams.get("mode") === "rescore") {
     const started = Date.now();
-    const before = new URL(req.url).searchParams.get("before") ?? new Date().toISOString();
+    const p = new URL(req.url).searchParams;
+    const before = p.get("before") ?? new Date().toISOString();
+    // Optional targeting (9/22): ?minChars=15000 = only reviews whose transcript
+    // exceeded the old 15k head-only cap (scored without seeing the close);
+    // ?days=N = trailing window instead of "this week".
+    const minChars = Number(p.get("minChars") ?? 0) || 0;
+    const days = Number(p.get("days") ?? 0) || 0;
     // Monday 00:00 UTC of the current week ("this week").
     const nowD = new Date();
     const dow = (nowD.getUTCDay() + 6) % 7; // 0 = Monday
     const weekStartD = new Date(Date.UTC(nowD.getUTCFullYear(), nowD.getUTCMonth(), nowD.getUTCDate() - dow));
-    const weekStart = weekStartD.toISOString();
+    const since = days > 0 ? new Date(Date.now() - days * 86_400_000).toISOString() : weekStartD.toISOString();
     const { reviewCall } = await import("@/lib/ai-call-review");
-    const { data: revs } = await db
-      .from("call_reviews")
-      .select("deal_id, quo_call_id, activity_id, updated_at")
-      .gte("created_at", weekStart)
-      .eq("excluded_from_score", false)
-      .lt("updated_at", before)
+    const scoped = (q: any) => {
+      q = q.gte("created_at", since).eq("excluded_from_score", false).lt("updated_at", before);
+      return minChars > 0 ? q.gt("transcript_chars", minChars) : q;
+    };
+    const { data: revs } = await scoped(db.from("call_reviews").select("deal_id, quo_call_id, activity_id, updated_at"))
       .order("created_at", { ascending: false })
       .limit(12);
     let rescored = 0;
@@ -72,13 +77,8 @@ export async function GET(req: Request) {
         if ((res.reason ?? "").includes("budget")) break;
       }
     }
-    const { count } = await db
-      .from("call_reviews")
-      .select("id", { count: "exact", head: true })
-      .gte("created_at", weekStart)
-      .eq("excluded_from_score", false)
-      .lt("updated_at", before);
-    return NextResponse.json({ mode: "rescore", rescored, failed, remaining: count ?? 0 });
+    const { count } = await scoped(db.from("call_reviews").select("id", { count: "exact", head: true }));
+    return NextResponse.json({ mode: "rescore", rescored, failed, remaining: count ?? 0, since, minChars });
   }
 
   if (new URL(req.url).searchParams.get("mode") === "reviews") {
