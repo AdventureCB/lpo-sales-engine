@@ -12,6 +12,31 @@ export const maxDuration = 30; // Telnyx/Quo calls time out at 15s — never let
 // automation engine sends from.
 const FALLBACK_LINE = "PN2nRozOQb";
 
+/** Poll sms_messages for a webhook-written outgoing row matching this send (see the catch below). */
+async function webhookRecordedSend(
+  db: ReturnType<typeof supabaseAdmin>,
+  a: { ourNumber: string; to: string; content: string; since: string; waitMs: number }
+): Promise<{ provider_message_id: string; status: string | null; sent_at: string } | null> {
+  const deadline = Date.now() + a.waitMs;
+  for (;;) {
+    let q = db
+      .from("sms_messages")
+      .select("provider_message_id, status, sent_at")
+      .eq("provider", "telnyx")
+      .eq("direction", "outgoing")
+      .eq("our_number", a.ourNumber)
+      .eq("peer_phone", a.to)
+      .gte("sent_at", a.since)
+      .order("sent_at", { ascending: false })
+      .limit(1);
+    if (a.content) q = q.eq("body", a.content);
+    const { data } = await q.maybeSingle();
+    if (data) return data;
+    if (Date.now() >= deadline) return null;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
 /**
  * Send a text through Quo (the team's live provider until the Telnyx
  * migration; rows are provider-tagged so the swap is transparent).
@@ -79,7 +104,9 @@ export async function POST(req: NextRequest) {
   }
 
   let row: Record<string, unknown>;
+  let recovered = false;
   if (telnyxNumber && telnyxConfigured()) {
+    const startedAt = Date.now();
     try {
       const sent = await sendSms({ from: telnyxNumber, to, text: content, mediaUrls: mediaUrls.length ? mediaUrls : undefined });
       row = {
@@ -96,7 +123,30 @@ export async function POST(req: NextRequest) {
         sent_at: sent.sentAt,
       };
     } catch (e) {
-      return NextResponse.json({ error: `Telnyx send failed: ${e instanceof Error ? e.message : String(e)}` }, { status: 502 });
+      // Telnyx can accept + deliver a message yet answer us late or with a
+      // 5xx (their 9/23 incident: the customer got the text, the rep got an
+      // error). Its message.sent webhook lands in our sms_messages within
+      // seconds, so before reporting failure, wait for that record — a match
+      // means the text went out and the rep must NOT resend.
+      const hit = await webhookRecordedSend(db, { ourNumber: telnyxNumber, to, content, since: new Date(startedAt - 60_000).toISOString(), waitMs: 10_000 });
+      if (!hit) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return NextResponse.json({ error: `Telnyx send failed: ${msg}. It may still go through — check the thread before resending.` }, { status: 502 });
+      }
+      recovered = true;
+      row = {
+        provider: "telnyx",
+        provider_message_id: hit.provider_message_id,
+        rep_id: user.repId ?? null,
+        direction: "outgoing",
+        status: hit.status ?? "sent",
+        phone_number_id: null,
+        our_number: telnyxNumber,
+        peer_phone: to,
+        body: content || null,
+        media: mediaUrls.length ? mediaUrls : null,
+        sent_at: hit.sent_at,
+      };
     }
   } else {
     if (mediaUrls.length > 0) {
@@ -163,6 +213,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     ok: true,
+    recovered, // true = Telnyx never confirmed to us, but its webhook proved the send
     message: {
       id: row.provider_message_id,
       direction: "outgoing",
