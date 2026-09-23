@@ -20,18 +20,44 @@ interface Notif {
   isNew: boolean;
 }
 
+/** Who a notification list is about: null = the whole team (admins only). */
+interface Target { repId: string | null; email: string; pipedriveUserId: number | null }
+
 /**
  * Unified rep notifications: new inbound texts + WhatsApp, missed calls,
- * overdue activities. Reps see their own; admins see everything.
- * POST {markSeen:true} clears the new-item badge (overdue stays until done).
+ * inbound emails, bookings, intake, @mentions, overdue activities.
+ * Reps see their own. Admins choose a scope (?scope=team | mine | rep:<id>);
+ * the badge follows the scope. The badge counts items that APPEARED after
+ * the user last looked (hovering/opening the bell marks seen) — overdue
+ * tasks included, so a stale pile never pins the count (Kyle 9/23).
+ * POST {markSeen:true} stamps seen_at; {dismiss|dismissKeys} hides items.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const db = supabaseAdmin();
   const isAdmin = user.role === "admin";
   const nowIso = new Date().toISOString();
   const since = new Date(Date.now() - WINDOW_MS).toISOString();
+
+  // Scope → target rep. Non-admins are always themselves.
+  const scope = (new URL(req.url).searchParams.get("scope") ?? (isAdmin ? "team" : "mine")).trim();
+  let target: Target | null = { repId: user.repId ?? null, email: user.email, pipedriveUserId: user.pipedriveUserId ?? null };
+  let reps: { id: string; name: string; email: string }[] = [];
+  if (isAdmin) {
+    const { data: r } = await db.from("reps").select("id, name, email, pipedrive_user_id").eq("active", true).not("email", "is", null).order("sort_order").order("name");
+    reps = (r ?? []).map((x: any) => ({ id: x.id, name: x.name, email: x.email }));
+    if (scope === "team") target = null;
+    else if (scope.startsWith("rep:")) {
+      const rep = (r ?? []).find((x: any) => x.id === scope.slice(4));
+      if (rep) target = { repId: rep.id, email: rep.email, pipedriveUserId: rep.pipedrive_user_id ?? null };
+    }
+  }
+  const t = target; // narrowed alias for the filters below
+  const scopeUsed = t ? (t.email === user.email ? "mine" : `rep:${t.repId}`) : "team";
+  // Rep-keyed tables need a rep id; a scoped target with no rep profile
+  // (an admin's "Mine") must match nothing rather than everything.
+  const repKey = t ? t.repId ?? "00000000-0000-0000-0000-000000000000" : null;
 
   const { data: st } = await db
     .from("user_notif_state")
@@ -47,7 +73,7 @@ export async function GET() {
     .gte("sent_at", since)
     .order("sent_at", { ascending: false })
     .limit(15);
-  if (!isAdmin && user.repId) smsQ = smsQ.eq("rep_id", user.repId);
+  if (repKey) smsQ = smsQ.eq("rep_id", repKey);
 
   let callQ = db
     .from("call_events")
@@ -57,7 +83,7 @@ export async function GET() {
     .gte("started_at", since)
     .order("started_at", { ascending: false })
     .limit(15);
-  if (!isAdmin && user.repId) callQ = callQ.eq("rep_id", user.repId);
+  if (repKey) callQ = callQ.eq("rep_id", repKey);
 
   // Inbound emails swept into contact timelines (meta.mailbox = receiving rep).
   let emailQ = db
@@ -68,7 +94,7 @@ export async function GET() {
     .gte("occurred_at", since)
     .order("occurred_at", { ascending: false })
     .limit(15);
-  if (!isAdmin) emailQ = emailQ.eq("meta->>mailbox", user.email);
+  if (t) emailQ = emailQ.eq("meta->>mailbox", t.email);
 
   // Online bookings ("Schedule with a Gravel Guide") for this rep.
   let bookQ = db
@@ -78,9 +104,11 @@ export async function GET() {
     .gte("created_at", since)
     .order("created_at", { ascending: false })
     .limit(15);
-  if (!isAdmin && user.repId) bookQ = bookQ.eq("rep_id", user.repId);
+  if (repKey) bookQ = bookQ.eq("rep_id", repKey);
 
   const mentionSince = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  // @mentions are personal: the viewer's own, or the scoped rep's when an admin looks at one rep.
+  const mentionEmail = t?.email ?? user.email;
   const [{ data: sms }, { data: wa }, { data: missed }, { data: due }, { data: intake }, { data: mentions }, { data: emails }, { data: bookings }] = await Promise.all([
     smsQ,
     db
@@ -112,8 +140,8 @@ export async function GET() {
     db
       .from("crm_activities")
       .select("id, subject, body, actor, occurred_at, crm_deals ( id, title )")
-      .contains("meta", { mentions: [user.email] })
-      .neq("actor", user.email)
+      .contains("meta", { mentions: [mentionEmail] })
+      .neq("actor", mentionEmail)
       .gte("occurred_at", mentionSince)
       .order("occurred_at", { ascending: false })
       .limit(20),
@@ -123,15 +151,15 @@ export async function GET() {
 
   const intakeItems = (intake ?? []).filter((e: any) => {
     if ((e.intake_sources?.config as any)?.notify_owner !== true) return false;
-    if (isAdmin) return true;
-    return user.pipedriveUserId != null && e.crm_deals?.owner_pipedrive_id === user.pipedriveUserId;
+    if (!t) return true;
+    return t.pipedriveUserId != null && e.crm_deals?.owner_pipedrive_id === t.pipedriveUserId;
   });
 
   const overdue = (due ?? []).filter(
     (a: any) =>
-      isAdmin ||
-      a.actor === user.email ||
-      (user.pipedriveUserId && a.crm_deals?.owner_pipedrive_id === user.pipedriveUserId)
+      !t ||
+      a.actor === t.email ||
+      (t.pipedriveUserId && a.crm_deals?.owner_pipedrive_id === t.pipedriveUserId)
   );
 
   // Resolve caller/texter phones to CRM names in one shot.
@@ -238,7 +266,7 @@ export async function GET() {
       sub: a.crm_deals?.title ?? null,
       at: a.due_at,
       href: a.crm_deals?.id ? `/crm/deal/${a.crm_deals.id}` : "/calendar",
-      isNew: true, // overdue counts until handled
+      isNew: a.due_at > seenAt, // became overdue since you last looked
     })),
   ];
 
@@ -247,7 +275,9 @@ export async function GET() {
   const dismissed = new Set((dis ?? []).map((d) => d.notif_key));
   const items = allItems.filter((i) => !dismissed.has(i.key));
 
-  const badge = items.filter((i) => (i.kind !== "overdue" && i.isNew) || i.kind === "overdue").length;
+  // Badge = what appeared since the last look. Overdue tasks still show in the
+  // panel (highlighted, with a count in the header) but don't pin the badge.
+  const badge = items.filter((i) => i.isNew).length;
   const counts: Record<NotifGroup, number> = { deals: 0, notes: 0, comms: 0, tasks: 0 };
   for (const i of items) counts[i.group]++;
 
@@ -255,6 +285,8 @@ export async function GET() {
     badge,
     overdueCount: items.filter((i) => i.kind === "overdue").length,
     counts,
+    scope: scopeUsed,
+    ...(isAdmin ? { reps } : {}),
     items: items.sort((a, b) => (b.at ?? "").localeCompare(a.at ?? "")).slice(0, 60),
   });
 }
