@@ -2,6 +2,47 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
 import { getProfileByEmail, getProfileEvents } from "@/lib/klaviyo";
+import { normalizePhone } from "@/lib/identity";
+import { enqueuePdSync } from "@/lib/pd-sync";
+
+interface Phone { value: string; e164?: string; primary?: boolean; label?: string; bad?: boolean; bad_at?: string }
+
+/**
+ * A contact with NO usable phone (none, or every one flagged bad) gets the
+ * first Klaviyo phone added automatically — no "+ Add" click (Kyle 9/23).
+ * Contacts that already have a working number keep the manual suggestion.
+ * Idempotent: a second call sees the phone and does nothing.
+ */
+async function autoAdoptPhone(
+  db: ReturnType<typeof supabaseAdmin>,
+  contactId: string,
+  dealId: string | null,
+  klaviyoPhones: string[]
+): Promise<string | null> {
+  const { data: contact } = await db.from("crm_contacts").select("id, phones, pipedrive_person_id").eq("id", contactId).maybeSingle();
+  if (!contact) return null;
+  const phones = [...(((contact.phones as Phone[] | null) ?? []))];
+  if (phones.some((p) => !p.bad)) return null;
+  const have = new Set(phones.map((p) => p.e164 ?? normalizePhone(p.value) ?? p.value));
+  const pick = klaviyoPhones.map((p) => normalizePhone(p)).find((p): p is string => !!p && !have.has(p));
+  if (!pick) return null;
+  phones.push({ value: pick, e164: pick, primary: phones.length === 0, label: "klaviyo" });
+  const { error } = await db.from("crm_contacts").update({ phones, updated_at: new Date().toISOString() }).eq("id", contactId);
+  if (error) return null;
+  if (contact.pipedrive_person_id) {
+    await enqueuePdSync(db, "person_update", { personId: contact.pipedrive_person_id, phones: phones.map((p) => ({ value: p.e164 ?? p.value, primary: !!p.primary })) });
+  }
+  await db.from("crm_activities").insert({
+    deal_id: dealId,
+    contact_id: contactId,
+    type: "system",
+    subject: "📞 Phone added from Klaviyo",
+    body: `${pick} was on the Klaviyo profile and the contact had no working number, so it was added automatically.`,
+    actor: "system",
+    occurred_at: new Date().toISOString(),
+  });
+  return pick;
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,8 +59,11 @@ const FIRST_PULL = 60;
 export async function GET(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  const email = new URL(req.url).searchParams.get("email")?.trim().toLowerCase();
+  const url = new URL(req.url);
+  const email = url.searchParams.get("email")?.trim().toLowerCase();
   if (!email) return NextResponse.json({ error: "email required" }, { status: 400 });
+  const contactId = url.searchParams.get("contactId") || null;
+  const dealId = url.searchParams.get("dealId") || null;
 
   const db = supabaseAdmin();
   const { data: cached } = await db.from("klaviyo_profiles").select("*").eq("email", email).maybeSingle();
@@ -114,6 +158,15 @@ export async function GET(req: NextRequest) {
 
   if (profileId === "none") return NextResponse.json({ events: [], profile: null });
 
+  let autoAdded: string | null = null;
+  if (contactId && phones.length) {
+    try {
+      autoAdded = await autoAdoptPhone(db, contactId, dealId, phones);
+    } catch (e) {
+      console.error("klaviyo phone auto-adopt failed", e);
+    }
+  }
+
   const { data: stored } = await db
     .from("klaviyo_events")
     .select("metric, event_at, detail")
@@ -124,6 +177,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     profile: profileId ? { id: profileId, phones, truckModel } : null,
     events: (stored ?? []).map((e) => ({ metric: e.metric, at: e.event_at, detail: e.detail })),
+    ...(autoAdded ? { autoAdded } : {}),
     ...(syncError ? { syncError } : {}),
   });
 }

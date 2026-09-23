@@ -2528,15 +2528,19 @@ function KlaviyoActivity({
   useEffect(() => {
     setEvents(null);
     setFailed(false);
-    fetch(`/api/crm/contact-events?email=${encodeURIComponent(email)}`)
+    // contactId/dealId let the server auto-add Klaviyo's phone when the contact
+    // has no working number (it reports `autoAdded` → reload the deal).
+    const qs = new URLSearchParams({ email, ...(contactId ? { contactId } : {}), ...(dealId ? { dealId } : {}) });
+    fetch(`/api/crm/contact-events?${qs}`)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((d) => {
         setEvents(d.events ?? []);
         setProfilePhones(d.profile?.phones ?? []);
         setProfileTruck(d.profile?.truckModel ?? null);
+        if (d.autoAdded) onSaved();
       })
       .catch(() => setFailed(true));
-  }, [email]);
+  }, [email]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Phones Klaviyo knows that the CRM contact is missing.
   const known = new Set(knownPhones.map(last10));
