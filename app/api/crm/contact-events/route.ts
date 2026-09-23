@@ -2,47 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
 import { getProfileByEmail, getProfileEvents } from "@/lib/klaviyo";
-import { normalizePhone } from "@/lib/identity";
-import { enqueuePdSync } from "@/lib/pd-sync";
-
-interface Phone { value: string; e164?: string; primary?: boolean; label?: string; bad?: boolean; bad_at?: string }
-
-/**
- * A contact with NO usable phone (none, or every one flagged bad) gets the
- * first Klaviyo phone added automatically — no "+ Add" click (Kyle 9/23).
- * Contacts that already have a working number keep the manual suggestion.
- * Idempotent: a second call sees the phone and does nothing.
- */
-async function autoAdoptPhone(
-  db: ReturnType<typeof supabaseAdmin>,
-  contactId: string,
-  dealId: string | null,
-  klaviyoPhones: string[]
-): Promise<string | null> {
-  const { data: contact } = await db.from("crm_contacts").select("id, phones, pipedrive_person_id").eq("id", contactId).maybeSingle();
-  if (!contact) return null;
-  const phones = [...(((contact.phones as Phone[] | null) ?? []))];
-  if (phones.some((p) => !p.bad)) return null;
-  const have = new Set(phones.map((p) => p.e164 ?? normalizePhone(p.value) ?? p.value));
-  const pick = klaviyoPhones.map((p) => normalizePhone(p)).find((p): p is string => !!p && !have.has(p));
-  if (!pick) return null;
-  phones.push({ value: pick, e164: pick, primary: phones.length === 0, label: "klaviyo" });
-  const { error } = await db.from("crm_contacts").update({ phones, updated_at: new Date().toISOString() }).eq("id", contactId);
-  if (error) return null;
-  if (contact.pipedrive_person_id) {
-    await enqueuePdSync(db, "person_update", { personId: contact.pipedrive_person_id, phones: phones.map((p) => ({ value: p.e164 ?? p.value, primary: !!p.primary })) });
-  }
-  await db.from("crm_activities").insert({
-    deal_id: dealId,
-    contact_id: contactId,
-    type: "system",
-    subject: "📞 Phone added from Klaviyo",
-    body: `${pick} was on the Klaviyo profile and the contact had no working number, so it was added automatically.`,
-    actor: "system",
-    occurred_at: new Date().toISOString(),
-  });
-  return pick;
-}
+import { autoAdoptPhone } from "@/lib/klaviyo-phone-adopt";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getMetrics, getEventsForMetric, getProfileByEmail } from "./klaviyo";
+import { profilePhones } from "./klaviyo-phone-adopt";
 import { processIntake, type IntakeSource } from "./intake";
 
 /**
@@ -84,7 +85,7 @@ export async function runKlaviyoMetricEngines(db: SupabaseClient): Promise<Recor
         const res = await processIntake(db, src, {
           externalId: (ev.meta?.klaviyo_event_id as string) ?? `${ev.email}:${ev.occurredAt}`,
           email: ev.email,
-          phone: profile?.phoneNumber ?? evPhone,
+          phone: profilePhones(profile)[0] ?? evPhone, // standard field OR a phone-ish custom property
           name: [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") || null,
           link,
           occurredAt: ev.occurredAt,

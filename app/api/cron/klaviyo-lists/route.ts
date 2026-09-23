@@ -4,6 +4,7 @@ import { isAuthorizedCron } from "@/lib/cron";
 import { getLists, getSegments, getRecentListMembers, getRecentSegmentMembers } from "@/lib/klaviyo";
 import { runKlaviyoMetricEngines } from "@/lib/klaviyo-metric-engines";
 import { processIntake, type IntakeSource } from "@/lib/intake";
+import { sweepKlaviyoPhones } from "@/lib/klaviyo-phone-adopt";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,14 +21,20 @@ export async function GET(req: Request) {
   if (!isAuthorizedCron(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const db = supabaseAdmin();
 
+  // Background phone adoption for phone-less open deals (Klaviyo has the
+  // number, the deal can't reach the sprint lists without it). Runs on this
+  // cron's boot so it costs no extra invocation. ?phoneLimit= for a backfill.
+  const phoneLimit = Number(new URL(req.url).searchParams.get("phoneLimit") ?? 40) || 40;
+  const phones = await sweepKlaviyoPhones(db, { limit: Math.min(500, Math.max(0, phoneLimit)) }).catch((e) => ({ error: e instanceof Error ? e.message : "sweep failed" }));
+
   const { data: sources } = await db
     .from("intake_sources")
     .select("id, channel_id, label, adapter, enabled, config")
     .in("adapter", ["klaviyo_list", "klaviyo_segment", "klaviyo_metric"])
     .eq("enabled", true);
-  if (!sources || sources.length === 0) return NextResponse.json({ ok: true, enabled: 0 });
+  if (!sources || sources.length === 0) return NextResponse.json({ ok: true, enabled: 0, phones });
 
-  const summary: Record<string, unknown> = {};
+  const summary: Record<string, unknown> = { phones };
 
   // ── Metric-event engines (shared runner — the hot-list cron also calls it) ──
   Object.assign(summary, await runKlaviyoMetricEngines(db));
