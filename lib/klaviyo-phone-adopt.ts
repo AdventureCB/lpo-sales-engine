@@ -72,7 +72,8 @@ export async function sweepKlaviyoPhones(db: SupabaseClient, opts: { limit?: num
   const limit = opts.limit ?? 40;
   const { data: rows, error } = await db.rpc("contacts_needing_phone", { p_limit: limit });
   if (error) return { error: error.message };
-  const out = { candidates: (rows ?? []).length, lookups: 0, adopted: 0, no_phone_on_profile: 0, no_profile: 0, lookup_errors: 0 };
+  const out = { candidates: (rows ?? []).length, lookups: 0, adopted: 0, already_on_contact: 0, no_phone_on_profile: 0, no_profile: 0, lookup_errors: 0 };
+  const now = new Date().toISOString();
   for (const r of (rows ?? []) as { contact_id: string; email: string; deal_id: string; cached_phones: unknown; cache_fresh: boolean }[]) {
     let phones: string[] = Array.isArray(r.cached_phones) ? (r.cached_phones as unknown[]).filter((p): p is string => typeof p === "string") : [];
     if (!(r.cache_fresh && phones.length)) {
@@ -81,18 +82,23 @@ export async function sweepKlaviyoPhones(db: SupabaseClient, opts: { limit?: num
       try {
         profile = await getProfileByEmail(r.email);
       } catch {
-        out.lookup_errors++; // Klaviyo down ≠ "no profile" — don't cache a negative
+        out.lookup_errors++; // Klaviyo down ≠ "no profile" — don't cache a negative, don't mark checked
         continue;
       }
       phones = profilePhones(profile);
       await db.from("klaviyo_profiles").upsert(
-        { email: r.email, profile_id: profile?.id ?? "none", phones, ...(profile ? { truck_model: profileTruck(profile) } : {}), updated_at: new Date().toISOString() },
+        { email: r.email, profile_id: profile?.id ?? "none", phones, ...(profile ? { truck_model: profileTruck(profile) } : {}), updated_at: now, phone_adopt_checked_at: now },
         { onConflict: "email" }
       );
       if (!profile) { out.no_profile++; continue; }
+    } else {
+      // Cached path: stamp progress so a no-op row (e.g. Klaviyo's number is
+      // the one already flagged bad) can't sit at the head of the queue.
+      await db.from("klaviyo_profiles").upsert({ email: r.email, phone_adopt_checked_at: now }, { onConflict: "email" });
     }
     if (!phones.length) { out.no_phone_on_profile++; continue; }
     if (await autoAdoptPhone(db, r.contact_id, r.deal_id, phones)) out.adopted++;
+    else out.already_on_contact++; // every Klaviyo number is already on the contact (flagged bad) — nothing new to add
   }
   return out;
 }
