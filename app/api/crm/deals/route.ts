@@ -14,6 +14,10 @@ const SORTS: Record<string, string> = {
   activity: "last_activity_at",
   stage_changed: "stage_changed_at",
   ai_confidence: "deal_profiles(overall_confidence)", // to-one reverse embed (PK deal_id)
+  dials: "attempt_count", // trigger-maintained call stats (migration 00142)
+  conversations: "contact_count",
+  first_attempt: "first_attempt_at",
+  last_attempt: "last_attempt_at",
 };
 
 /** Deal browser over the mirrored CRM (all roles). */
@@ -38,7 +42,7 @@ export async function GET(req: NextRequest) {
   let q = db
     .from("crm_deals")
     .select(
-      `id, title, status, value_cents, owner_pipedrive_id, contact_id, stage_changed_at, last_activity_at, updated_at, pd_add_time, pipedrive_deal_id, truck_model, interests, crm_stages ( name, pipeline_id, crm_pipelines ( name ) ), ${contactEmbed}, deal_sources ( name ), deal_profiles ( overall_confidence )`,
+      `id, title, status, value_cents, owner_pipedrive_id, contact_id, stage_changed_at, last_activity_at, updated_at, pd_add_time, pipedrive_deal_id, truck_model, interests, attempt_count, contact_count, first_attempt_at, last_attempt_at, first_contact_at, crm_stages ( name, pipeline_id, crm_pipelines ( name ) ), ${contactEmbed}, deal_sources ( name ), deal_profiles ( overall_confidence )`,
       { count: "exact" }
     );
 
@@ -67,6 +71,18 @@ export async function GET(req: NextRequest) {
   if (interests.length) q = q.overlaps("interests", interests);
   if (p.get("valueMin")) q = q.gte("value_cents", Math.round(Number(p.get("valueMin")) * 100));
   if (p.get("valueMax")) q = q.lte("value_cents", Math.round(Number(p.get("valueMax")) * 100));
+  // Contact state + attempt/contact counts — same definitions as the Ad ROI
+  // lead-contact funnel (attempt = outbound dial, contact = real conversation).
+  const contact = p.get("contact"); // contacted | attempted | untouched
+  if (contact === "contacted") q = q.gt("contact_count", 0);
+  else if (contact === "attempted") q = q.gt("attempt_count", 0).eq("contact_count", 0);
+  else if (contact === "untouched") q = q.eq("attempt_count", 0);
+  const num = (k: string) => (p.get(k) !== null && p.get(k) !== "" && Number.isFinite(Number(p.get(k))) ? Math.max(0, Math.floor(Number(p.get(k)))) : null);
+  const attMin = num("attemptsMin"), attMax = num("attemptsMax"), conMin = num("contactsMin"), conMax = num("contactsMax");
+  if (attMin != null) q = q.gte("attempt_count", attMin);
+  if (attMax != null) q = q.lte("attempt_count", attMax);
+  if (conMin != null) q = q.gte("contact_count", conMin);
+  if (conMax != null) q = q.lte("contact_count", conMax);
 
   // Search matches the trigger-maintained search_blob (migration 00090):
   // title + contact name + emails + phone digits + source name. Words AND
@@ -102,7 +118,7 @@ export async function GET(req: NextRequest) {
   if (dealIds.length > 0) {
     const nowIso = new Date().toISOString();
     const sevenAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
-    const [{ data: nextActs }, { data: callStats }, { data: signals }] = await Promise.all([
+    const [{ data: nextActs }, { data: signals }] = await Promise.all([
       // Soonest pending (undone) scheduled activity per deal/contact.
       db
         .from("crm_activities")
@@ -111,7 +127,6 @@ export async function GET(req: NextRequest) {
         .is("done_at", null)
         .or(`deal_id.in.(${dealIds.join(",")})${contactIds.length ? `,contact_id.in.(${contactIds.join(",")})` : ""}`)
         .order("due_at"),
-      db.rpc("deals_call_stats", { p_deals: dealIds }),
       // Buy signal reads engagement_events (broad — the hot-list cron sweeps
       // it), NOT klaviyo_events (only synced on page-view, ~16 contacts).
       // Buy-intent types are Shopify-sourced: checkout_started, builder_save.
@@ -133,7 +148,6 @@ export async function GET(req: NextRequest) {
       if (a.deal_id && !nextByDeal.has(a.deal_id)) nextByDeal.set(a.deal_id, a.due_at);
       if (a.contact_id && !nextByContact.has(a.contact_id)) nextByContact.set(a.contact_id, a.due_at);
     }
-    const statByDeal = new Map((callStats ?? []).map((s: any) => [s.deal_id, s]));
     const prettyMetric = (t: string) =>
       ({ checkout_started: "Checkout started", builder_save: "Saved build", added_to_cart: "Added to cart" } as Record<string, string>)[t] ??
       t.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
@@ -154,9 +168,10 @@ export async function GET(req: NextRequest) {
 
     for (const d of deals) {
       d.next_activity_at = nextByDeal.get(d.id) ?? (d.contact_id ? nextByContact.get(d.contact_id) : null) ?? null;
-      const st = statByDeal.get(d.id) as any;
-      d.dials = Number(st?.dials ?? 0);
-      d.conversations = Number(st?.conversations ?? 0);
+      // Dials / convos come straight from the maintained columns, so the
+      // numbers in the row are exactly what the filters and sorts use.
+      d.dials = Number(d.attempt_count ?? 0);
+      d.conversations = Number(d.contact_count ?? 0);
       const em = ((d.crm_contacts?.emails as any[]) ?? []).map((e) => (e.value ?? "").toLowerCase());
       d.buy_signal = em.map((e: string) => signalByEmail.get(e)).find(Boolean) ?? null;
       const ad = contactAdInfo(d.crm_contacts?.attribution);

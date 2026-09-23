@@ -17,6 +17,10 @@ const SORT_OPTIONS: { label: string; sort: string; dir: "asc" | "desc" }[] = [
   { label: "Timezone West→East", sort: "timezone", dir: "asc" },
   { label: "AI certainty high→low", sort: "ai_confidence", dir: "desc" },
   { label: "AI certainty low→high", sort: "ai_confidence", dir: "asc" },
+  { label: "Most dials", sort: "dials", dir: "desc" },
+  { label: "Fewest dials", sort: "dials", dir: "asc" },
+  { label: "Most conversations", sort: "conversations", dir: "desc" },
+  { label: "Longest since last dial", sort: "last_attempt", dir: "asc" },
 ];
 
 interface Deal {
@@ -264,8 +268,22 @@ const ALL_COLUMNS: ColDef[] = [
         "—"
       ),
   },
-  { key: "dials", label: "Dials", render: (d) => <span style={{ fontVariantNumeric: "tabular-nums" }}>{d.dials ?? 0}</span> },
-  { key: "conversations", label: "Convos", render: (d) => <span style={{ fontVariantNumeric: "tabular-nums" }}>{d.conversations ?? 0}</span> },
+  { key: "dials", label: "Dials", sortKey: "dials", render: (d) => <span style={{ fontVariantNumeric: "tabular-nums" }}>{d.dials ?? 0}</span> },
+  { key: "conversations", label: "Convos", sortKey: "conversations", render: (d) => <span style={{ fontVariantNumeric: "tabular-nums" }}>{d.conversations ?? 0}</span> },
+  {
+    key: "contact_state",
+    label: "Contact",
+    nowrap: true,
+    render: (d) => {
+      const s = (d.conversations ?? 0) > 0 ? "contacted" : (d.dials ?? 0) > 0 ? "attempted" : "untouched";
+      const color = s === "contacted" ? "var(--good, #3aa76d)" : s === "attempted" ? "#d99a2b" : "var(--crit, #c9502e)";
+      return (
+        <span style={{ color, fontWeight: 650, fontSize: 12.5 }} title={s === "contacted" ? "Had a real conversation" : s === "attempted" ? "Dialed, no conversation yet" : "Never dialed"}>
+          ● {s === "contacted" ? "Contacted" : s === "attempted" ? "Attempted" : "No attempt"}
+        </span>
+      );
+    },
+  },
   {
     key: "answer_rate",
     label: "Answer %",
@@ -354,14 +372,22 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
   const [interestFilter, setInterestFilter] = useState<string[]>(saved.interestFilter ?? []);
   const [valueMin, setValueMin] = useState<string>(saved.valueMin ?? "");
   const [valueMax, setValueMax] = useState<string>(saved.valueMax ?? "");
+  // Contact funnel filters (same definitions as Ad ROI): state + attempt/contact counts.
+  const [contactState, setContactState] = useState<string>(saved.contactState ?? ""); // "" | contacted | attempted | untouched
+  const [attMin, setAttMin] = useState<string>(saved.attMin ?? "");
+  const [attMax, setAttMax] = useState<string>(saved.attMax ?? "");
+  const [conMin, setConMin] = useState<string>(saved.conMin ?? "");
+  const [conMax, setConMax] = useState<string>(saved.conMax ?? "");
   const [filterOpen, setFilterOpen] = useState(false);
   const [sortOpen, setSortOpen] = useState(false);
   const activeAdvCount =
     (hasActivity ? 1 : 0) + (actAfter ? 1 : 0) + (actBefore ? 1 : 0) + (makeFilter ? 1 : 0) +
-    interestFilter.length + (valueMin ? 1 : 0) + (valueMax ? 1 : 0);
+    interestFilter.length + (valueMin ? 1 : 0) + (valueMax ? 1 : 0) +
+    (contactState ? 1 : 0) + (attMin ? 1 : 0) + (attMax ? 1 : 0) + (conMin ? 1 : 0) + (conMax ? 1 : 0);
   const clearAdv = () => {
     setHasActivity(""); setActAfter(""); setActBefore(""); setMakeFilter("");
-    setInterestFilter([]); setValueMin(""); setValueMax(""); setPage(0);
+    setInterestFilter([]); setValueMin(""); setValueMax("");
+    setContactState(""); setAttMin(""); setAttMax(""); setConMin(""); setConMax(""); setPage(0);
   };
   const [colConfig, setColConfig] = useState<{ key: string; visible: boolean }[]>([]);
   const [colsOpen, setColsOpen] = useState(false);
@@ -442,10 +468,10 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
     try {
       sessionStorage.setItem(
         "crmListState",
-        JSON.stringify({ page, pipeline, stage, status, owner, srcFilter, tzFilter, hasActivity, actAfter, actBefore, makeFilter, interestFilter, valueMin, valueMax, search, sort, dir })
+        JSON.stringify({ page, pipeline, stage, status, owner, srcFilter, tzFilter, hasActivity, actAfter, actBefore, makeFilter, interestFilter, valueMin, valueMax, contactState, attMin, attMax, conMin, conMax, search, sort, dir })
       );
     } catch {}
-  }, [page, pipeline, stage, status, owner, srcFilter, tzFilter, hasActivity, actAfter, actBefore, makeFilter, interestFilter, valueMin, valueMax, search, sort, dir]);
+  }, [page, pipeline, stage, status, owner, srcFilter, tzFilter, hasActivity, actAfter, actBefore, makeFilter, interestFilter, valueMin, valueMax, contactState, attMin, attMax, conMin, conMax, search, sort, dir]);
   // Admin picks the sprint owner from the live roster; reps always create for
   // themselves (server enforces it too).
   const [sprintOwner, setSprintOwner] = useState("");
@@ -525,6 +551,11 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
     if (interestFilter.length) params.set("interests", interestFilter.join(","));
     if (valueMin) params.set("valueMin", valueMin);
     if (valueMax) params.set("valueMax", valueMax);
+    if (contactState) params.set("contact", contactState);
+    if (attMin) params.set("attemptsMin", attMin);
+    if (attMax) params.set("attemptsMax", attMax);
+    if (conMin) params.set("contactsMin", conMin);
+    if (conMax) params.set("contactsMax", conMax);
     if (search.trim()) params.set("q", search.trim());
     try {
       const r = await fetch(`/api/crm/deals?${params}`);
@@ -537,7 +568,7 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
     } finally {
       setLoading(false);
     }
-  }, [page, sort, dir, status, stage, owner, srcFilter, tzFilter, hasActivity, actAfter, actBefore, makeFilter, interestFilter, valueMin, valueMax, search]);
+  }, [page, sort, dir, status, stage, owner, srcFilter, tzFilter, hasActivity, actAfter, actBefore, makeFilter, interestFilter, valueMin, valueMax, contactState, attMin, attMax, conMin, conMax, search]);
 
   useEffect(() => {
     fetch("/api/crm/sources")
@@ -736,6 +767,29 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
                 <div className="field">
                   <label>Activity before</label>
                   <input type="date" className="vmsel" value={actBefore} onChange={(e) => { setActBefore(e.target.value); setPage(0); }} />
+                </div>
+                <div className="field">
+                  <label>Contact status</label>
+                  <select className="vmsel" value={contactState} onChange={(e) => { setContactState(e.target.value); setPage(0); }}>
+                    <option value="">Any</option>
+                    <option value="contacted">Contacted (had a conversation)</option>
+                    <option value="attempted">Attempted, no contact yet</option>
+                    <option value="untouched">No attempt</option>
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Attempts (dials)</label>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input className="vmsel" style={{ width: "50%" }} placeholder="min" inputMode="numeric" value={attMin} onChange={(e) => { setAttMin(e.target.value.replace(/[^\d]/g, "")); setPage(0); }} />
+                    <input className="vmsel" style={{ width: "50%" }} placeholder="max" inputMode="numeric" value={attMax} onChange={(e) => { setAttMax(e.target.value.replace(/[^\d]/g, "")); setPage(0); }} />
+                  </div>
+                </div>
+                <div className="field">
+                  <label>Conversations</label>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input className="vmsel" style={{ width: "50%" }} placeholder="min" inputMode="numeric" value={conMin} onChange={(e) => { setConMin(e.target.value.replace(/[^\d]/g, "")); setPage(0); }} />
+                    <input className="vmsel" style={{ width: "50%" }} placeholder="max" inputMode="numeric" value={conMax} onChange={(e) => { setConMax(e.target.value.replace(/[^\d]/g, "")); setPage(0); }} />
+                  </div>
                 </div>
                 <div className="field">
                   <label>Vehicle make</label>
