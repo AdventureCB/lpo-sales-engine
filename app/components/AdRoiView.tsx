@@ -232,8 +232,8 @@ export function AdRoiView() {
               {card("Avg time to first contact", hrs(f.avg_hours_first_contact), `first real conversation`)}
             </div>
             <p className="viewsub" style={{ marginTop: 0 }}>
-              Attempt = first outbound dial on the deal · contact = first real conversation (rep-dispositioned connected, or
-              transcript-classified conversation — voicemail drops don&apos;t count). Click a card for the deals behind it.
+              Open deals only (won and lost drop out). Attempt = first outbound dial on the deal · contact = first real conversation
+              (rep-dispositioned connected, or transcript-classified conversation — voicemail drops don&apos;t count). Click a card for the deals behind it.
             </p>
             {funnelDrill && (
               <FunnelLeadsModal
@@ -550,7 +550,7 @@ function FunnelLeadsModal({ label, scope, initialTab, days, excludeHotlist, onCl
             <table className="data-table" style={{ fontSize: 13, width: "100%" }}>
               <thead>
                 <tr>
-                  <th>Created</th><th>Deal</th><th>Source</th><th>Owner</th><th>Stage</th><th>Status</th><th>First attempt</th><th>First contact</th>
+                  <th>Created</th><th>Deal</th><th>Source</th><th>Owner</th><th>Stage</th><th>First attempt</th><th>First contact</th>
                 </tr>
               </thead>
               <tbody>
@@ -567,7 +567,6 @@ function FunnelLeadsModal({ label, scope, initialTab, days, excludeHotlist, onCl
                       <td style={{ whiteSpace: "nowrap" }}>{l.source ?? "—"}</td>
                       <td style={{ whiteSpace: "nowrap" }}>{l.owner ? l.owner.split(" ")[0] : <span style={{ color: "var(--text-3)" }}>pool</span>}</td>
                       <td style={{ whiteSpace: "nowrap", color: "var(--text-2)" }}>{l.stage ?? "—"}</td>
-                      <td style={{ whiteSpace: "nowrap", color: l.status === "won" ? "var(--good)" : l.status === "lost" ? "var(--text-3)" : "var(--text-2)" }}>{l.status}</td>
                       <td style={{ whiteSpace: "nowrap" }} title={l.attemptAt ?? ""}>
                         {l.attemptAt ? <>{ago(l.attemptAt)} <span style={{ color: "var(--text-3)" }}>({delay(l.createdAt, l.attemptAt)} after lead)</span></> : <span style={{ color: "var(--crit)" }}>never</span>}
                       </td>
