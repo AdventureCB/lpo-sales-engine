@@ -24,6 +24,10 @@ export async function POST(req: NextRequest) {
   if (!body.dealId || (!body.activityId && !body.callId)) {
     return NextResponse.json({ error: "dealId and activityId|callId required" }, { status: 400 });
   }
+  // Re-scoring is admin-only: a rep re-rolling their own review until it
+  // reads better would defeat the scoreboard. The prior version is kept.
+  const canReReview = user.role === "admin";
+  if (body.force === true && !canReReview) return NextResponse.json({ error: "Re-review is admin-only." }, { status: 403 });
   const result = await reviewCall(supabaseAdmin(), {
     dealId: body.dealId,
     activityId: body.activityId ?? null,
@@ -31,5 +35,5 @@ export async function POST(req: NextRequest) {
     force: body.force === true,
   });
   if (!result.ok) return NextResponse.json({ error: result.reason ?? "failed" }, { status: 422 });
-  return NextResponse.json({ ok: true, review: result.review, cached: result.cached === true, reviewedAt: result.reviewedAt });
+  return NextResponse.json({ ok: true, review: result.review, cached: result.cached === true, reviewedAt: result.reviewedAt, canReReview });
 }

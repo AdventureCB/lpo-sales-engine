@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { ReviewBody } from "./CallReviewCard";
 
 /**
  * ⚖ Reviews dashboard — the leading-KPI view over AI call reviews.
@@ -24,6 +25,7 @@ interface Review {
   thin: boolean;
   excluded?: boolean;
   bonus?: number; // outcome bonus: +1 deposit, +2 paid-in-full
+  reReviewed?: boolean; // scored more than once — open the scorecard to compare / restore
 }
 
 const PRINCIPLES = ["Guide positioning", "Problem articulation", "Simple plan", "Clear CTA", "Discovery"];
@@ -251,12 +253,14 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
   const since = period === "custom"
     ? new Intl.DateTimeFormat("en-CA").format(new Date(new Date(`${customStart}T00:00:00`).getTime() - (new Date(`${customEnd}T00:00:00`).getTime() - new Date(`${customStart}T00:00:00`).getTime()) - 86_400_000))
     : null;
+  const [tick, setTick] = useState(0); // bump → refetch (after an admin override / restore)
+  const [openId, setOpenId] = useState<string | null>(null); // review whose scorecard is expanded
   useEffect(() => {
     fetch(`/api/reviews/stats${since ? `?since=${since}` : ""}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then(setData)
       .catch((e) => setError(String(e)));
-  }, [since]);
+  }, [since, tick]);
 
   const all = data?.reviews ?? [];
   const reps = useMemo(
@@ -673,6 +677,7 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
               </span>
               {isAdmin && !focusRep && r.rep && <span style={{ fontSize: 12.5, color: "var(--text-2)" }}>{r.rep}</span>}
               {r.excluded && <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-3)", border: "1px solid var(--border-soft)", borderRadius: 5, padding: "0 6px" }}>not scored</span>}
+              {r.reReviewed && <span style={{ fontSize: 11, fontWeight: 700, color: "#d99a2b", border: "1px solid rgba(217,154,43,0.5)", borderRadius: 5, padding: "0 6px" }} title="This call was scored more than once — open the scorecard to compare or restore">re-scored</span>}
               {r.dealId ? (
                 <Link href={`/crm/deal/${r.dealId}`} style={{ fontWeight: 600, fontSize: 14 }}>
                   {r.dealTitle ?? "Open deal"}
@@ -716,13 +721,107 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
                   {r.excluded ? "Include" : "Exclude"}
                 </button>
               )}
+              <button
+                className="btn ghost"
+                style={{ padding: "2px 9px", fontSize: 11.5, borderColor: openId === r.id ? "var(--accent)" : undefined }}
+                onClick={() => setOpenId(openId === r.id ? null : r.id)}
+              >
+                {openId === r.id ? "▲ Hide" : "⚖ Scorecard"}
+              </button>
             </div>
-            {r.snapshot && <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 4 }}>{r.snapshot}</div>}
+            {r.snapshot && openId !== r.id && <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 4 }}>{r.snapshot}</div>}
             {r.thin && <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>thin transcript — high-level review only</div>}
+            {openId === r.id && <ReviewDetailPanel id={r.id} isAdmin={isAdmin} onChanged={() => setTick((t) => t + 1)} />}
           </div>
         ))}
       </div>
     </>
+  );
+}
+
+const fmtAt = (iso: string | null | undefined) =>
+  iso ? new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
+
+/**
+ * Full scorecard for one reviewed call, expanded in place on the Reviews page.
+ * Admins can override a verdict (logged) and restore an earlier version when
+ * the call was scored more than once.
+ */
+function ReviewDetailPanel({ id, isAdmin, onChanged }: { id: string; isAdmin: boolean; onChanged: () => void }) {
+  const [d, setD] = useState<any | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = () =>
+    fetch(`/api/reviews/detail?id=${encodeURIComponent(id)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then(setD)
+      .catch((e) => setErr(String(e)));
+  useEffect(() => { void load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const post = async (body: Record<string, unknown>) => {
+    setBusy(true);
+    const r = await fetch("/api/reviews/stats", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ...body }) });
+    const j = await r.json().catch(() => ({}));
+    setBusy(false);
+    if (!r.ok || j.error) { setErr(j.error ?? `HTTP ${r.status}`); return; }
+    await load();
+    onChanged();
+  };
+
+  if (err) return <div style={{ color: "var(--crit)", fontSize: 12.5, marginTop: 6 }}>{err}</div>;
+  if (!d) return <div style={{ color: "var(--text-3)", fontSize: 12.5, marginTop: 6 }}>Loading scorecard…</div>;
+  const sc: { principle: string; verdict: Verdict }[] = d.review?.scorecard ?? [];
+  const history: { at: string | null; reason: string; score: number | null }[] = d.history ?? [];
+  const overrides: { principle: string; from: string; to: string; by: string; at: string }[] = d.overrides ?? [];
+  const last = history[history.length - 1];
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ fontSize: 11.5, color: "var(--text-3)", marginBottom: 6 }}>
+        Reviewed {fmtAt(d.at)}{d.reReviewed ? ` · changed ${fmtAt(d.updatedAt)}` : ""} · {d.model} · {Number(d.transcriptChars ?? 0).toLocaleString()} transcript chars
+        {d.score != null ? ` · ${Number(d.score).toFixed(1)}/5` : ""}
+      </div>
+      <ReviewBody review={d.review} />
+      {isAdmin && (
+        <div style={{ marginTop: 8, display: "grid", gap: 6, fontSize: 12.5 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ color: "var(--text-3)" }}>Override verdict:</span>
+            {sc.map((s) => (
+              <label key={s.principle} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                {SHORT[s.principle] ?? s.principle}
+                <select
+                  className="vmsel"
+                  style={{ width: "auto", padding: "1px 4px", fontSize: 11.5 }}
+                  value={s.verdict}
+                  disabled={busy}
+                  onChange={(e) => void post({ principle: s.principle, verdict: e.target.value })}
+                >
+                  <option value="hit">hit</option>
+                  <option value="partial">partial</option>
+                  <option value="missed">missed</option>
+                </select>
+              </label>
+            ))}
+          </div>
+          {overrides.length > 0 && (
+            <div style={{ color: "var(--text-3)" }}>
+              {overrides.map((o, i) => <div key={i}>✎ {o.principle}: {o.from} → {o.to} · {o.by.split("@")[0]}, {fmtAt(o.at)}</div>)}
+            </div>
+          )}
+          {last && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ color: "var(--text-3)" }}>
+                Earlier version{history.length > 1 ? "s" : ""}:{" "}
+                {history.map((h, i) => `${h.score != null ? `${h.score.toFixed(1)}/5` : "—"} (${h.reason}, ${fmtAt(h.at)})`).join("; ")}
+              </span>
+              <button className="btn ghost" style={{ padding: "2px 9px", fontSize: 11.5 }} disabled={busy} title="Swap the most recent earlier version back in (the current one is kept in history)" onClick={() => void post({ restore: true })}>
+                ↶ Restore previous ({last.score != null ? `${last.score.toFixed(1)}/5` : "—"})
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

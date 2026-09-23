@@ -31,7 +31,7 @@ export async function GET(req: Request) {
 
   let q = db
     .from("call_reviews")
-    .select("id, rep, created_at, deal_id, quo_call_id, review, excluded_from_score, bonus, crm_deals ( id, title )")
+    .select("id, rep, created_at, updated_at, deal_id, quo_call_id, review, excluded_from_score, bonus, crm_deals ( id, title )")
     .gte("created_at", since)
     .order("created_at", { ascending: false })
     .limit(1000);
@@ -76,27 +76,76 @@ export async function GET(req: Request) {
     thin: !!r.review?.thin_transcript,
     excluded: !!r.excluded_from_score,
     bonus: (r.bonus as number) ?? 0,
+    // Scored more than once (re-review / restore / override) — worth a look.
+    reReviewed: Date.parse(r.updated_at) - Date.parse(r.created_at) > 120_000,
   }));
 
   const volume = (volRows ?? []).filter((v: any) => !v.excluded_from_score).map((v: any) => ({ rep: v.rep as string, at: v.created_at as string }));
   return NextResponse.json({ reviews, patterns: patterns ?? [], me: repName, isAdmin, volume, rank });
 }
 
-/** Admin: include/exclude one review from the score (marks excluded_by=email). */
+/**
+ * Admin edits to one review:
+ *   {id, excluded}            include/exclude from the score (excluded_by=email)
+ *   {id, bonus}               outcome bonus 0–2
+ *   {id, principle, verdict}  override one scorecard verdict (logged in review.overrides)
+ *   {id, restore: true}       swap the latest history version back in (current goes to history)
+ */
 export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user || user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
-  let body: { id?: string; excluded?: boolean; bonus?: number };
+  let body: { id?: string; excluded?: boolean; bonus?: number; principle?: string; verdict?: string; restore?: boolean };
   try {
     body = await (req as any).json();
   } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
   if (!body.id) return NextResponse.json({ error: "id required" }, { status: 400 });
+  const db = supabaseAdmin();
+  const now = new Date().toISOString();
+
+  if (body.restore || (body.principle && body.verdict)) {
+    const { data: row } = await db.from("call_reviews").select("id, review, history, input_hash, transcript_chars, model, updated_at").eq("id", body.id).maybeSingle();
+    if (!row) return NextResponse.json({ error: "not found" }, { status: 404 });
+    const history = (Array.isArray(row.history) ? row.history : []) as any[];
+
+    if (body.restore) {
+      const last = history[history.length - 1];
+      if (!last?.review) return NextResponse.json({ error: "no earlier version to restore" }, { status: 400 });
+      const upd = {
+        review: last.review,
+        input_hash: last.input_hash ?? row.input_hash,
+        transcript_chars: last.transcript_chars ?? row.transcript_chars,
+        model: last.model ?? row.model,
+        history: [
+          ...history.slice(0, -1),
+          { review: row.review, input_hash: row.input_hash, transcript_chars: row.transcript_chars, model: row.model, updated_at: row.updated_at, reason: `replaced by restore (${user.email.split("@")[0]})` },
+        ].slice(-5),
+        updated_at: now,
+      };
+      const { error } = await db.from("call_reviews").update(upd).eq("id", body.id);
+      return NextResponse.json({ ok: !error, review: last.review });
+    }
+
+    const verdict = body.verdict as string;
+    if (!["hit", "partial", "missed"].includes(verdict)) return NextResponse.json({ error: "verdict must be hit | partial | missed" }, { status: 400 });
+    const review = { ...(row.review ?? {}) } as any;
+    const sc = Array.isArray(review.scorecard) ? [...review.scorecard] : [];
+    const idx = sc.findIndex((s: any) => s?.principle === body.principle);
+    if (idx < 0) return NextResponse.json({ error: "principle not on this scorecard" }, { status: 400 });
+    const from = sc[idx].verdict;
+    if (from === verdict) return NextResponse.json({ ok: true, review });
+    sc[idx] = { ...sc[idx], verdict, overridden: true };
+    review.scorecard = sc;
+    review.overrides = [...(Array.isArray(review.overrides) ? review.overrides : []), { principle: body.principle, from, to: verdict, by: user.email, at: now }];
+    const { error } = await db.from("call_reviews").update({ review, updated_at: now }).eq("id", body.id);
+    return NextResponse.json({ ok: !error, review });
+  }
+
   const patch: Record<string, unknown> =
     typeof body.bonus === "number"
       ? { bonus: Math.max(0, Math.min(2, Math.round(body.bonus))), bonus_by: user.email }
       : { excluded_from_score: !!body.excluded, excluded_by: user.email };
-  const { error } = await supabaseAdmin().from("call_reviews").update(patch).eq("id", body.id);
+  const { error } = await db.from("call_reviews").update(patch).eq("id", body.id);
   return NextResponse.json({ ok: !error });
 }

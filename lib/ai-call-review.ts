@@ -209,11 +209,17 @@ export async function reviewCall(
   // ── Cache: same transcript + same profile version → return stored ────────
   const { data: profile } = await db.from("deal_profiles").select("*").eq("deal_id", opts.dealId).maybeSingle();
   const version = profile?.version ?? 0;
-  const inputHash = `${hashStr(transcript)}:${version}`;
+  const transcriptHash = hashStr(transcript);
+  const inputHash = `${transcriptHash}:${version}`;
   const idCol = opts.activityId ? "activity_id" : "quo_call_id";
   const idVal = (opts.activityId ?? opts.quoCallId) as string;
   const { data: existing } = await db.from("call_reviews").select("*").eq(idCol, idVal).maybeSingle();
-  if (existing && existing.input_hash === inputHash && !opts.force) {
+  // A stored review stands while the TRANSCRIPT is unchanged. The deal
+  // profile's version is recorded but deliberately not part of this check:
+  // a profile refresh minutes after the call used to silently re-score the
+  // review the next time someone opened it (Kyle 9/23). Only an explicit
+  // force (admin) or a changed transcript produces a new review.
+  if (existing && !opts.force && String(existing.input_hash ?? "").split(":")[0] === transcriptHash) {
     return { ok: true, review: existing.review, cached: true, reviewedAt: existing.updated_at };
   }
 
@@ -360,6 +366,17 @@ export async function reviewCall(
       delete upd.bonus;
       delete upd.bonus_by;
     }
+    // Never lose a version: the outgoing review goes into history (last 5),
+    // restorable from the Reviews page.
+    const prior = Array.isArray(existing.history) ? existing.history : [];
+    upd.history = [
+      ...prior,
+      {
+        review: existing.review, input_hash: existing.input_hash, transcript_chars: existing.transcript_chars, model: existing.model,
+        bonus: existing.bonus, excluded_from_score: existing.excluded_from_score, updated_at: existing.updated_at,
+        reason: opts.force ? "re-reviewed on request" : "transcript changed",
+      },
+    ].slice(-5);
     await db.from("call_reviews").update(upd).eq("id", existing.id);
   } else {
     await db.from("call_reviews").insert(row);
