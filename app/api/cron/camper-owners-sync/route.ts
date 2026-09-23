@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isAuthorizedCron } from "@/lib/cron";
 import { shopifyAdminToken, shopifyAdminConfigured, SHOP_DOMAIN } from "@/lib/shopify-admin";
-import { classifyOrder, zipCoords, zip5, type CamperVersion } from "@/lib/camper-owners";
+import { classifyOrder, orderCamperEligibility, zipCoords, zip5, type CamperVersion } from "@/lib/camper-owners";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,11 +16,11 @@ const DEADLINE_MS = 45_000;
 const ORDERS_QUERY = `query($cursor: String, $q: String) {
   orders(first: ${PAGE}, after: $cursor, query: $q, sortKey: CREATED_AT) {
     edges { cursor node {
-      name createdAt
+      name createdAt cancelledAt displayFinancialStatus displayFulfillmentStatus
       customer { id firstName lastName email phone }
       billingAddress { city provinceCode zip }
       shippingAddress { city provinceCode zip }
-      lineItems(first: 25) { edges { node { sku title quantity } } }
+      lineItems(first: 25) { edges { node { sku title quantity currentQuantity unfulfilledQuantity } } }
     } }
     pageInfo { hasNextPage endCursor }
   }
@@ -53,10 +53,17 @@ export async function GET(req: Request) {
   };
 
   const { data: st } = await db.from("crm_sync_state").select("value").eq("key", STATE_KEY).maybeSingle();
-  const state = (reset ? {} : ((st?.value as any) ?? {})) as { cursor?: string; lastFullAt?: string; done?: boolean };
+  const state = (reset ? {} : ((st?.value as any) ?? {})) as { cursor?: string; lastFullAt?: string; done?: boolean; scanToken?: string };
 
   const filter = incremental && state.lastFullAt ? `updated_at:>'${state.lastFullAt}'` : null;
   let cursor = incremental ? undefined : state.cursor;
+  // Eligibility is OR'd across an owner's orders WITHIN one scan (token) and
+  // recomputed from scratch on the next full scan.
+  let scanToken = state.scanToken ?? state.lastFullAt ?? "init";
+  if (!incremental && !cursor) {
+    scanToken = new Date().toISOString();
+    await mergeState(db, { scanToken, cursor: undefined, done: false });
+  }
 
   const started = Date.now();
   let scanned = 0;
@@ -74,7 +81,7 @@ export async function GET(req: Request) {
       const items = (o.lineItems?.edges ?? []).map((e: any) => e.node);
       const version = classifyOrder(items);
       if (!version) continue;
-      if (await upsertOwner(db, o, version, items)) upserts++;
+      if (await upsertOwner(db, o, version, items, scanToken, incremental)) upserts++;
     }
     hasNext = orders.pageInfo.hasNextPage;
     endCursor = orders.pageInfo.endCursor;
@@ -86,7 +93,7 @@ export async function GET(req: Request) {
     if (!hasNext) await mergeState(db, { lastFullAt: new Date().toISOString() });
   } else if (!hasNext) {
     await db.from("crm_sync_state").upsert(
-      { key: STATE_KEY, value: { done: true, lastFullAt: new Date().toISOString() }, updated_at: new Date().toISOString() },
+      { key: STATE_KEY, value: { done: true, lastFullAt: new Date().toISOString(), scanToken }, updated_at: new Date().toISOString() },
       { onConflict: "key" }
     );
   } else {
@@ -104,7 +111,7 @@ async function mergeState(db: any, patch: Record<string, unknown>) {
   );
 }
 
-async function upsertOwner(db: any, o: any, version: CamperVersion, items: any[]): Promise<boolean> {
+async function upsertOwner(db: any, o: any, version: CamperVersion, items: any[], scanToken: string, incremental: boolean): Promise<boolean> {
   const cust = o.customer ?? {};
   const email = (cust.email ?? "").trim().toLowerCase() || null;
   const key = cust.id ? String(cust.id) : email;
@@ -115,6 +122,7 @@ async function upsertOwner(db: any, o: any, version: CamperVersion, items: any[]
   const coords = zipCoords(zip);
   const name = [cust.firstName, cust.lastName].filter(Boolean).join(" ").trim() || email || "Unknown";
   const orderAt = o.createdAt;
+  const elig = orderCamperEligibility(o, items);
 
   let contactId: string | null = null;
   if (email) {
@@ -127,14 +135,39 @@ async function upsertOwner(db: any, o: any, version: CamperVersion, items: any[]
     contactId = c?.id ?? null;
   }
 
-  const { data: existing } = await db.from("camper_owners").select("id, version, camper_order_at, address_manual").eq("owner_key", key).maybeSingle();
+  const { data: existing } = await db
+    .from("camper_owners")
+    .select("id, version, camper_order_at, camper_order_name, address_manual, eligible, eligibility_reason, scan_token")
+    .eq("owner_key", key)
+    .maybeSingle();
   const mergedVersion =
     existing?.version === "both"
       ? "both"
       : existing && existing.version && existing.version !== version
         ? "both"
         : version;
-  const keepThisOrder = !existing?.camper_order_at || Date.parse(orderAt) >= Date.parse(existing.camper_order_at);
+  // Eligibility: within one scan an owner is eligible if ANY camper order
+  // qualifies; a new scan starts fresh. Incremental runs only see changed
+  // orders — if the order we recorded as their camper just went bad
+  // (cancelled / refunded), that flips them off until the next full scan.
+  const sameScan = existing?.scan_token === scanToken;
+  let eligible: boolean;
+  let reason: string | null;
+  if (!existing || !sameScan) {
+    eligible = elig.eligible;
+    reason = elig.reason;
+  } else if (incremental && !elig.eligible && existing.camper_order_name === o.name) {
+    eligible = false;
+    reason = elig.reason;
+  } else {
+    eligible = !!existing.eligible || elig.eligible;
+    reason = eligible ? null : existing.eligibility_reason ?? elig.reason;
+  }
+  // The recorded camper order prefers a QUALIFYING order; among those, the newest.
+  const existingQualifies = !!existing?.camper_order_at && !!existing?.eligible && sameScan;
+  const keepThisOrder = elig.eligible
+    ? !existingQualifies || Date.parse(orderAt) >= Date.parse(existing!.camper_order_at)
+    : !existing?.camper_order_at || (!existingQualifies && Date.parse(orderAt) >= Date.parse(existing.camper_order_at));
   const keepAddress = keepThisOrder && !existing?.address_manual; // never clobber a manual fix
 
   const row: Record<string, unknown> = {
@@ -145,6 +178,9 @@ async function upsertOwner(db: any, o: any, version: CamperVersion, items: any[]
     phone: (cust.phone ?? "").trim() || null,
     version: mergedVersion,
     contact_id: contactId,
+    eligible,
+    eligibility_reason: reason,
+    scan_token: scanToken,
     synced_at: new Date().toISOString(),
   };
   if (keepThisOrder) {

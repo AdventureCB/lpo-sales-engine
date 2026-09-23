@@ -28,6 +28,7 @@ export async function GET(req: NextRequest) {
     .from("camper_owners")
     .select("id, name, email, phone, city, state, zip, lat, lng, version, camper_order_name, camper_order_at, order_line_items, contact_id, willing_to_demo, willing_at, shopify_customer_id")
     .not("lat", "is", null)
+    .eq("eligible", true) // fulfilled, not cancelled/refunded camper order only (Kyle 9/23)
     .gte("lat", origin[0] - latPad)
     .lte("lat", origin[0] + latPad)
     .gte("lng", origin[1] - lngPad)
