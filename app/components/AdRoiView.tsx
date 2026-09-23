@@ -137,6 +137,7 @@ const bucketLabel = (key: string, bucket: string) => {
 
 export function AdRoiView() {
   const [days, setDays] = useState(30);
+  const [funnelDrill, setFunnelDrill] = useState<{ scope: "all" | "new"; tab: FunnelTab; label: string } | null>(null);
   const [exclHotlist, setExclHotlist] = useState(true);
   const [showVisitors, setShowVisitors] = useState(false);
   const [data, setData] = useState<Report | null>(null);
@@ -200,9 +201,16 @@ export function AdRoiView() {
         const pct = (a: number, b: number) => (b > 0 ? `${Math.round((a / b) * 100)}%` : "—");
         const hrs = (h: number | null) =>
           h == null ? "—" : h < 24 ? `${h.toFixed(1)}h` : `${(h / 24).toFixed(1)}d`;
-        const card = (label: string, value: string, sub: string) => (
-          <div className="card" style={{ padding: "12px 14px" }}>
-            <div style={{ fontSize: 11.5, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+        // Cards with a drill-down open the deal list (scope + starting tab).
+        const card = (label: string, value: string, sub: string, drill?: { scope: "all" | "new"; tab: FunnelTab }) => (
+          <div
+            className="card"
+            style={{ padding: "12px 14px", ...(drill ? { cursor: "pointer", borderColor: "var(--border)" } : {}) }}
+            onClick={drill ? () => setFunnelDrill({ ...drill, label }) : undefined}
+            title={drill ? "Click to see the deals behind this number" : undefined}
+            role={drill ? "button" : undefined}
+          >
+            <div style={{ fontSize: 11.5, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}{drill ? " ↗" : ""}</div>
             <div style={{ fontSize: 24, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{value}</div>
             <div style={{ fontSize: 12, color: "var(--text-3)" }}>{sub}</div>
           </div>
@@ -217,16 +225,26 @@ export function AdRoiView() {
               </label>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 6 }}>
-              {card("Contacted / all leads", `${f.total_contacted.toLocaleString()} / ${f.total_leads.toLocaleString()}`, `all-time · ${pct(f.total_contacted, f.total_leads)}`)}
-              {card(`New leads attempted (${days}d)`, pct(f.new_attempted, f.new_leads), `${f.new_attempted} of ${f.new_leads} dialed at least once`)}
-              {card(`New leads contacted (${days}d)`, pct(f.new_contacted, f.new_leads), `${f.new_contacted} of ${f.new_leads} had a real conversation`)}
+              {card("Contacted / all leads", `${f.total_contacted.toLocaleString()} / ${f.total_leads.toLocaleString()}`, `all-time · ${pct(f.total_contacted, f.total_leads)}`, { scope: "all", tab: "all" })}
+              {card(`New leads attempted (${days}d)`, pct(f.new_attempted, f.new_leads), `${f.new_attempted} of ${f.new_leads} dialed at least once`, { scope: "new", tab: "attempted" })}
+              {card(`New leads contacted (${days}d)`, pct(f.new_contacted, f.new_leads), `${f.new_contacted} of ${f.new_leads} had a real conversation`, { scope: "new", tab: "contacted" })}
               {card("Avg time to first attempt", hrs(f.avg_hours_first_attempt), `first dial, leads from last ${days}d`)}
               {card("Avg time to first contact", hrs(f.avg_hours_first_contact), `first real conversation`)}
             </div>
             <p className="viewsub" style={{ marginTop: 0 }}>
               Attempt = first outbound dial on the deal · contact = first real conversation (rep-dispositioned connected, or
-              transcript-classified conversation — voicemail drops don&apos;t count).
+              transcript-classified conversation — voicemail drops don&apos;t count). Click a card for the deals behind it.
             </p>
+            {funnelDrill && (
+              <FunnelLeadsModal
+                label={funnelDrill.label}
+                scope={funnelDrill.scope}
+                initialTab={funnelDrill.tab}
+                days={days}
+                excludeHotlist={exclHotlist}
+                onClose={() => setFunnelDrill(null)}
+              />
+            )}
           </>
         );
       })()}
@@ -440,5 +458,130 @@ export function AdRoiView() {
         </div>
       )}
     </div>
+  );
+}
+
+// ── Lead contact funnel drill-down ──────────────────────────────────────────
+type FunnelTab = "all" | "contacted" | "attempted" | "untouched";
+interface FunnelLead {
+  id: string; title: string; createdAt: string; status: string; stage: string | null; source: string | null; owner: string | null;
+  contactName: string | null; hasPhone: boolean; attemptAt: string | null; contactAt: string | null;
+}
+const TAB_LABEL: Record<FunnelTab, string> = { all: "All", contacted: "Contacted", attempted: "Attempted, no contact", untouched: "Not attempted" };
+const bucketOf = (l: FunnelLead): Exclude<FunnelTab, "all"> => (l.contactAt ? "contacted" : l.attemptAt ? "attempted" : "untouched");
+const BUCKET_COLOR: Record<Exclude<FunnelTab, "all">, string> = { contacted: "var(--good, #3aa76d)", attempted: "#d99a2b", untouched: "var(--crit, #c9502e)" };
+const ago = (iso: string | null) => {
+  if (!iso) return "—";
+  const h = (Date.now() - Date.parse(iso)) / 3_600_000;
+  return h < 1 ? `${Math.max(1, Math.round(h * 60))}m ago` : h < 48 ? `${Math.round(h)}h ago` : `${Math.round(h / 24)}d ago`;
+};
+const delay = (from: string, to: string | null) => {
+  if (!to) return "";
+  const h = (Date.parse(to) - Date.parse(from)) / 3_600_000;
+  return h < 0 ? "" : h < 1 ? `${Math.round(h * 60)}m` : h < 48 ? `${h.toFixed(1)}h` : `${(h / 24).toFixed(1)}d`;
+};
+
+/** The deals behind a funnel card: bucketed contacted / attempted-only / untouched, searchable, each row a link to the deal. */
+function FunnelLeadsModal({ label, scope, initialTab, days, excludeHotlist, onClose }: {
+  label: string; scope: "all" | "new"; initialTab: FunnelTab; days: number; excludeHotlist: boolean; onClose: () => void;
+}) {
+  const [rows, setRows] = useState<FunnelLead[] | null>(null);
+  const [truncated, setTruncated] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [tab, setTab] = useState<FunnelTab>(initialTab);
+  const [q, setQ] = useState("");
+  useEffect(() => {
+    setRows(null);
+    fetch(`/api/admin/ad-roi/leads?scope=${scope}&days=${days}&excludeHotlist=${excludeHotlist ? 1 : 0}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((d) => { setRows(d.rows ?? []); setTruncated(!!d.truncated); })
+      .catch((e) => setErr(String(e)));
+  }, [scope, days, excludeHotlist]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const counts = { all: rows?.length ?? 0, contacted: 0, attempted: 0, untouched: 0 } as Record<FunnelTab, number>;
+  for (const l of rows ?? []) counts[bucketOf(l)]++;
+  const needle = q.trim().toLowerCase();
+  const visible = (rows ?? [])
+    .filter((l) => tab === "all" || bucketOf(l) === tab)
+    .filter((l) => !needle || [l.title, l.contactName, l.source, l.owner, l.stage].some((v) => (v ?? "").toLowerCase().includes(needle)));
+
+  return (
+    <>
+      <div style={{ position: "fixed", inset: 0, zIndex: 900, background: "rgba(0,0,0,0.45)" }} onClick={onClose} />
+      <div
+        style={{
+          position: "fixed", zIndex: 901, top: "5vh", left: "50%", transform: "translateX(-50%)", width: "min(1040px, 96vw)", maxHeight: "90vh",
+          display: "flex", flexDirection: "column", background: "var(--surface-1)", border: "1px solid var(--border)", borderRadius: 14,
+          boxShadow: "0 24px 60px rgba(0,0,0,0.5)",
+        }}
+      >
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-soft)", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <b style={{ fontSize: 15 }}>{label}</b>
+          <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+            {scope === "all" ? "all-time leads" : `leads created in the last ${days}d`}{excludeHotlist ? " · Hot List Import excluded" : ""}
+            {truncated ? ` · showing the newest ${rows?.length.toLocaleString()}` : ""}
+          </span>
+          <input className="vmsel" placeholder="Search deal, contact, source, owner…" value={q} onChange={(e) => setQ(e.target.value)} style={{ marginLeft: "auto", width: 260 }} />
+          <button className="btn ghost" style={{ padding: "3px 10px" }} onClick={onClose} aria-label="Close">✕</button>
+        </div>
+        <div style={{ padding: "8px 16px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {(["all", "contacted", "attempted", "untouched"] as FunnelTab[]).map((t) => (
+            <button
+              key={t}
+              className="btn ghost"
+              onClick={() => setTab(t)}
+              style={{ padding: "3px 11px", fontSize: 12.5, borderRadius: 999, background: tab === t ? "var(--accent)" : "transparent", color: tab === t ? "#fff" : "var(--text-2)" }}
+            >
+              {t !== "all" && <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 4, background: tab === t ? "#fff" : BUCKET_COLOR[t], marginRight: 6 }} />}
+              {TAB_LABEL[t]} {rows ? counts[t].toLocaleString() : ""}
+            </button>
+          ))}
+        </div>
+        <div style={{ overflow: "auto", padding: "8px 16px 14px" }}>
+          {err && <div style={{ color: "var(--crit)", fontSize: 13 }}>{err}</div>}
+          {!rows && !err && <div className="viewsub">Loading…</div>}
+          {rows && visible.length === 0 && <div className="viewsub">Nothing here.</div>}
+          {rows && visible.length > 0 && (
+            <table className="data-table" style={{ fontSize: 13, width: "100%" }}>
+              <thead>
+                <tr>
+                  <th>Created</th><th>Deal</th><th>Source</th><th>Owner</th><th>Stage</th><th>Status</th><th>First attempt</th><th>First contact</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((l) => {
+                  const b = bucketOf(l);
+                  return (
+                    <tr key={l.id}>
+                      <td style={{ whiteSpace: "nowrap", color: "var(--text-3)" }}>{new Date(l.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: scope === "all" ? "2-digit" : undefined })}</td>
+                      <td style={{ minWidth: 200 }}>
+                        <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 4, background: BUCKET_COLOR[b], marginRight: 7, verticalAlign: "middle" }} title={TAB_LABEL[b]} />
+                        <Link href={`/crm/deal/${l.id}`} style={{ fontWeight: 600 }}>{l.title ?? l.contactName ?? "Open deal"}</Link>
+                        {!l.hasPhone && <span style={{ fontSize: 11, color: "var(--crit)", marginLeft: 6 }} title="No usable phone on the contact">no phone</span>}
+                      </td>
+                      <td style={{ whiteSpace: "nowrap" }}>{l.source ?? "—"}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>{l.owner ? l.owner.split(" ")[0] : <span style={{ color: "var(--text-3)" }}>pool</span>}</td>
+                      <td style={{ whiteSpace: "nowrap", color: "var(--text-2)" }}>{l.stage ?? "—"}</td>
+                      <td style={{ whiteSpace: "nowrap", color: l.status === "won" ? "var(--good)" : l.status === "lost" ? "var(--text-3)" : "var(--text-2)" }}>{l.status}</td>
+                      <td style={{ whiteSpace: "nowrap" }} title={l.attemptAt ?? ""}>
+                        {l.attemptAt ? <>{ago(l.attemptAt)} <span style={{ color: "var(--text-3)" }}>({delay(l.createdAt, l.attemptAt)} after lead)</span></> : <span style={{ color: "var(--crit)" }}>never</span>}
+                      </td>
+                      <td style={{ whiteSpace: "nowrap" }} title={l.contactAt ?? ""}>
+                        {l.contactAt ? <>{ago(l.contactAt)} <span style={{ color: "var(--text-3)" }}>({delay(l.createdAt, l.contactAt)} after lead)</span></> : <span style={{ color: "var(--text-3)" }}>—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
