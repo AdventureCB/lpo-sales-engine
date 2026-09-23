@@ -6,6 +6,7 @@ import { env } from "@/lib/env";
 import { telnyxConfigured, sendSms } from "@/lib/telnyx";
 
 export const runtime = "nodejs";
+export const maxDuration = 30; // Telnyx/Quo calls time out at 15s — never let a hang run to a bare 504
 
 // Shared-inbox fallback line ("Customer Service") — same default the
 // automation engine sends from.
@@ -104,6 +105,7 @@ export async function POST(req: NextRequest) {
     const from = quoLine ?? FALLBACK_LINE;
     const res = await fetch("https://api.quo.com/v1/messages", {
       method: "POST",
+      signal: AbortSignal.timeout(15_000),
       headers: {
         Authorization: env("QUO_API_KEY"),
         "Content-Type": "application/json",

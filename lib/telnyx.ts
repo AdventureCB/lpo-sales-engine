@@ -40,15 +40,27 @@ export async function sendSms(opts: {
   };
 }
 
+// Telnyx API hangs (their 9/23 messaging incident) used to run until Vercel
+// killed the function — a bare 504 to the rep and no clue why. Fail fast
+// instead so the error names Telnyx and the rep can retry.
+const TX_TIMEOUT_MS = 15_000;
+
 async function tx(path: string, init?: RequestInit): Promise<any> {
-  const res = await fetch(`${API}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${env("TELNYX_API_KEY")}`,
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API}${path}`, {
+      ...init,
+      signal: AbortSignal.timeout(TX_TIMEOUT_MS),
+      headers: {
+        Authorization: `Bearer ${env("TELNYX_API_KEY")}`,
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch (e) {
+    const timedOut = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
+    throw new Error(timedOut ? `Telnyx did not respond within ${TX_TIMEOUT_MS / 1000}s (check status.telnyx.com) — please try again` : `Telnyx unreachable: ${e instanceof Error ? e.message : String(e)}`);
+  }
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(`telnyx ${path} ${res.status}: ${JSON.stringify(json.errors ?? json).slice(0, 300)}`);
