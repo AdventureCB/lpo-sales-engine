@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
       prompt: body.prompt,
       steering: body.steering ?? null,
       repName: rep?.name ?? owner.split("@")[0],
+      ownerEmail: owner,
       priorSends: [],
     });
     return NextResponse.json({ ok: true, from: owner, ...gen });

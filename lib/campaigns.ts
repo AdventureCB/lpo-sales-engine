@@ -349,7 +349,7 @@ export async function advanceEnrollments(db: SupabaseClient): Promise<{ checked:
         const { generateCampaignEmail } = await import("./campaign-ai");
         const gen = await generateCampaignEmail(db, {
           dealId: deal.id, campaignName: camp.name, stepPosition: e.current_step, stepCount: (steps ?? []).length,
-          prompt: step.prompt, steering: step.steering, repName,
+          prompt: step.prompt, steering: step.steering, repName, ownerEmail: owner,
           priorSends: (priorRows ?? []).map((p: any) => ({ step: p.step_position + 1, subject: p.subject, body: p.body, sentAt: p.sent_at, opened: openedBy.has(p.track_token) })),
         });
         subject = gen.subject;
