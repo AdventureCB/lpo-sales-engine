@@ -22,7 +22,7 @@ const delayLabel = (h: number) => (h === 0 ? "immediately" : h % 24 === 0 ? `${h
 
 /**
  * 📣 Campaigns — build drip sequences. Macro mode = written steps (any rep);
- * AI mode = per-step prompts (admin only; generation lands in Phase 2).
+ * AI mode = per-step prompts (admin only): each email is written per deal.
  * Trigger: manual (enroll from CRM / sprint lists / deal page) or a state
  * rule that auto-enrolls matching open deals every 15 minutes.
  */
@@ -137,7 +137,7 @@ export function CampaignsView() {
             <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 13.5 }}><input type="checkbox" checked={c.settings.exit_on_reply ?? true} onChange={(e) => set({ settings: { ...c.settings, exit_on_reply: e.target.checked } })} /> Stop when the customer replies</label>
             <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 13.5 }}><input type="checkbox" checked={c.settings.stop_on_other_rep ?? true} onChange={(e) => set({ settings: { ...c.settings, stop_on_other_rep: e.target.checked } })} /> Stop if another rep contacts them</label>
           </div>
-          <div className="viewsub" style={{ fontSize: 12.5 }}>Fixed for every campaign: max 2 emails per contact per week · the owner's own manual email or text delays the next step by 24h · a Klaviyo-heavy day (2+ opens) delays it 12h · every send waits for approval in the Outbox.</div>
+          <div className="viewsub" style={{ fontSize: 12.5 }}>Fixed for every campaign: max 2 emails per contact per week · the owner's own manual email or text delays the next step by 24h · a Klaviyo-heavy day (2+ opens) delays it 12h · AI-written emails wait for approval in the Outbox; written steps send on schedule.</div>
         </div>
 
         <div className="card" style={{ maxWidth: 820, marginBottom: 14 }}>
@@ -177,7 +177,8 @@ export function CampaignsView() {
                 <div style={{ display: "grid", gap: 6 }}>
                   <textarea className="vmsel" style={{ width: "100%", minHeight: 90, resize: "vertical", fontFamily: "inherit" }} placeholder="What this email should accomplish, roughly — the AI writes it per deal from everything it knows about them." value={s.prompt} onChange={(e) => setStep(i, { prompt: e.target.value })} />
                   <input className="vmsel" style={{ width: "100%" }} placeholder="Steering (optional): tone, length, must-mention, never-say…" value={s.steering} onChange={(e) => setStep(i, { steering: e.target.value })} />
-                  <div style={{ fontSize: 12, color: "var(--warn, #d99a2b)" }}>AI drafting ships in Phase 2 — until then this step waits and shows "AI drafting not enabled yet" in the Outbox.</div>
+                  <div style={{ fontSize: 12, color: "var(--text-3)" }}>Written per deal from the profile, calls, notes and signals, in the rep's voice, with the no-AI-tells style rules enforced. Every AI email waits for approval in the Outbox; written steps send on schedule without approval.</div>
+                  <PromptPreview prompt={s.prompt} steering={s.steering} campaignName={c.name} stepPosition={i} stepCount={steps.length} />
                 </div>
               )}
               {i > 0 && (
@@ -239,6 +240,60 @@ export function CampaignsView() {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Admin: try a step prompt on a real deal before activating (nothing saved or sent). */
+function PromptPreview({ prompt, steering, campaignName, stepPosition, stepCount }: { prompt: string; steering: string; campaignName: string; stepPosition: number; stepCount: number }) {
+  const [q, setQ] = useState("");
+  const [hits, setHits] = useState<{ id: string; title: string }[]>([]);
+  const [deal, setDeal] = useState<{ id: string; title: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [out, setOut] = useState<{ from: string; subject: string; body: string; rationale: string; warnings: string[] } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const search = async (text: string) => {
+    setQ(text);
+    if (text.trim().length < 2) { setHits([]); return; }
+    const r = await fetch(`/api/crm/deals?q=${encodeURIComponent(text)}&status=open`).catch(() => null);
+    const j = r && r.ok ? await r.json() : { deals: [] };
+    setHits((j.deals ?? []).slice(0, 6).map((d: any) => ({ id: d.id, title: d.title })));
+  };
+  const run = async () => {
+    if (!deal || !prompt.trim()) return;
+    setBusy(true); setErr(null); setOut(null);
+    const r = await fetch("/api/campaigns/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dealId: deal.id, prompt, steering, campaignName, stepPosition, stepCount }) });
+    const j = await r.json().catch(() => ({}));
+    setBusy(false);
+    if (!r.ok || j.error) setErr(j.error ?? `HTTP ${r.status}`); else setOut(j);
+  };
+  return (
+    <div style={{ marginTop: 8, borderTop: "1px dashed var(--border-soft)", paddingTop: 8 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>🧪 Test on a deal:</span>
+        {deal ? (
+          <span className="chip stage" style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>{deal.title}<button onClick={() => { setDeal(null); setOut(null); }} style={{ background: "none", border: 0, color: "inherit", cursor: "pointer" }}>✕</button></span>
+        ) : (
+          <span style={{ position: "relative" }}>
+            <input className="vmsel" style={{ width: 240 }} placeholder="search a deal…" value={q} onChange={(e) => void search(e.target.value)} />
+            {hits.length > 0 && (
+              <div className="dropdown-menu" style={{ left: 0, top: "calc(100% + 4px)", width: 320, padding: 4 }}>
+                {hits.map((h) => <button key={h.id} className="btn ghost" style={{ display: "block", width: "100%", textAlign: "left", padding: "5px 8px", fontSize: 13 }} onClick={() => { setDeal(h); setHits([]); setQ(""); }}>{h.title}</button>)}
+              </div>
+            )}
+          </span>
+        )}
+        <button className="btn ghost" style={{ padding: "4px 12px", fontSize: 12.5 }} disabled={!deal || !prompt.trim() || busy} onClick={run}>{busy ? "Writing…" : "Generate preview"}</button>
+        {err && <span style={{ fontSize: 12.5, color: "var(--crit)" }}>{err}</span>}
+      </div>
+      {out && (
+        <div style={{ marginTop: 8, background: "var(--surface-2)", borderRadius: 10, padding: "10px 12px", fontSize: 13.5, maxWidth: 640 }}>
+          <div style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 4 }}>from {out.from}{out.warnings?.length ? ` · ⚠ ${out.warnings.join("; ")}` : " · passes style rules"}</div>
+          <div style={{ fontWeight: 650, marginBottom: 6 }}>{out.subject}</div>
+          <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.45 }}>{out.body}</div>
+          <div style={{ color: "var(--text-3)", marginTop: 8, fontSize: 12.5 }}>🧠 {out.rationale}</div>
+        </div>
+      )}
     </div>
   );
 }

@@ -331,25 +331,50 @@ export async function advanceEnrollments(db: SupabaseClient): Promise<{ checked:
     let subject = step.subject ?? "";
     let body = step.body ?? "";
     let generatedBy = "macro";
+    let aiMeta: Record<string, unknown> | null = null;
+    const { data: rep } = await db.from("reps").select("name").eq("email", owner).maybeSingle();
+    const repName = rep?.name ?? owner.split("@")[0];
     if (step.content_kind === "macro" && step.macro_id) {
       const { data: m } = await db.from("comm_macros").select("subject, body").eq("id", step.macro_id).maybeSingle();
       subject = m?.subject ?? subject;
       body = m?.body ?? body;
     } else if (step.content_kind === "prompt") {
-      // Phase 2: AI generation. Until then the step waits and says why.
-      await hold(Date.now() + hours(6), "AI drafting not enabled yet (Phase 2)");
-      continue;
+      // AI step: write this buyer's email from the step prompt + everything on the deal.
+      if (!step.prompt?.trim()) { await hold(Date.now() + hours(6), "AI step has no prompt"); continue; }
+      try {
+        const { data: priorRows } = await db.from("campaign_sends").select("step_position, subject, body, sent_at, track_token").eq("enrollment_id", e.id).eq("status", "sent").order("step_position");
+        const tokens = (priorRows ?? []).map((p: any) => p.track_token).filter(Boolean);
+        const { data: opens } = tokens.length ? await db.from("email_tracking").select("token, first_open_at").in("token", tokens) : { data: [] as any[] };
+        const openedBy = new Set((opens ?? []).filter((o: any) => o.first_open_at).map((o: any) => o.token));
+        const { generateCampaignEmail } = await import("./campaign-ai");
+        const gen = await generateCampaignEmail(db, {
+          dealId: deal.id, campaignName: camp.name, stepPosition: e.current_step, stepCount: (steps ?? []).length,
+          prompt: step.prompt, steering: step.steering, repName,
+          priorSends: (priorRows ?? []).map((p: any) => ({ step: p.step_position + 1, subject: p.subject, body: p.body, sentAt: p.sent_at, opened: openedBy.has(p.track_token) })),
+        });
+        subject = gen.subject;
+        body = gen.body;
+        generatedBy = "ai";
+        aiMeta = { model: gen.model, rationale: gen.rationale, warnings: gen.warnings, prompt_hash: step.prompt.length };
+      } catch (err) {
+        await hold(Date.now() + hours(6), `AI draft failed: ${err instanceof Error ? err.message.slice(0, 120) : "error"}`);
+        continue;
+      }
     }
-    const { data: rep } = await db.from("reps").select("name").eq("email", owner).maybeSingle();
-    const vals = { firstName: contact?.first_name ?? null, lastName: contact?.last_name ?? null, name: contact?.name ?? null, dealTitle: deal.title ?? null, truck: deal.truck_model ?? null, repName: rep?.name ?? owner.split("@")[0] };
+    const vals = { firstName: contact?.first_name ?? null, lastName: contact?.last_name ?? null, name: contact?.name ?? null, dealTitle: deal.title ?? null, truck: deal.truck_model ?? null, repName };
     subject = fillPlaceholders(subject, vals).trim();
     body = fillPlaceholders(body, vals).trim();
     if (!body || (camp.channel === "email" && !subject)) { await hold(Date.now() + hours(6), "step has no content"); continue; }
 
+    // Written (macro) steps are the rep's own words — they send on schedule
+    // without Outbox approval. AI-written steps always wait for a human
+    // (Kyle 9/24).
+    const autoApprove = generatedBy !== "ai";
     const { error } = await db.from("campaign_sends").insert({
       enrollment_id: e.id, campaign_id: camp.id, step_id: step.id, step_position: e.current_step, deal_id: deal.id, contact_id: contact?.id ?? null,
-      owner_email: owner, channel: camp.channel, to_address: to, subject: camp.channel === "email" ? subject : null, body, generated_by: generatedBy,
-      status: "draft", scheduled_for: iso(slotMs),
+      owner_email: owner, channel: camp.channel, to_address: to, subject: camp.channel === "email" ? subject : null, body, generated_by: generatedBy, ai_meta: aiMeta,
+      status: autoApprove ? "approved" : "draft", scheduled_for: iso(slotMs),
+      ...(autoApprove ? { approved_by: "auto", approved_at: new Date().toISOString() } : {}),
     });
     if (!error) {
       await db.from("campaign_enrollments").update({ hold_reason: null }).eq("id", e.id);

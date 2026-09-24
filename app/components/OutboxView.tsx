@@ -111,7 +111,7 @@ export function OutboxView() {
         {msg && <span style={{ fontSize: 13, color: msg.startsWith("⚠") ? "var(--crit)" : "var(--good)" }}>{msg}</span>}
         <Link href="/settings/campaigns" className="btn ghost" style={{ marginLeft: "auto", padding: "6px 12px", fontSize: 13 }}>📣 Campaigns</Link>
       </div>
-      <p className="viewsub">Campaign emails wait here until you approve them. Approve sends at the scheduled time (in the customer's working hours); edit freely first — your edits teach the writer.</p>
+      <p className="viewsub">AI-written campaign emails wait here until you approve them (written campaigns send on schedule without stopping here). Approve sends at the scheduled time in the customer's working hours; edit freely first, your edits teach the writer.</p>
       {err && <p className="viewsub" style={{ color: "var(--crit)" }}>{err}</p>}
       {!data && !err && <p className="viewsub">Loading…</p>}
       {data && (

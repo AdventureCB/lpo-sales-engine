@@ -107,10 +107,10 @@ export async function buildCommContext(db: SupabaseClient): Promise<string> {
 }
 
 // ── Shared bits ─────────────────────────────────────────────────────────────
-const COMPANY =
+export const COMPANY =
   "You write for Lone Peak Overland (LPO), which sells the Lone Peak Camper — a made-to-order pop-up wedge truck-bed camper (from $7k, ~400 lb, 15-second setup) plus power/solar, heating, and gear accessories.";
 
-async function loadDealContext(db: SupabaseClient, dealId: string) {
+export async function loadDealContext(db: SupabaseClient, dealId: string) {
   const [inputs, { data: profile }] = await Promise.all([
     gatherDealInputs(db, dealId),
     db.from("deal_profiles").select("*").eq("deal_id", dealId).maybeSingle(),
@@ -133,7 +133,7 @@ async function loadDealContext(db: SupabaseClient, dealId: string) {
   return { inputs, profile: profile ?? null, profileText };
 }
 
-async function budgetOk(db: SupabaseClient, capCents: number): Promise<boolean> {
+export async function budgetOk(db: SupabaseClient, capCents: number): Promise<boolean> {
   return (await monthToDateSpendCents(db)) < capCents;
 }
 

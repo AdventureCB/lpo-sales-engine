@@ -27,8 +27,11 @@ export async function sendTrackedEmail(
   const { data: account } = await db.from("gmail_accounts").select("*").eq("user_email", opts.actorEmail).maybeSingle();
   if (!account?.refresh_token) throw new Error(`Gmail not connected for ${opts.actorEmail}`);
 
-  const bodyPlain = toPlainText(opts.body);
-  let html = toEmailHtml(opts.body);
+  // The sender's saved signature goes on every email, same as manual sends.
+  const { data: me } = await db.from("app_users").select("email_signature").eq("email", opts.actorEmail).maybeSingle();
+  const sig = me?.email_signature?.trim();
+  const bodyPlain = sig ? `${toPlainText(opts.body)}\n\n${toPlainText(sig)}` : toPlainText(opts.body);
+  let html = toEmailHtml(opts.body) + (sig ? `<br><br>${toEmailHtml(sig)}` : "");
   const trackToken = crypto.randomUUID();
   const trackedLinks: string[] = [];
   html = html.replace(/href="(https?:\/\/[^"]+)"/gi, (full, url) => {
