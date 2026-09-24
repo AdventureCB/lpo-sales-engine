@@ -11,7 +11,7 @@ export const maxDuration = 60;
 export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user || user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
-  let body: { dealId?: string; prompt?: string; steering?: string; campaignName?: string; stepPosition?: number; stepCount?: number };
+  let body: { dealId?: string; prompt?: string; steering?: string; campaignName?: string; stepPosition?: number; stepCount?: number; channel?: string };
   try {
     body = await req.json();
   } catch {
@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
   const { data: rep } = await db.from("reps").select("name").eq("email", owner).maybeSingle();
   try {
     const gen = await generateCampaignEmail(db, {
+      channel: body.channel === "sms" ? "sms" : "email",
       dealId: deal.id,
       campaignName: body.campaignName?.trim() || "Preview",
       stepPosition: Math.max(0, Number(body.stepPosition ?? 0)),

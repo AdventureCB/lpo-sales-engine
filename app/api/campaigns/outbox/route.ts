@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
     if (body.action === "reject" && s.generated_by === "ai") {
       // Learning signal: a rejected AI draft is a 👎 for the critic.
       await db.from("draft_events").insert({
-        deal_id: s.deal_id, kind: "email", theme_key: `campaign:${s.campaign_id}`, direction: `step ${s.step_position + 1}`, rep: s.owner_email,
+        deal_id: s.deal_id, kind: s.channel === "sms" ? "sms" : "email", theme_key: `campaign:${s.campaign_id}`, direction: `step ${s.step_position + 1}`, rep: s.owner_email,
         draft_body: String(s.body).slice(0, 4000), generated_at: s.created_at, thumbs: "down", thumbs_note: body.body?.trim() ? String(body.body).slice(0, 300) : "rejected in Outbox",
       }).then(() => {}, () => {});
     }

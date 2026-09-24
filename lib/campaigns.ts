@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fillPlaceholders } from "./placeholders";
 import { sendTrackedEmail } from "./email-send";
+import { sendTrackedSms } from "./sms-send";
 import { normalizePhone } from "./identity";
 import { bestSendTime } from "./campaign-timing";
 import { draftSimilarity } from "./ai-scripts";
@@ -21,7 +22,8 @@ import { draftSimilarity } from "./ai-scripts";
 export const WEEKLY_CAP = 2; // campaign sends per contact per channel per 7 days
 export const OWNER_SEND_HOLD_H = 24; // owner emailed/texted by hand → wait this long
 export const DRAFT_AHEAD_H = 24; // drafts appear in the Outbox this far ahead of their slot
-export const DEFAULT_WINDOW = { start: 9, end: 17 }; // contact-local hours
+export const DEFAULT_WINDOW = { start: 9, end: 17 }; // contact-local hours (email)
+export const SMS_WINDOW = { start: 9, end: 18 }; // texts: quiet hours are mandatory
 const OPT_OUT_RE = /\b(unsubscribe|opt[ -]?out|remove me|stop (emailing|texting|contacting|messaging)|don'?t (email|text|contact|message) me|take me off)\b/i;
 
 export interface CampaignTrigger {
@@ -103,6 +105,9 @@ export async function enrollDeals(db: SupabaseClient, campaign: Campaign, dealId
     if (campaign.channel === "email") {
       const { data: g } = await db.from("gmail_accounts").select("status").eq("user_email", owner).maybeSingle();
       if (!g || g.status !== "active") { out.push({ dealId: d.id, ok: false, reason: `${owner.split("@")[0]} has no connected Gmail` }); continue; }
+    } else {
+      const { data: r } = await db.from("reps").select("telnyx_number").eq("email", owner).maybeSingle();
+      if (!r?.telnyx_number) { out.push({ dealId: d.id, ok: false, reason: `${owner.split("@")[0]} has no texting number` }); continue; }
     }
     // One active campaign per deal per channel; no quick re-entry to the same campaign.
     const { data: existing } = await db
@@ -324,7 +329,8 @@ export async function advanceEnrollments(db: SupabaseClient): Promise<{ checked:
         continue;
       }
     }
-    const win = { start: camp.settings?.window_start ?? DEFAULT_WINDOW.start, end: camp.settings?.window_end ?? DEFAULT_WINDOW.end };
+    const dflt = camp.channel === "sms" ? SMS_WINDOW : DEFAULT_WINDOW;
+    const win = { start: camp.settings?.window_start ?? dflt.start, end: camp.settings?.window_end ?? dflt.end };
     // Phase 3: the hour this buyer actually opens email (their history), else a prior; weekdays only.
     const contactEmails = (((contact?.emails as any[]) ?? []).map((x) => String(x.value ?? "").toLowerCase()).filter(Boolean));
     const slot = await bestSendTime(db, { emails: contactEmails, tzOffset: contact?.tz_offset ?? null, window: win, notBefore: Math.max(dueMs, Date.now()) }).catch(() => null);
@@ -353,6 +359,7 @@ export async function advanceEnrollments(db: SupabaseClient): Promise<{ checked:
         const openedBy = new Set((opens ?? []).filter((o: any) => o.first_open_at).map((o: any) => o.token));
         const { generateCampaignEmail } = await import("./campaign-ai");
         const gen = await generateCampaignEmail(db, {
+          channel: camp.channel,
           dealId: deal.id, campaignName: camp.name, stepPosition: e.current_step, stepCount: (steps ?? []).length,
           prompt: step.prompt, steering: step.steering, repName, ownerEmail: owner,
           priorSends: (priorRows ?? []).map((p: any) => ({ step: p.step_position + 1, subject: p.subject, body: p.body, sentAt: p.sent_at, opened: openedBy.has(p.track_token) })),
@@ -403,11 +410,10 @@ export async function sendDue(db: SupabaseClient, opts: { limit?: number } = {})
     .limit(opts.limit ?? 25);
   for (const s of (due ?? []) as any[]) {
     try {
-      if (s.channel !== "email") throw new Error("SMS campaigns ship in Phase 4");
-      const r = await sendTrackedEmail(db, {
-        actorEmail: s.owner_email, to: s.to_address, subject: s.subject, body: s.body, dealId: s.deal_id, contactId: s.contact_id,
-        meta: { campaign_id: s.campaign_id, campaign_send_id: s.id, campaign_step: s.step_position + 1 },
-      });
+      const meta = { campaign_id: s.campaign_id, campaign_send_id: s.id, campaign_step: s.step_position + 1 };
+      const r = s.channel === "sms"
+        ? { ...(await sendTrackedSms(db, { actorEmail: s.owner_email, to: s.to_address, body: s.body, dealId: s.deal_id, contactId: s.contact_id, meta })), trackToken: null as string | null }
+        : await sendTrackedEmail(db, { actorEmail: s.owner_email, to: s.to_address, subject: s.subject, body: s.body, dealId: s.deal_id, contactId: s.contact_id, meta });
       const now = new Date().toISOString();
       await db.from("campaign_sends").update({ status: "sent", sent_at: now, activity_id: r.activityId, track_token: r.trackToken }).eq("id", s.id);
       // Learning loop: an AI send is a "used" draft — with how much the rep
@@ -416,7 +422,7 @@ export async function sendDue(db: SupabaseClient, opts: { limit?: number } = {})
       if (s.generated_by === "ai") {
         const original = s.original_body ?? s.body;
         await db.from("draft_events").insert({
-          deal_id: s.deal_id, kind: "email", theme_key: `campaign:${s.campaign_id}`, direction: `step ${s.step_position + 1}`, rep: s.owner_email,
+          deal_id: s.deal_id, kind: s.channel === "sms" ? "sms" : "email", theme_key: `campaign:${s.campaign_id}`, direction: `step ${s.step_position + 1}`, rep: s.owner_email,
           draft_body: String(original).slice(0, 4000), generated_at: s.created_at, used_at: s.approved_at ?? now,
           sent_activity_id: r.activityId, sent_similarity: s.edited ? draftSimilarity(String(original), String(s.body)) : 1,
         }).then(() => {}, () => {});

@@ -100,6 +100,46 @@ export function styleViolations(subject: string, body: string, links?: { savedBu
   return out;
 }
 
+export const SMS_STYLE_RULES = [
+  "Write as the rep, first person, to one specific person, the way a real person texts: short sentences, plain words, no marketing voice, no template feel.",
+  "Under 320 characters total. One idea, one natural question at the end.",
+  "No emojis unless the rep's earlier texts in the series used them. No 'Hi [name]!' openers with exclamation points; no 'Hope you're well'.",
+  "Never use an em dash or en dash. At most one hyphen.",
+  "Only state facts present in the context. Never invent conversations, prices, dates, or details of their build.",
+  "Links: at most one, written as a plain URL on its own (no markdown, no brackets), and only the buyer's saved build or the rep's booking page. No links at all unless the instruction calls for one.",
+  "Sign with the rep's first name only if the earlier texts in this series did not already establish who's texting; never a full signature.",
+];
+
+const SMS_TOOL = {
+  name: "record_campaign_text",
+  description: "Record the text message for this buyer.",
+  input_schema: {
+    type: "object",
+    properties: {
+      body: { type: "string", description: "The text message, plain text, under 320 characters. Links as plain URLs only." },
+      rationale: { type: "string", description: "One sentence for the rep: what from this buyer's context you built the text around." },
+    },
+    required: ["body", "rationale"],
+  },
+};
+
+/** Style problems for a TEXT step. */
+export function smsViolations(body: string, links?: { savedBuilds: string[]; bookingUrl: string }): string[] {
+  const out: string[] = [];
+  if (body.length > 320) out.push(`${body.length} characters (max 320)`);
+  if (/[—–]/.test(body)) out.push("contains an em dash or en dash");
+  if ((body.match(/(?<=\w)-(?=\w)/g) ?? []).length > 1) out.push("uses more than one hyphen");
+  if (/\[[^\]]+\]\(https?:/.test(body)) out.push("uses a markdown link (texts need plain URLs)");
+  const urls = body.match(/https?:\/\/[^\s]+/g) ?? [];
+  if (urls.length > 1) out.push("more than one link");
+  if (links) {
+    if (urls.some((u) => BOOKING_HOST.test(u) && !u.toLowerCase().startsWith(links.bookingUrl.toLowerCase()))) out.push("links to a calendar that is not this rep's booking page");
+    if (links.savedBuilds.length && GENERIC_BUILDER.test(body)) out.push("links the generic builder page instead of the buyer's saved build");
+  }
+  if (BANNED.test(body)) out.push(`uses the banned phrase "${body.match(BANNED)?.[0]}"`);
+  return out;
+}
+
 const CAMPAIGN_TOOL = {
   name: "record_campaign_email",
   description: "Record the email for this buyer.",
@@ -119,6 +159,7 @@ export interface PriorSend { step: number; subject: string | null; body: string;
 export async function generateCampaignEmail(
   db: SupabaseClient,
   args: {
+    channel?: "email" | "sms";
     dealId: string;
     campaignName: string;
     stepPosition: number; // 0-based
@@ -130,6 +171,7 @@ export async function generateCampaignEmail(
     priorSends: PriorSend[];
   }
 ): Promise<{ subject: string; body: string; rationale: string; model: string; warnings: string[] }> {
+  const isSms = args.channel === "sms";
   const cfg = await loadAiConfig(db);
   const ctx = await loadDealContext(db, args.dealId);
   if (!ctx) throw new Error("deal not found");
@@ -137,21 +179,23 @@ export async function generateCampaignEmail(
   const tier = cfg.models.drafts ?? "sonnet";
   const [commContext, { data: rules }, steer, links] = await Promise.all([
     buildCommContext(db),
-    db.from("draft_style_rules").select("rule").eq("enabled", true).in("channel", ["all", "email"]).order("created_at", { ascending: false }).limit(10),
+    db.from("draft_style_rules").select("rule").eq("enabled", true).in("channel", ["all", args.channel === "sms" ? "sms" : "email"]).order("created_at", { ascending: false }).limit(10),
     steeringForDeal(db, args.dealId).catch(() => ({ patterns: [] as string[], themeBoosts: {} })),
     buyerLinks(db, args.dealId, args.ownerEmail),
   ]);
   const linkText = [
     links.savedBuilds.length
-      ? `Their saved build${links.savedBuilds.length > 1 ? "s (newest first)" : ""}: ${links.savedBuilds.map((u) => `[your saved build](${u})`).join(" · ")}`
+      ? `Their saved build${links.savedBuilds.length > 1 ? "s (newest first)" : ""}: ${links.savedBuilds.map((u) => (isSms ? u : `[your saved build](${u})`)).join(" · ")}`
       : "They have no saved build on file (do not link the builder at all).",
-    `${links.ownerFirst}'s booking page (the ONLY scheduling link allowed): [grab a time](${links.bookingUrl})`,
+    `${links.ownerFirst}'s booking page (the ONLY scheduling link allowed): ${isSms ? links.bookingUrl : `[grab a time](${links.bookingUrl})`}`,
   ].join("\n");
 
   const systemCached = [
     COMPANY,
-    `You write one follow-up email from a Lone Peak Overland sales rep to one specific buyer, as part of a short series the rep set up. The rep's rough instruction for this email is given below; you turn it into a hyper-specific note for THIS buyer using their profile, calls, notes and signals. StoryBrand posture: the buyer is the hero, the rep is the guide.`,
-    `## Non-negotiable style rules\n${CAMPAIGN_STYLE_RULES.map((r) => `- ${r}`).join("\n")}`,
+    isSms
+      ? `You write one follow-up TEXT MESSAGE from a Lone Peak Overland sales rep to one specific buyer, as part of a short series the rep set up. The rep's rough instruction is below; you turn it into a short, specific text for THIS buyer using their profile, calls, notes and signals. It must read like the rep typed it on their phone.`
+      : `You write one follow-up email from a Lone Peak Overland sales rep to one specific buyer, as part of a short series the rep set up. The rep's rough instruction for this email is given below; you turn it into a hyper-specific note for THIS buyer using their profile, calls, notes and signals. StoryBrand posture: the buyer is the hero, the rep is the guide.`,
+    `## Non-negotiable style rules\n${(isSms ? SMS_STYLE_RULES : CAMPAIGN_STYLE_RULES).map((r) => `- ${r}`).join("\n")}`,
     (rules ?? []).length ? `## Standing style rules (learned from rep feedback — always apply)\n${(rules ?? []).map((r) => `- ${r.rule}`).join("\n")}` : "",
     commContext,
   ].filter(Boolean).join("\n\n");
@@ -175,32 +219,34 @@ export async function generateCampaignEmail(
     ctx.inputs.notes.length ? `\n# RECENT NOTES\n${ctx.inputs.notes.slice(-6).join("\n")}` : "",
   ].filter(Boolean).join("\n");
 
-  let call = await callClaudeTool({ tier, systemCached, user, tool: CAMPAIGN_TOOL, maxTokens: 900 });
-  await logAiUsage(db, { dealId: args.dealId, task: "campaign_email", tier, call });
-  let subject = String(call.input?.subject ?? "").trim();
+  const tool = isSms ? SMS_TOOL : CAMPAIGN_TOOL;
+  const check = (sub: string, bod: string) => (isSms ? smsViolations(bod, links) : styleViolations(sub, bod, links));
+  let call = await callClaudeTool({ tier, systemCached, user, tool, maxTokens: isSms ? 400 : 900 });
+  await logAiUsage(db, { dealId: args.dealId, task: isSms ? "campaign_sms" : "campaign_email", tier, call });
+  let subject = isSms ? "" : String(call.input?.subject ?? "").trim();
   let body = String(call.input?.body ?? "").trim();
   let rationale = String(call.input?.rationale ?? "").trim();
-  let warnings = styleViolations(subject, body, links);
+  let warnings = check(subject, body);
   if (warnings.length) {
     // One rewrite pass with the exact problems named.
     const fix = await callClaudeTool({
       tier,
       systemCached,
       systemLive: `Your previous draft broke these rules: ${warnings.join("; ")}. Rewrite it so none of them apply. Keep the same substance.`,
-      user: `${user}\n\n# YOUR PREVIOUS DRAFT\nSubject: ${subject}\n${body}`,
-      tool: CAMPAIGN_TOOL,
-      maxTokens: 900,
+      user: `${user}\n\n# YOUR PREVIOUS DRAFT\n${isSms ? "" : `Subject: ${subject}\n`}${body}`,
+      tool,
+      maxTokens: isSms ? 400 : 900,
     });
-    await logAiUsage(db, { dealId: args.dealId, task: "campaign_email_fix", tier, call: fix });
-    const s2 = String(fix.input?.subject ?? "").trim();
+    await logAiUsage(db, { dealId: args.dealId, task: isSms ? "campaign_sms_fix" : "campaign_email_fix", tier, call: fix });
+    const s2 = isSms ? "" : String(fix.input?.subject ?? "").trim();
     const b2 = String(fix.input?.body ?? "").trim();
-    const w2 = styleViolations(s2, b2, links);
+    const w2 = check(s2, b2);
     if (b2 && w2.length <= warnings.length) { subject = s2; body = b2; rationale = String(fix.input?.rationale ?? rationale).trim(); warnings = w2; call = fix; }
   }
-  if (!subject || !body) throw new Error("model returned an empty draft");
+  if ((!isSms && !subject) || !body) throw new Error("model returned an empty draft");
   // Hard guarantees regardless of what the model did: scheduling links are the
-  // owner's, and every URL is clickable text.
-  body = normalizeLinks(body, links.bookingUrl);
-  warnings = styleViolations(subject, body, links);
+  // owner's; email URLs become clickable text, text-message URLs stay plain.
+  body = isSms ? body.replace(BOOKING_HOST, (u) => (u.toLowerCase().startsWith(links.bookingUrl.toLowerCase()) ? u : links.bookingUrl)).replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, "$2") : normalizeLinks(body, links.bookingUrl);
+  warnings = check(subject, body);
   return { subject, body, rationale, model: tier, warnings };
 }

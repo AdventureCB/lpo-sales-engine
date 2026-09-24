@@ -21,7 +21,7 @@ export async function GET() {
   if (!isAdmin) q = q.or(`shared.eq.true,owner_email.eq.${user.email}`);
   const [{ data: camps }, { data: macros }, { data: sources }, { data: pipelines }, { data: enrs }] = await Promise.all([
     q,
-    db.from("comm_macros").select("id, name, channel, subject").in("channel", ["email", "any"]).order("sort_order").order("name"),
+    db.from("comm_macros").select("id, name, channel, subject").in("channel", ["email", "sms", "any"]).order("sort_order").order("name"),
     db.from("deal_sources").select("name").order("sort_order").order("name"),
     db.from("crm_pipelines").select("name").order("sort_order"),
     db.from("campaign_enrollments").select("campaign_id, status"),
@@ -77,7 +77,6 @@ export async function POST(req: NextRequest) {
   const channel = body.channel === "sms" ? "sms" : "email";
   const mode = body.mode === "ai" ? "ai" : "macro";
   if (mode === "ai" && !isAdmin) return NextResponse.json({ error: "AI campaigns are admin-only for now" }, { status: 403 });
-  if (channel === "sms") return NextResponse.json({ error: "Text campaigns ship in Phase 4" }, { status: 400 });
   const status = ["draft", "active", "paused"].includes(body.status) ? body.status : "draft";
   const trigger = body.trigger && typeof body.trigger === "object" ? body.trigger : { type: "manual" };
   const settings = body.settings && typeof body.settings === "object" ? body.settings : {};
@@ -85,7 +84,8 @@ export async function POST(req: NextRequest) {
   if (status === "active" && steps.length === 0) return NextResponse.json({ error: "Add at least one step before activating." }, { status: 400 });
   for (const s of steps) {
     if (s.content_kind === "prompt" && !isAdmin) return NextResponse.json({ error: "AI steps are admin-only" }, { status: 403 });
-    if (s.content_kind === "inline" && (!String(s.subject ?? "").trim() || !String(s.body ?? "").trim())) return NextResponse.json({ error: "Every written step needs a subject and body." }, { status: 400 });
+    if (s.content_kind === "inline" && (!String(s.body ?? "").trim() || (channel === "email" && !String(s.subject ?? "").trim()))) return NextResponse.json({ error: channel === "email" ? "Every written step needs a subject and body." : "Every written step needs a message." }, { status: 400 });
+    if (channel === "sms" && s.content_kind === "inline" && String(s.body ?? "").length > 480) return NextResponse.json({ error: "Text steps should stay under 480 characters." }, { status: 400 });
     if (s.content_kind === "macro" && !s.macro_id) return NextResponse.json({ error: "Pick a macro for each macro step." }, { status: 400 });
   }
 

@@ -28,7 +28,7 @@ const delayLabel = (h: number) => (h === 0 ? "immediately" : h % 24 === 0 ? `${h
  * rule that auto-enrolls matching open deals every 15 minutes.
  */
 export function CampaignsView() {
-  const [data, setData] = useState<{ isAdmin: boolean; me: string; campaigns: Campaign[]; macros: { id: string; name: string; subject: string | null }[]; sources: string[]; pipelines: string[] } | null>(null);
+  const [data, setData] = useState<{ isAdmin: boolean; me: string; campaigns: Campaign[]; macros: { id: string; name: string; subject: string | null; channel: string }[]; sources: string[]; pipelines: string[] } | null>(null);
   const [edit, setEdit] = useState<Campaign | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -83,7 +83,7 @@ export function CampaignsView() {
             <div className="field"><label>Channel</label>
               <select className="vmsel" value={c.channel} onChange={(e) => set({ channel: e.target.value as any })}>
                 <option value="email">Email</option>
-                <option value="sms" disabled>Text (Phase 4)</option>
+                <option value="sms">Text message</option>
               </select>
             </div>
           </div>
@@ -138,7 +138,7 @@ export function CampaignsView() {
             <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 13.5 }}><input type="checkbox" checked={c.settings.exit_on_reply ?? true} onChange={(e) => set({ settings: { ...c.settings, exit_on_reply: e.target.checked } })} /> Stop when the customer replies</label>
             <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 13.5 }}><input type="checkbox" checked={c.settings.stop_on_other_rep ?? true} onChange={(e) => set({ settings: { ...c.settings, stop_on_other_rep: e.target.checked } })} /> Stop if another rep contacts them</label>
           </div>
-          <div className="viewsub" style={{ fontSize: 12.5 }}>Fixed for every campaign: max 2 emails per contact per week · the owner's own manual email or text delays the next step by 24h · a Klaviyo-heavy day (2+ opens) delays it 12h · AI-written emails wait for approval in the Outbox; written steps send on schedule.</div>
+          <div className="viewsub" style={{ fontSize: 12.5 }}>Fixed for every campaign: max 2 emails and 2 texts per contact per week · the owner's own manual email or text delays the next step by 24h · a Klaviyo-heavy day (2+ opens) delays an email 12h · texts only go to contacts who haven't texted STOP · AI-written messages wait for approval in the Outbox; written steps send on schedule · weekdays only, at the hour the buyer usually opens.</div>
         </div>
 
         <div className="card" style={{ maxWidth: 820, marginBottom: 14 }}>
@@ -163,15 +163,16 @@ export function CampaignsView() {
               </div>
               {s.content_kind === "inline" && (
                 <div style={{ display: "grid", gap: 6 }}>
-                  <input className="vmsel" style={{ width: "100%" }} placeholder="Subject" value={s.subject} onChange={(e) => setStep(i, { subject: e.target.value })} />
-                  <textarea className="vmsel" style={{ width: "100%", minHeight: 140, resize: "vertical", fontFamily: "inherit", lineHeight: 1.45 }} placeholder="Write the email as the rep would…" value={s.body} onChange={(e) => setStep(i, { body: e.target.value })} />
+                  {c.channel === "email" && <input className="vmsel" style={{ width: "100%" }} placeholder="Subject" value={s.subject} onChange={(e) => setStep(i, { subject: e.target.value })} />}
+                  <textarea className="vmsel" style={{ width: "100%", minHeight: c.channel === "sms" ? 80 : 140, resize: "vertical", fontFamily: "inherit", lineHeight: 1.45 }} placeholder={c.channel === "sms" ? "Write the text as the rep would (under 320 characters, plain URLs only)…" : "Write the email as the rep would…"} value={s.body} onChange={(e) => setStep(i, { body: e.target.value })} />
+                  {c.channel === "sms" && <div style={{ fontSize: 12, color: s.body.length > 320 ? "var(--crit)" : "var(--text-3)" }}>{s.body.length} / 320 characters</div>}
                   <div style={{ fontSize: 12, color: "var(--text-3)" }}>Placeholders: {PLACEHOLDERS.map((p) => <code key={p.token} style={{ marginRight: 6 }}>{p.token}</code>)}</div>
                 </div>
               )}
               {s.content_kind === "macro" && (
                 <select className="vmsel" style={{ width: "100%" }} value={s.macro_id ?? ""} onChange={(e) => setStep(i, { macro_id: e.target.value || null })}>
                   <option value="">Pick an email macro…</option>
-                  {data.macros.map((m) => <option key={m.id} value={m.id}>{m.name}{m.subject ? ` — ${m.subject}` : ""}</option>)}
+                  {data.macros.filter((m) => m.channel === "any" || m.channel === c.channel).map((m) => <option key={m.id} value={m.id}>{m.name}{m.subject ? ` — ${m.subject}` : ""}</option>)}
                 </select>
               )}
               {s.content_kind === "prompt" && (
@@ -179,7 +180,7 @@ export function CampaignsView() {
                   <textarea className="vmsel" style={{ width: "100%", minHeight: 90, resize: "vertical", fontFamily: "inherit" }} placeholder="What this email should accomplish, roughly — the AI writes it per deal from everything it knows about them." value={s.prompt} onChange={(e) => setStep(i, { prompt: e.target.value })} />
                   <input className="vmsel" style={{ width: "100%" }} placeholder="Steering (optional): tone, length, must-mention, never-say…" value={s.steering} onChange={(e) => setStep(i, { steering: e.target.value })} />
                   <div style={{ fontSize: 12, color: "var(--text-3)" }}>Written per deal from the profile, calls, notes and signals, in the rep's voice, with the no-AI-tells style rules enforced. Every AI email waits for approval in the Outbox; written steps send on schedule without approval.</div>
-                  <PromptPreview prompt={s.prompt} steering={s.steering} campaignName={c.name} stepPosition={i} stepCount={steps.length} />
+                  <PromptPreview prompt={s.prompt} steering={s.steering} campaignName={c.name} stepPosition={i} stepCount={steps.length} channel={c.channel} />
                 </div>
               )}
               {i > 0 && (
@@ -254,7 +255,7 @@ export function CampaignsView() {
 }
 
 /** Admin: try a step prompt on a real deal before activating (nothing saved or sent). */
-function PromptPreview({ prompt, steering, campaignName, stepPosition, stepCount }: { prompt: string; steering: string; campaignName: string; stepPosition: number; stepCount: number }) {
+function PromptPreview({ prompt, steering, campaignName, stepPosition, stepCount, channel }: { prompt: string; steering: string; campaignName: string; stepPosition: number; stepCount: number; channel: "email" | "sms" }) {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<{ id: string; title: string }[]>([]);
   const [deal, setDeal] = useState<{ id: string; title: string } | null>(null);
@@ -271,7 +272,7 @@ function PromptPreview({ prompt, steering, campaignName, stepPosition, stepCount
   const run = async () => {
     if (!deal || !prompt.trim()) return;
     setBusy(true); setErr(null); setOut(null);
-    const r = await fetch("/api/campaigns/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dealId: deal.id, prompt, steering, campaignName, stepPosition, stepCount }) });
+    const r = await fetch("/api/campaigns/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dealId: deal.id, prompt, steering, campaignName, stepPosition, stepCount, channel }) });
     const j = await r.json().catch(() => ({}));
     setBusy(false);
     if (!r.ok || j.error) setErr(j.error ?? `HTTP ${r.status}`); else setOut(j);
@@ -298,7 +299,7 @@ function PromptPreview({ prompt, steering, campaignName, stepPosition, stepCount
       {out && (
         <div style={{ marginTop: 8, background: "var(--surface-2)", borderRadius: 10, padding: "10px 12px", fontSize: 13.5, maxWidth: 640 }}>
           <div style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 4 }}>from {out.from}{out.warnings?.length ? ` · ⚠ ${out.warnings.join("; ")}` : " · passes style rules"}</div>
-          <div style={{ fontWeight: 650, marginBottom: 6 }}>{out.subject}</div>
+          {out.subject && <div style={{ fontWeight: 650, marginBottom: 6 }}>{out.subject}</div>}
           <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.45 }}>{out.body}</div>
           <div style={{ color: "var(--text-3)", marginTop: 8, fontSize: 12.5 }}>🧠 {out.rationale}</div>
         </div>
