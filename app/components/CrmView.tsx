@@ -453,6 +453,13 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
   const checkW = 38; // frozen checkbox column width (title sticks after it)
   const [sources, setSources] = useState<{ id: string; name: string }[]>([]);
   const [search, setSearch] = useState<string>(saved.search ?? "");
+  // ?q= (e.g. a notification for a contact with no deal) overrides the remembered search — after mount, so SSR and client agree.
+  useEffect(() => {
+    try {
+      const q = new URLSearchParams(window.location.search).get("q");
+      if (q) { setSearch(q); setPage(0); }
+    } catch {}
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [sort, setSort] = useState<string>(saved.sort ?? "updated");
   const [dir, setDir] = useState<"asc" | "desc">(saved.dir ?? "desc");
   const [importing, setImporting] = useState(false);

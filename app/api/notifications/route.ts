@@ -252,7 +252,8 @@ export async function GET(req: NextRequest) {
         title: `✉️ ${e.crm_contacts?.name ?? "New email"}`,
         sub: (e.subject ?? "").replace(/^📥\s*/, "").slice(0, 90) || "New email",
         at: e.occurred_at,
-        href: deal?.id ? `/crm/deal/${deal.id}` : "/crm",
+        // No deal on the contact → open the CRM searched for them instead of the bare list.
+        href: deal?.id ? `/crm/deal/${deal.id}` : `/crm?q=${encodeURIComponent(e.crm_contacts?.name ?? "")}`,
         isNew: e.occurred_at > seenAt,
       };
     }),

@@ -317,6 +317,11 @@ export async function sweepGmailAccount(
     let contactName: string | null = null;
     let matchedEmail: string | null = null;
     for (const email of counterparts) {
+      // Mail from our own domain (team@, a rep, the quote tool's copies) is
+      // internal, never a customer conversation — a CRM contact that happens
+      // to carry an @lonepeakoverland.com address must not absorb it (the
+      // "Gabriel 09-14 F150 6.5" artifact did, 81 times in a month).
+      if (/@lonepeakoverland\.com$/i.test(email)) continue;
       const { data: contact } = await db
         .from("crm_contacts")
         .select("id, name")
