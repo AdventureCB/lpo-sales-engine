@@ -4,15 +4,20 @@ import { loadAiConfig } from "./ai-profiler";
 import { buildCommContext, budgetOk, COMPANY, loadDealContext } from "./ai-scripts";
 import { steeringForDeal } from "./ai-hypotheses";
 import { bookingBase, repBookingUrl } from "./booking";
+import { describePhoneLocation, locationFromPhone } from "./area-codes";
 
 /**
  * Links that belong to THIS buyer / THIS rep (Kyle 9/24): the buyer's own
  * saved 3D build (never the generic builder page) and the deal owner's own
  * booking page (never another rep's Calendly from the asset library).
  */
-export async function buyerLinks(db: SupabaseClient, dealId: string, ownerEmail: string): Promise<{ savedBuilds: string[]; bookingUrl: string; truck: string | null; ownerFirst: string }> {
-  const { data: deal } = await db.from("crm_deals").select("truck_model, crm_contacts ( emails )").eq("id", dealId).maybeSingle();
+export async function buyerLinks(db: SupabaseClient, dealId: string, ownerEmail: string): Promise<{ savedBuilds: string[]; bookingUrl: string; truck: string | null; ownerFirst: string; location: string | null }> {
+  const { data: deal } = await db.from("crm_deals").select("truck_model, crm_contacts ( emails, phones )").eq("id", dealId).maybeSingle();
   const emails = (((deal as any)?.crm_contacts?.emails as any[]) ?? []).map((e) => String(e.value ?? "").toLowerCase()).filter(Boolean);
+  // Where they likely are, from the phone's area code (no address on most deals).
+  const phones = (((deal as any)?.crm_contacts?.phones as any[]) ?? []).filter((p) => !p.bad);
+  const primary = phones.find((p) => p.primary) ?? phones[0];
+  const location = describePhoneLocation(locationFromPhone(primary?.e164 ?? primary?.value));
   const urls: { url: string; at: string }[] = [];
   const BUILD = /https:\/\/www\.lonepeakoverland\.com\/products\/[^\s)"'<]+\?[^\s)"'<]*car=[^\s)"'<]+/g;
   const grab = (text: string | null | undefined, at: string) => { for (const m of String(text ?? "").match(BUILD) ?? []) urls.push({ url: m, at }); };
@@ -28,7 +33,7 @@ export async function buyerLinks(db: SupabaseClient, dealId: string, ownerEmail:
   const seen = new Set<string>();
   const savedBuilds = urls.sort((a, b) => (b.at ?? "").localeCompare(a.at ?? "")).filter((u) => (seen.has(u.url) ? false : (seen.add(u.url), true))).map((u) => u.url).slice(0, 2);
   const bookingUrl = rep?.booking_enabled && rep.booking_slug ? repBookingUrl(rep.booking_slug) : bookingBase();
-  return { savedBuilds, bookingUrl, truck: (deal as any)?.truck_model ?? null, ownerFirst: (rep?.name ?? ownerEmail).split(/[\s@]/)[0] };
+  return { savedBuilds, bookingUrl, truck: (deal as any)?.truck_model ?? null, ownerFirst: (rep?.name ?? ownerEmail).split(/[\s@]/)[0], location };
 }
 
 const BOOKING_HOST = /https?:\/\/(?:[a-z0-9-]+\.)?calendly\.com\/[^\s)]*|https?:\/\/book\.lonepeakoverland\.com\/[^\s)]*|https?:\/\/lpo-sales-engine\.vercel\.app\/book\/[^\s)]*/gi;
@@ -66,6 +71,7 @@ export const CAMPAIGN_STYLE_RULES = [
   "No sign-off and no signature. The rep's signature is appended automatically.",
   "Every link must be written as markdown [a few descriptive words](url), never a bare URL. Only two kinds of links exist for you: the buyer-specific links listed under BUYER-SPECIFIC LINKS (their own saved build, the rep's own booking page) and the asset library. Never use any calendar link from the asset library; the rep's booking page is the only way to offer a time.",
   "If the instruction mentions the buyer's build, link THEIR saved build URL exactly as given, never the generic builder page. If it mentions their truck, name the exact truck model from the deal facts.",
+  "The buyer's likely location comes from their phone's area code. You may use it naturally (regional terrain, weather, distance to our Wenatchee shop, nearby installers) but never claim to know their town, and never mention the area code itself.",
 ];
 
 const BANNED = /(hope this (email |message )?finds you|checking in|circling back|touch(ing)? base|wanted to reach out|don'?t hesitate|feel free|game.?changer|\bunlock\b|\belevate\b|seamless|as a reminder|\bjourney\b)/i;
@@ -163,7 +169,7 @@ export async function generateCampaignEmail(
     `\n# EARLIER EMAILS IN THIS SERIES (do not repeat their points or phrasing; build on them; if the last one was not opened, change the angle)\n${priorText}`,
     `\n# BUYER-SPECIFIC LINKS\n${linkText}`,
     `\n# BUYER PROFILE\n${ctx.profileText}`,
-    `\n# DEAL\n${ctx.inputs.header}${links.truck ? `\nTruck: ${links.truck}` : "\nTruck: not on file (do not guess)"}`,
+    `\n# DEAL\n${ctx.inputs.header}${links.truck ? `\nTruck: ${links.truck}` : "\nTruck: not on file (do not guess)"}${links.location ? `\nLikely location: ${links.location}` : "\nLocation: unknown"}`,
     `\n# SIGNALS\n${ctx.inputs.signalText}`,
     `\n# CALL HISTORY\n${ctx.inputs.callText}`,
     ctx.inputs.notes.length ? `\n# RECENT NOTES\n${ctx.inputs.notes.slice(-6).join("\n")}` : "",

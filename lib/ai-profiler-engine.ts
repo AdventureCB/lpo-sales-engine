@@ -96,7 +96,7 @@ export interface DealInputs {
 export async function gatherDealInputs(db: SupabaseClient, dealId: string): Promise<DealInputs | null> {
   const { data: deal } = await db
     .from("crm_deals")
-    .select("id, pipedrive_deal_id, title, value_cents, status, created_at, interests, custom, crm_stages(name, crm_pipelines(name)), crm_contacts(id, name, tz_offset, emails)")
+    .select("id, pipedrive_deal_id, title, value_cents, status, created_at, interests, custom, truck_model, crm_stages(name, crm_pipelines(name)), crm_contacts(id, name, tz_offset, emails, phones)")
     .eq("id", dealId)
     .maybeSingle();
   if (!deal) return null;
@@ -105,9 +105,17 @@ export async function gatherDealInputs(db: SupabaseClient, dealId: string): Prom
   const email = (c?.emails ?? []).find((e: any) => e?.primary)?.value ?? (c?.emails ?? [])[0]?.value ?? null;
 
   const tzName = c?.tz_offset === -5 || c?.tz_offset === -4 ? "East" : c?.tz_offset === -6 ? "Central" : c?.tz_offset != null ? "West" : "unknown";
+  // Likely location from the phone's area code — most deals carry no address
+  // (Kyle 9/24). Not part of the input hash, so adding it never re-runs extraction.
+  const usablePhones = ((c?.phones as any[]) ?? []).filter((p) => !p?.bad);
+  const primaryPhone = usablePhones.find((p) => p.primary) ?? usablePhones[0];
+  const { describePhoneLocation, locationFromPhone } = await import("./area-codes");
+  const location = describePhoneLocation(locationFromPhone(primaryPhone?.e164 ?? primaryPhone?.value));
   const header = [
     `Deal: ${(deal as any).title}`,
     `Contact: ${c?.name ?? "—"} (region ${tzName})`,
+    location && `Likely location: ${location}`,
+    (deal as any).truck_model && `Truck: ${(deal as any).truck_model}`,
     `Pipeline/Stage: ${stage?.crm_pipelines?.name ?? "—"} / ${stage?.name ?? "—"}`,
     (deal as any).value_cents != null && `Value: $${Math.round((deal as any).value_cents / 100).toLocaleString()}`,
     (deal as any).interests?.length && `Interests on file: ${(deal as any).interests.join(", ")}`,
