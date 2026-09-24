@@ -36,6 +36,7 @@ const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[]
       { label: "📋 Sprint Lists", href: "/lists" },
       { label: "💵 Deposits", href: "/deposits" },
       { label: "📅 Calendar", href: "/calendar" },
+      { label: "📬 Outbox", href: "/outbox" },
       { label: "Scoreboard", href: "/scoreboard" },
       { label: "⚖️ Reviews", href: "/reviews" },
       { label: "Lookup", href: "/lookup" },
@@ -73,6 +74,7 @@ const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[]
       { label: "🧠 AI Profiler", href: "/settings/profiler", adminOnly: true },
       { label: "✉️ Comms", href: "/settings/comms", adminOnly: true },
       { label: "📅 Booking", href: "/settings/booking", adminOnly: true },
+      { label: "📣 Campaigns", href: "/settings/campaigns" },
     ],
   },
 ];

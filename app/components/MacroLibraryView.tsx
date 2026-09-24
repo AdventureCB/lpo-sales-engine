@@ -232,6 +232,7 @@ export function MacroLibraryView({ isAdmin }: { isAdmin: boolean }) {
     <div>
       <div className="viewhead" style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <h1>✍️ Macro Library</h1>
+        <a href="/settings/campaigns" className="btn ghost" style={{ padding: "5px 12px", fontSize: 13, marginLeft: 12 }}>📣 Campaigns →</a>
         <Link href="/settings" style={{ marginLeft: "auto", fontSize: 13, color: "var(--text-3)" }}>← Settings</Link>
       </div>
       <p className="viewsub">

@@ -11,7 +11,7 @@ import { createServerClient } from "@supabase/ssr";
 // /attr.js redirected to /login for two weeks and never ran for visitors).
 // /book + /api/book/ are the public "Schedule with a Gravel Guide" pages.
 // /download/ = permanent companion-installer redirect (reps install before they can log in).
-const PUBLIC_PREFIXES = ["/login", "/api/webhooks/", "/api/cron/", "/api/health", "/api/ai/", "/api/attr/", "/attr.js", "/api/track/", "/sop.html", "/book", "/api/book", "/download/"];
+const PUBLIC_PREFIXES = ["/login", "/api/webhooks/", "/api/cron/", "/api/health", "/api/ai/", "/api/attr/", "/attr.js", "/api/track/", "/sop.html", "/book", "/api/book", "/download/", "/u/"];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;

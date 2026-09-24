@@ -509,6 +509,30 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
     await loadDeals();
   };
 
+  // Bulk enroll the selection into an active campaign (Outbox approves each send).
+  const [campaigns, setCampaigns] = useState<{ id: string; name: string }[] | null>(null);
+  const [enrollCamp, setEnrollCamp] = useState("");
+  const loadCampaigns = () => {
+    if (campaigns) return;
+    fetch("/api/campaigns")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setCampaigns(((d?.campaigns ?? []) as any[]).filter((c) => c.status === "active").map((c) => ({ id: c.id, name: c.name }))))
+      .catch(() => setCampaigns([]));
+  };
+  const enrollSelected = async () => {
+    if (!enrollCamp || selected.size === 0) return;
+    const r = await fetch("/api/campaigns/enroll", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ campaignId: enrollCamp, dealIds: [...selected] }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.error) { setSprintMsg(`⚠ ${j.error ?? "Enroll failed"}`); }
+    else {
+      const why = Object.entries(j.reasons ?? {}).map(([k, v]) => `${v} ${k}`).join(", ");
+      setSprintMsg(`📣 Enrolled ${j.enrolled} of ${selected.size}${j.skipped ? ` (skipped: ${why})` : ""} — sends will appear in the Outbox`);
+      setSelected(new Set());
+      setEnrollCamp("");
+    }
+    setTimeout(() => setSprintMsg(null), 8000);
+  };
+
   const createSprint = async () => {
     if (!sprintName.trim() || selected.size === 0) return;
     const r = await fetch("/api/crm/sprints", {
@@ -899,6 +923,15 @@ export function CrmView({ isAdmin, defaultOwner }: { isAdmin: boolean; defaultOw
           <button className="btn ghost" style={{ padding: "8px 12px", fontSize: 14 }} onClick={() => setSelected(new Set())}>
             Clear
           </button>
+          <span style={{ color: "var(--text-3)", fontSize: 13 }}>or</span>
+          <select className="vmsel" style={{ width: "auto" }} value={enrollCamp} onChange={(e) => setEnrollCamp(e.target.value)} onFocus={loadCampaigns}>
+            <option value="">📣 Enroll in campaign…</option>
+            {(campaigns ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {campaigns && campaigns.length === 0 && <option value="" disabled>no active campaigns</option>}
+          </select>
+          {enrollCamp && (
+            <button className="btn" style={{ padding: "8px 14px", fontSize: 14 }} onClick={enrollSelected}>Enroll {selected.size}</button>
+          )}
           {isAdmin && (
             <>
               <span style={{ color: "var(--text-3)", fontSize: 13 }}>or</span>
