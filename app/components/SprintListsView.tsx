@@ -38,6 +38,8 @@ type ItemRow = {
   removedAt: string | null;
   addedManually: boolean;
   disposition: string | null;
+  attempts30?: number; // outbound dials in the last 30 days
+  convos30?: number; // real conversations in the last 30 days
 };
 
 const TIER_BADGE: Record<string, { label: string; color: string }> = {
@@ -486,6 +488,7 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
                     <th style={{ padding: "4px 8px" }}>Reason</th>
                     <th style={{ padding: "4px 8px" }}>Pipeline</th>
                     <th style={{ padding: "4px 8px" }}>Stage</th>
+                    <th style={{ padding: "4px 8px", whiteSpace: "nowrap" }} title="Outbound attempts / real conversations in the last 30 days">30d 📞/💬</th>
                     <th style={{ padding: "4px 8px" }}>TZ</th>
                     <th style={{ padding: "4px 8px" }}>Phone</th>
                     <th style={{ padding: "4px 8px" }}>Status</th>
@@ -525,6 +528,12 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
                           </span>
                         )}
                       </td>
+                      <td
+                        style={{ padding: "5px 8px", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums", fontWeight: 650, color: (it.convos30 ?? 0) > 0 ? "var(--good, #3aa76d)" : (it.attempts30 ?? 0) > 0 ? "#d99a2b" : "var(--text-3)" }}
+                        title={`${it.attempts30 ?? 0} attempt${it.attempts30 === 1 ? "" : "s"}, ${it.convos30 ?? 0} conversation${it.convos30 === 1 ? "" : "s"} in the last 30 days`}
+                      >
+                        {it.attempts30 ?? 0} / {it.convos30 ?? 0}
+                      </td>
                       <td style={{ padding: "5px 8px", color: "var(--text-3)", textTransform: "capitalize" }}>{it.tzBucket ?? "—"}</td>
                       <td style={{ padding: "5px 8px", color: "var(--text-3)" }}>{it.phone ?? "—"}</td>
                       <td style={{ padding: "5px 8px" }}>
@@ -542,7 +551,7 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
                     </tr>
                     {expandedDeal === it.dealId && (
                       <tr>
-                        <td colSpan={10} style={{ background: "var(--surface-2)", padding: "8px 14px" }}>
+                        <td colSpan={11} style={{ background: "var(--surface-2)", padding: "8px 14px" }}>
                           <QuickInfoPanel dealId={it.dealId} info={quickInfo[it.dealId]} />
                         </td>
                       </tr>
@@ -550,7 +559,7 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
                     </Fragment>
                   ))}
                   {items.length === 0 && (
-                    <tr><td colSpan={10} style={{ padding: 12, color: "var(--text-3)" }}>Empty list.</td></tr>
+                    <tr><td colSpan={11} style={{ padding: 12, color: "var(--text-3)" }}>Empty list.</td></tr>
                   )}
                 </tbody>
               </table>

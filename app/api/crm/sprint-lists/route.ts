@@ -34,11 +34,40 @@ export async function GET(req: NextRequest) {
       .eq("sprint_id", sprintId)
       .order("position");
 
+    // Last-30-day attempts / conversations per deal (Kyle 9/24) — same
+    // definitions as the Ad ROI funnel and the CRM call-stat columns, but
+    // windowed, so a rep sees recent effort at a glance without opening it.
+    const dealIds = (items ?? []).map((it: any) => it.deal_id).filter(Boolean);
+    const pdIds = (items ?? []).map((it: any) => it.crm_deals?.pipedrive_deal_id).filter((x: any) => x != null);
+    const pdToDeal = new Map<number, string>((items ?? []).filter((it: any) => it.crm_deals?.pipedrive_deal_id != null).map((it: any) => [it.crm_deals.pipedrive_deal_id, it.deal_id]));
+    const att30 = new Map<string, number>();
+    const con30 = new Map<string, number>();
+    if (dealIds.length) {
+      const since30 = new Date(Date.now() - 30 * 86_400_000).toISOString();
+      const [{ data: ce }, { data: acts }] = await Promise.all([
+        db
+          .from("call_events")
+          .select("crm_deal_id, deal_id, direction, disposition, classification")
+          .gte("started_at", since30)
+          .or(`crm_deal_id.in.(${dealIds.join(",")})${pdIds.length ? `,deal_id.in.(${pdIds.join(",")})` : ""}`),
+        db.from("crm_activities").select("deal_id").eq("type", "call").like("actor", "%@%").is("due_at", null).gte("occurred_at", since30).in("deal_id", dealIds),
+      ]);
+      const bump = (m: Map<string, number>, id: string | null | undefined) => { if (id) m.set(id, (m.get(id) ?? 0) + 1); };
+      for (const c of ce ?? []) {
+        const id = c.crm_deal_id ?? (c.deal_id != null ? pdToDeal.get(c.deal_id) : null);
+        if (c.direction === "outgoing") bump(att30, id);
+        if (c.disposition === "connected" || (c.classification === "conversation" && (c.disposition == null || c.disposition === "connected"))) bump(con30, id);
+      }
+      for (const a of acts ?? []) bump(att30, a.deal_id);
+    }
+
     const rows = (items ?? []).map((it: any) => {
       const d = it.crm_deals;
       const phones = d?.crm_contacts?.phones ?? [];
       const phone = phones.find((p: any) => p.primary && p.e164)?.e164 ?? phones.find((p: any) => p.e164)?.e164 ?? null;
       return {
+        attempts30: att30.get(it.deal_id) ?? 0,
+        convos30: con30.get(it.deal_id) ?? 0,
         dealId: it.deal_id,
         pipedriveDealId: d?.pipedrive_deal_id ?? null,
         title: d?.title ?? "(deleted)",
