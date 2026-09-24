@@ -270,6 +270,18 @@ export async function GET(req: NextRequest) {
     }
   } catch {}
 
+  // Active drip campaign on this deal (Outbox-driven follow-ups).
+  const { data: enr } = await db
+    .from("campaign_enrollments")
+    .select("id, status, current_step, next_step_at, hold_reason, enrolled_at, campaigns ( id, name, mode )")
+    .eq("deal_id", deal.id)
+    .eq("status", "active")
+    .limit(1)
+    .maybeSingle();
+  const campaignEnrollment = enr
+    ? { id: enr.id, campaignId: (enr as any).campaigns?.id, name: (enr as any).campaigns?.name ?? "Campaign", mode: (enr as any).campaigns?.mode ?? "macro", currentStep: enr.current_step, nextStepAt: enr.next_step_at, holdReason: enr.hold_reason, enrolledAt: enr.enrolled_at }
+    : null;
+
   return NextResponse.json({
     deal,
     timeline,
@@ -285,6 +297,7 @@ export async function GET(req: NextRequest) {
     dealSprintIds: (dealSprints.data ?? []).map((s) => s.sprint_id),
     sprintOwners: (owners.data ?? []).map((u) => u.email),
     existingOwner,
+    campaignEnrollment,
   });
 }
 

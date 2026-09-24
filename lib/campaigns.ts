@@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { fillPlaceholders } from "./placeholders";
 import { sendTrackedEmail } from "./email-send";
 import { normalizePhone } from "./identity";
+import { bestSendTime } from "./campaign-timing";
+import { draftSimilarity } from "./ai-scripts";
 
 /**
  * Drip campaign engine (Phase 0/1 — macro campaigns; AI generation lands in
@@ -323,7 +325,10 @@ export async function advanceEnrollments(db: SupabaseClient): Promise<{ checked:
       }
     }
     const win = { start: camp.settings?.window_start ?? DEFAULT_WINDOW.start, end: camp.settings?.window_end ?? DEFAULT_WINDOW.end };
-    const slotMs = intoWindow(Math.max(dueMs, Date.now()), contact?.tz_offset ?? null, win);
+    // Phase 3: the hour this buyer actually opens email (their history), else a prior; weekdays only.
+    const contactEmails = (((contact?.emails as any[]) ?? []).map((x) => String(x.value ?? "").toLowerCase()).filter(Boolean));
+    const slot = await bestSendTime(db, { emails: contactEmails, tzOffset: contact?.tz_offset ?? null, window: win, notBefore: Math.max(dueMs, Date.now()) }).catch(() => null);
+    const slotMs = slot?.at ?? intoWindow(Math.max(dueMs, Date.now()), contact?.tz_offset ?? null, win);
 
     // Content.
     const to = contactAddress(contact, camp.channel);
@@ -372,8 +377,9 @@ export async function advanceEnrollments(db: SupabaseClient): Promise<{ checked:
     const autoApprove = generatedBy !== "ai";
     const { error } = await db.from("campaign_sends").insert({
       enrollment_id: e.id, campaign_id: camp.id, step_id: step.id, step_position: e.current_step, deal_id: deal.id, contact_id: contact?.id ?? null,
-      owner_email: owner, channel: camp.channel, to_address: to, subject: camp.channel === "email" ? subject : null, body, generated_by: generatedBy, ai_meta: aiMeta,
+      owner_email: owner, channel: camp.channel, to_address: to, subject: camp.channel === "email" ? subject : null, body, generated_by: generatedBy,
       status: autoApprove ? "approved" : "draft", scheduled_for: iso(slotMs),
+      ...(aiMeta ? { ai_meta: { ...aiMeta, timing: slot ? { hour: slot.hour, basis: slot.basis, opens: slot.opens } : null } } : {}),
       ...(autoApprove ? { approved_by: "auto", approved_at: new Date().toISOString() } : {}),
     });
     if (!error) {
@@ -404,6 +410,17 @@ export async function sendDue(db: SupabaseClient, opts: { limit?: number } = {})
       });
       const now = new Date().toISOString();
       await db.from("campaign_sends").update({ status: "sent", sent_at: now, activity_id: r.activityId, track_token: r.trackToken }).eq("id", s.id);
+      // Learning loop: an AI send is a "used" draft — with how much the rep
+      // changed it — so the weekly draft critic proposes style rules from
+      // real corrections (theme key = campaign:<id>).
+      if (s.generated_by === "ai") {
+        const original = s.original_body ?? s.body;
+        await db.from("draft_events").insert({
+          deal_id: s.deal_id, kind: "email", theme_key: `campaign:${s.campaign_id}`, direction: `step ${s.step_position + 1}`, rep: s.owner_email,
+          draft_body: String(original).slice(0, 4000), generated_at: s.created_at, used_at: s.approved_at ?? now,
+          sent_activity_id: r.activityId, sent_similarity: s.edited ? draftSimilarity(String(original), String(s.body)) : 1,
+        }).then(() => {}, () => {});
+      }
       // Advance the enrollment: next step's delay counts from this send.
       const { data: next } = await db.from("campaign_steps").select("delay_hours").eq("campaign_id", s.campaign_id).eq("position", s.step_position + 1).maybeSingle();
       await db

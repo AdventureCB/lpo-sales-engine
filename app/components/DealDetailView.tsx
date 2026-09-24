@@ -54,6 +54,7 @@ interface DealData {
   stages: { id: string; name: string; pipeline_id: string; crm_pipelines: { name: string } | null }[];
   sprints: { id: string; name: string; owner: string }[];
   dealSprintIds: string[];
+  campaignEnrollment?: { id: string; campaignId: string; name: string; mode: string; currentStep: number; nextStepAt: string | null; holdReason: string | null; enrolledAt: string } | null;
   sprintOwners: string[];
   existingOwner?: { name: string | null; orderName: string | null; orderAt: string | null; version: string | null } | null;
 }
@@ -230,7 +231,10 @@ export function DealDetailView({
   // Upcoming-activity inline editor
   const [editAct, setEditAct] = useState<{ id: string; subject: string; type: string; due: string; priority: boolean } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [modal, setModal] = useState<null | "note" | "schedule" | "sprint" | "lost" | "reopen" | "log" | "snooze">(null);
+  const [modal, setModal] = useState<null | "note" | "schedule" | "sprint" | "lost" | "reopen" | "log" | "snooze" | "campaign">(null);
+  const [campaignList, setCampaignList] = useState<{ id: string; name: string; mode: string }[] | null>(null);
+  const [campaignPick, setCampaignPick] = useState("");
+  const [campaignMsg, setCampaignMsg] = useState<string | null>(null);
   const [snoozeDate, setSnoozeDate] = useState("");
   const [logType, setLogType] = useState("call");
   const [logSubject, setLogSubject] = useState("");
@@ -861,6 +865,18 @@ export function DealDetailView({
               </button>
               <button
                 className="btn"
+                style={data.campaignEnrollment ? { color: "var(--accent)" } : undefined}
+                title={data.campaignEnrollment ? `In "${data.campaignEnrollment.name}"` : "Enroll this deal in a drip campaign"}
+                onClick={() => {
+                  setCampaignMsg(null);
+                  setModal("campaign");
+                  if (!campaignList) fetch("/api/campaigns").then((r) => (r.ok ? r.json() : null)).then((d) => setCampaignList(((d?.campaigns ?? []) as any[]).filter((c) => c.status === "active").map((c) => ({ id: c.id, name: c.name, mode: c.mode })))).catch(() => setCampaignList([]));
+                }}
+              >
+                📣 {data.campaignEnrollment ? `Campaign: ${data.campaignEnrollment.name}` : "Campaign"}
+              </button>
+              <button
+                className="btn"
                 style={(d as any).sprint_snooze_until && (d as any).sprint_snooze_until >= new Date().toISOString().slice(0, 10) ? { color: "var(--warn)" } : undefined}
                 title="Keep this deal off the daily sprint call lists until a date"
                 onClick={() => {
@@ -1350,6 +1366,67 @@ export function DealDetailView({
                   </button>
                   <button className="btn ghost" onClick={() => { setModal(null); setLostCat(null); setLostReason(""); setCompetitorName(""); }}>Cancel</button>
                 </div>
+              </div>
+            </ActionModal>
+          )}
+
+          {modal === "campaign" && (
+            <ActionModal title={data.campaignEnrollment ? "Drip campaign" : "Enroll in a campaign"} onClose={() => setModal(null)}>
+              <div style={{ display: "grid", gap: 8 }}>
+                {data.campaignEnrollment ? (
+                  <>
+                    <div style={{ fontSize: 14 }}>
+                      <b>{data.campaignEnrollment.name}</b> · {data.campaignEnrollment.mode === "ai" ? "AI-written" : "written"} · {data.campaignEnrollment.currentStep} step{data.campaignEnrollment.currentStep === 1 ? "" : "s"} sent
+                    </div>
+                    <div style={{ fontSize: 13, color: "var(--text-3)" }}>
+                      Enrolled {new Date(data.campaignEnrollment.enrolledAt).toLocaleDateString()}
+                      {data.campaignEnrollment.nextStepAt ? ` · next step ${new Date(data.campaignEnrollment.nextStepAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}
+                      {data.campaignEnrollment.holdReason ? ` · waiting: ${data.campaignEnrollment.holdReason}` : ""}
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        className="btn"
+                        style={{ color: "var(--crit)" }}
+                        disabled={saving}
+                        onClick={async () => {
+                          setSaving(true);
+                          const r = await fetch("/api/campaigns/enroll", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dealId: d.id, stop: true }) }).catch(() => null);
+                          setSaving(false);
+                          if (r?.ok) { setModal(null); await load(); } else setCampaignMsg("Couldn't stop the campaign.");
+                        }}
+                      >
+                        Stop campaign
+                      </button>
+                      <a href="/outbox" className="btn ghost">Open Outbox</a>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <select className="vmsel" value={campaignPick} onChange={(e) => setCampaignPick(e.target.value)}>
+                      <option value="">{campaignList === null ? "Loading…" : campaignList.length ? "Pick a campaign…" : "No active campaigns"}</option>
+                      {(campaignList ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}{c.mode === "ai" ? " (AI)" : ""}</option>)}
+                    </select>
+                    <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>Emails go out from the deal owner's Gmail. AI-written steps wait in the Outbox for approval; written steps send on schedule.</div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        className="btn primary"
+                        disabled={saving || !campaignPick}
+                        onClick={async () => {
+                          setSaving(true);
+                          const r = await fetch("/api/campaigns/enroll", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ campaignId: campaignPick, dealIds: [d.id] }) }).catch(() => null);
+                          const j = r ? await r.json().catch(() => ({})) : {};
+                          setSaving(false);
+                          if (r?.ok && j.enrolled === 1) { setModal(null); setCampaignPick(""); await load(); }
+                          else setCampaignMsg(j.error ?? j.results?.[0]?.reason ?? "Couldn't enroll this deal.");
+                        }}
+                      >
+                        Enroll
+                      </button>
+                      <button className="btn ghost" onClick={() => setModal(null)}>Cancel</button>
+                    </div>
+                  </>
+                )}
+                {campaignMsg && <div style={{ fontSize: 13, color: "var(--crit)" }}>{campaignMsg}</div>}
               </div>
             </ActionModal>
           )}

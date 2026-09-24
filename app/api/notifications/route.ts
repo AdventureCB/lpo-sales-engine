@@ -11,7 +11,7 @@ const OVERDUE_WINDOW_MS = 14 * 86_400_000; // don't resurface ancient tasks
 type NotifGroup = "deals" | "notes" | "comms" | "tasks";
 interface Notif {
   key: string; // stable id for dismissal
-  kind: "sms" | "whatsapp" | "missed_call" | "inbound_email" | "booking" | "overdue" | "intake" | "mention";
+  kind: "sms" | "whatsapp" | "missed_call" | "inbound_email" | "booking" | "overdue" | "intake" | "mention" | "outbox";
   group: NotifGroup;
   title: string;
   sub: string | null;
@@ -178,7 +178,25 @@ export async function GET(req: NextRequest) {
     for (const r of resolved ?? []) if (r.contact_name) nameByPhone.set(r.phone, r.contact_name);
   }
 
+  // Campaign emails waiting for approval (scoped like everything else).
+  let outboxQ = db.from("campaign_sends").select("id, created_at, campaigns ( name )").eq("status", "draft").order("created_at", { ascending: false }).limit(50);
+  if (t) outboxQ = outboxQ.eq("owner_email", t.email);
+  const { data: outboxRows } = await outboxQ;
+  const outboxItems: Notif[] = (outboxRows ?? []).length
+    ? [{
+        key: `outbox:${(outboxRows ?? [])[0].created_at}`,
+        kind: "outbox",
+        group: "tasks",
+        title: `📬 ${(outboxRows ?? []).length} campaign email${(outboxRows ?? []).length === 1 ? "" : "s"} awaiting approval`,
+        sub: [...new Set((outboxRows ?? []).map((r: any) => r.campaigns?.name).filter(Boolean))].slice(0, 3).join(" · ") || null,
+        at: (outboxRows ?? [])[0].created_at,
+        href: "/outbox",
+        isNew: (outboxRows ?? [])[0].created_at > seenAt,
+      }]
+    : [];
+
   const allItems: Notif[] = [
+    ...outboxItems,
     ...(sms ?? []).map((m): Notif => ({
       key: `sms:${m.id}`,
       kind: "sms",

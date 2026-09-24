@@ -82,6 +82,13 @@ export async function POST(req: NextRequest) {
 
   if (body.action === "skip" || body.action === "reject") {
     await db.from("campaign_sends").update({ status: body.action === "skip" ? "skipped" : "rejected", approved_by: user.email, approved_at: now }).eq("id", s.id);
+    if (body.action === "reject" && s.generated_by === "ai") {
+      // Learning signal: a rejected AI draft is a 👎 for the critic.
+      await db.from("draft_events").insert({
+        deal_id: s.deal_id, kind: "email", theme_key: `campaign:${s.campaign_id}`, direction: `step ${s.step_position + 1}`, rep: s.owner_email,
+        draft_body: String(s.body).slice(0, 4000), generated_at: s.created_at, thumbs: "down", thumbs_note: body.body?.trim() ? String(body.body).slice(0, 300) : "rejected in Outbox",
+      }).then(() => {}, () => {});
+    }
     if (body.action === "skip") {
       // Skip = move on to the next step without sending this one.
       const { data: next } = await db.from("campaign_steps").select("delay_hours").eq("campaign_id", s.campaign_id).eq("position", s.step_position + 1).maybeSingle();

@@ -31,10 +31,30 @@ export async function GET() {
     const s = (stats[e.campaign_id] = stats[e.campaign_id] ?? { active: 0, completed: 0, exited: 0 });
     if (e.status === "active") s.active++; else if (e.status === "completed") s.completed++; else s.exited++;
   }
+  // Per-step outcomes: sent / opened / clicked (email_tracking) / replied
+  // (enrollment exited "customer replied" after that step).
+  const { data: sends } = await db.from("campaign_sends").select("campaign_id, step_position, track_token, enrollment_id").eq("status", "sent").limit(5000);
+  const tokens = (sends ?? []).map((x: any) => x.track_token).filter(Boolean);
+  const tracked = new Map<string, { opened: boolean; clicked: boolean }>();
+  for (let i = 0; i < tokens.length; i += 500) {
+    const { data: tr } = await db.from("email_tracking").select("token, first_open_at, last_click_at").in("token", tokens.slice(i, i + 500));
+    for (const t of tr ?? []) tracked.set(t.token, { opened: !!t.first_open_at, clicked: !!t.last_click_at });
+  }
+  const { data: replied } = await db.from("campaign_enrollments").select("id, campaign_id, current_step").eq("exit_reason", "customer replied");
+  const repliedAfter = new Map((replied ?? []).map((e: any) => [e.id, e.current_step - 1]));
+  const stepStats: Record<string, Record<number, { sent: number; opened: number; clicked: number; replied: number }>> = {};
+  for (const x of (sends ?? []) as any[]) {
+    const st = ((stepStats[x.campaign_id] ??= {})[x.step_position] ??= { sent: 0, opened: 0, clicked: 0, replied: 0 });
+    st.sent++;
+    const t = x.track_token ? tracked.get(x.track_token) : null;
+    if (t?.opened) st.opened++;
+    if (t?.clicked) st.clicked++;
+    if (repliedAfter.get(x.enrollment_id) === x.step_position) st.replied++;
+  }
   return NextResponse.json({
     isAdmin,
     me: user.email,
-    campaigns: (camps ?? []).map((c: any) => ({ ...c, campaign_steps: [...(c.campaign_steps ?? [])].sort((a: any, b: any) => a.position - b.position), stats: stats[c.id] ?? { active: 0, completed: 0, exited: 0 } })),
+    campaigns: (camps ?? []).map((c: any) => ({ ...c, campaign_steps: [...(c.campaign_steps ?? [])].sort((a: any, b: any) => a.position - b.position), stats: stats[c.id] ?? { active: 0, completed: 0, exited: 0 }, stepStats: stepStats[c.id] ?? {} })),
     macros: macros ?? [],
     sources: (sources ?? []).map((s: any) => s.name),
     pipelines: (pipelines ?? []).map((p: any) => p.name),

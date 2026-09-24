@@ -14,6 +14,7 @@ interface Campaign {
   settings: { window_start?: number; window_end?: number; exit_on_reply?: boolean; stop_on_other_rep?: boolean; reenroll_after_days?: number };
   campaign_steps?: Step[];
   stats?: { active: number; completed: number; exited: number };
+  stepStats?: Record<string, { sent: number; opened: number; clicked: number; replied: number }>;
 }
 
 const blankStep = (): Step => ({ delay_hours: 48, content_kind: "inline", macro_id: null, subject: "", body: "", prompt: "", steering: "", conditions: {} });
@@ -230,6 +231,14 @@ export function CampaignsView() {
             <div style={{ fontSize: 12.5, color: "var(--text-2)", marginTop: 2 }}>
               {c.stats?.active ?? 0} active · {c.stats?.completed ?? 0} completed · {c.stats?.exited ?? 0} exited{c.owner_email ? ` · by ${c.owner_email.split("@")[0]}` : ""}
             </div>
+            {Object.keys(c.stepStats ?? {}).length > 0 && (
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 4, fontSize: 12, color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
+                {Object.entries(c.stepStats ?? {}).sort(([a], [b]) => Number(a) - Number(b)).map(([pos, st]) => {
+                  const pct = (n: number) => (st.sent ? `${Math.round((n / st.sent) * 100)}%` : "—");
+                  return <span key={pos} title={`${st.opened} opened · ${st.clicked} clicked · ${st.replied} replied`}>S{Number(pos) + 1}: {st.sent} sent · {pct(st.opened)} open · {pct(st.clicked)} click · {st.replied} repl{st.replied === 1 ? "y" : "ies"}</span>;
+                })}
+              </div>
+            )}
           </div>
           {(data.isAdmin || c.owner_email === data.me) && (
             <>
