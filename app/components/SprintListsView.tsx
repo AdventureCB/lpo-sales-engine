@@ -230,6 +230,36 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
     await loadLists();
   }
 
+  // Bulk snooze: off every call list until the date, system note per deal,
+  // dropped from this list now (same as the deal page's 😴 action).
+  const [snoozeOpen, setSnoozeOpen] = useState(false);
+  const [snoozeDate, setSnoozeDate] = useState("");
+  const [snoozeMsg, setSnoozeMsg] = useState<string | null>(null);
+  const laToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date());
+  const plusDays = (n: number) => {
+    const [y, m, d] = laToday().split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d + n));
+    return dt.toISOString().slice(0, 10);
+  };
+  async function bulkSnooze(until: string) {
+    if (!openId || selected.size === 0 || !until) return;
+    const n = selected.size;
+    const r = await fetch("/api/crm/sprint-lists", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ op: "snooze", sprintId: openId, dealIds: [...selected], until }),
+    });
+    const j = await r.json().catch(() => ({}));
+    setSnoozeOpen(false);
+    setSnoozeDate("");
+    if (!r.ok || j.error) { setSnoozeMsg(j.error ?? "Snooze failed"); setTimeout(() => setSnoozeMsg(null), 5000); return; }
+    setSelected(new Set());
+    setSnoozeMsg(`😴 ${n} deal${n === 1 ? "" : "s"} snoozed until ${until.slice(5).replace("-", "/")}`);
+    setTimeout(() => setSnoozeMsg(null), 5000);
+    await openList(openId);
+    await loadLists();
+  }
+
   const searchAdd = useCallback(async (q: string) => {
     if (!q.trim()) {
       setAddResults([]);
@@ -377,9 +407,32 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
                 <span style={{ fontSize: 13, color: "var(--text-2)" }}>{selected.size} selected</span>
                 <button className="btn" style={{ padding: "5px 10px", fontSize: 13 }} onClick={() => bulkOp("remove")}>✕ Remove selected</button>
                 <button className="btn ghost" style={{ padding: "5px 10px", fontSize: 13 }} onClick={() => bulkOp("restore")}>Restore</button>
+                <div style={{ position: "relative" }}>
+                  <button className={`btn ${snoozeOpen ? "primary" : "ghost"}`} style={{ padding: "5px 10px", fontSize: 13 }} onClick={() => setSnoozeOpen((v) => !v)} title="Keep these deals off every call list until a date">
+                    😴 Snooze…
+                  </button>
+                  {snoozeOpen && (
+                    <>
+                      <div style={{ position: "fixed", inset: 0, zIndex: 59 }} onClick={() => setSnoozeOpen(false)} />
+                      <div className="dropdown-menu" style={{ right: 0, width: 240, top: "calc(100% + 4px)", gap: 6, padding: 10 }}>
+                        <div style={{ fontSize: 12, color: "var(--text-3)" }}>Off all call lists until…</div>
+                        {[["1 week", 7], ["2 weeks", 14], ["1 month", 30], ["3 months", 90]].map(([label, days]) => (
+                          <button key={String(label)} className="btn ghost" style={{ padding: "5px 10px", fontSize: 13, justifyContent: "space-between" }} onClick={() => void bulkSnooze(plusDays(Number(days)))}>
+                            <span>{label}</span><span style={{ color: "var(--text-3)" }}>{plusDays(Number(days)).slice(5).replace("-", "/")}</span>
+                          </button>
+                        ))}
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", borderTop: "1px solid var(--border-soft)", paddingTop: 6 }}>
+                          <input type="date" className="vmsel" min={plusDays(1)} value={snoozeDate} onChange={(e) => setSnoozeDate(e.target.value)} style={{ flex: 1 }} />
+                          <button className="btn primary" style={{ padding: "5px 10px", fontSize: 13 }} disabled={!snoozeDate} onClick={() => void bulkSnooze(snoozeDate)}>Go</button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
                 <button className="btn ghost" style={{ padding: "5px 8px", fontSize: 13 }} onClick={() => setSelected(new Set())}>Clear</button>
               </div>
             )}
+            {snoozeMsg && <span style={{ fontSize: 13, color: snoozeMsg.startsWith("😴") ? "var(--good)" : "var(--crit)", flexBasis: "100%" }}>{snoozeMsg}</span>}
           </div>
 
           {/* Manual add */}

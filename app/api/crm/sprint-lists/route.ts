@@ -94,15 +94,16 @@ export async function GET(req: NextRequest) {
 }
 
 /**
- * Edit a list: remove/restore an item, add a deal, or archive the list.
- * POST { op: 'remove'|'restore'|'add'|'archive', sprintId, dealId? }
+ * Edit a list: remove/restore an item, add a deal, archive the list, or
+ * bulk-snooze deals off ALL call lists until a date.
+ * POST { op: 'remove'|'restore'|'add'|'archive'|'snooze', sprintId, dealId?, dealIds?, until? }
  */
 export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const db = supabaseAdmin();
 
-  let body: { op?: string; sprintId?: string; dealId?: string; dealIds?: string[] };
+  let body: { op?: string; sprintId?: string; dealId?: string; dealIds?: string[]; until?: string };
   try {
     body = await req.json();
   } catch {
@@ -133,6 +134,25 @@ export async function POST(req: NextRequest) {
   if (op === "restore") {
     await db.from("crm_sprint_items").update({ removed_at: null }).eq("sprint_id", sprintId).in("deal_id", targets);
     return NextResponse.json({ ok: true, count: targets.length });
+  }
+
+  // Bulk snooze (Kyle 9/24): same effect as the deal page's 😴 action, for
+  // every selected deal — excluded from list generation until `until`, a
+  // system note on each timeline, and dropped from this list right away.
+  if (op === "snooze") {
+    const until = body.until ?? "";
+    if (!targets.length) return NextResponse.json({ error: "dealIds required" }, { status: 400 });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(until)) return NextResponse.json({ error: "until must be YYYY-MM-DD" }, { status: 400 });
+    const todayLa = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date());
+    if (until <= todayLa) return NextResponse.json({ error: "Pick a date after today." }, { status: 400 });
+    const now = new Date().toISOString();
+    const { error } = await db.from("crm_deals").update({ sprint_snooze_until: until, updated_at: now }).in("id", targets);
+    if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+    await db.from("crm_activities").insert(
+      targets.map((id) => ({ deal_id: id, type: "system", subject: `😴 Snoozed from call lists until ${until}`, actor: user.email, meta: { bulk: true, sprint_id: sprintId } }))
+    );
+    await db.from("crm_sprint_items").update({ removed_at: now }).eq("sprint_id", sprintId).in("deal_id", targets);
+    return NextResponse.json({ ok: true, count: targets.length, until });
   }
 
   if (!dealId) return NextResponse.json({ error: "dealId required" }, { status: 400 });
