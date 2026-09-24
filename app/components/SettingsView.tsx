@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { VersionStamp } from "./VersionStamp";
+import { CompanionDownloadCard } from "./CompanionDownloadCard";
 
 /** Admin configuration: rep calling numbers + daily goals. */
 
@@ -91,6 +92,8 @@ export function PhoneGoalsAdmin() {
         <VersionStamp />
         {msg && <span style={{ color: "var(--text-2)" }}>{msg}</span>}
       </div>
+
+      <CompanionDownloadCard />
 
       <div className="card" style={{ maxWidth: 680, marginBottom: 18 }}>
         <div className="panel-h">Rep calling numbers</div>
