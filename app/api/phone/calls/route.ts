@@ -24,6 +24,12 @@ export async function GET(req: NextRequest) {
     .order("started_at", { ascending: false })
     .limit(limit);
   if (missedOnly) q = q.eq("direction", "incoming").is("answered_at", null);
+  // Admin: one rep's calls only (Kyle 9/29).
+  const repParam = user.role === "admin" ? (url.searchParams.get("rep") ?? "").trim().toLowerCase() : "";
+  if (repParam) {
+    const { data: rep } = await db.from("reps").select("id").eq("email", repParam).maybeSingle();
+    q = q.eq("rep_id", rep?.id ?? "00000000-0000-0000-0000-000000000000");
+  }
   const { data: calls, error } = await q;
   if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
 

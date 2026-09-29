@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useRoster } from "./useRoster";
 
 interface CallEntry {
   id: string;
@@ -49,17 +50,24 @@ const DISPO_LABEL: Record<string, string> = {
   confirmation: "📋 Confirmation call",
 };
 
-export function CallLogView() {
+export function CallLogView({ isAdmin = false }: { isAdmin?: boolean }) {
   const router = useRouter();
   const [calls, setCalls] = useState<CallEntry[] | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [error, setError] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
+  // Admin: one rep's calls (remembered per browser).
+  const roster = useRoster();
+  const [repSel, setRepSel] = useState<string>(() => { try { return sessionStorage.getItem("callLogRep") ?? ""; } catch { return ""; } });
+  const pickRep = (v: string) => { setRepSel(v); setCalls(null); try { sessionStorage.setItem("callLogRep", v); } catch {} };
 
   useEffect(() => {
     let live = true;
     const load = () => {
-      const qs = filter === "missed" ? "?missed=1" : "";
+      const params = new URLSearchParams();
+      if (filter === "missed") params.set("missed", "1");
+      if (isAdmin && repSel) params.set("rep", repSel);
+      const qs = params.toString() ? `?${params}` : "";
       fetch(`/api/phone/calls${qs}`)
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
         .then((d) => live && setCalls(d.calls))
@@ -71,7 +79,7 @@ export function CallLogView() {
       live = false;
       clearInterval(iv);
     };
-  }, [filter]);
+  }, [filter, repSel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shown = (calls ?? []).filter((c) => {
     if (filter === "incoming") return c.direction === "incoming";
@@ -85,10 +93,18 @@ export function CallLogView() {
   return (
     <>
       <h2 className="viewtitle">Call log</h2>
-      <div className="viewsub">
-        Every call across the team — both directions, all lines.
-        {filter === "all" && missedCount > 0 && (
-          <b style={{ color: "var(--crit)" }}> · {missedCount} missed recently</b>
+      <div className="viewsub" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <span>
+          {isAdmin && repSel ? `${roster.active.find((r) => r.email === repSel)?.name ?? repSel}'s calls — both directions.` : "Every call across the team — both directions, all lines."}
+          {filter === "all" && missedCount > 0 && (
+            <b style={{ color: "var(--crit)" }}> · {missedCount} missed recently</b>
+          )}
+        </span>
+        {isAdmin && (
+          <select className="vmsel" style={{ width: "auto", padding: "3px 8px", fontSize: 13 }} value={repSel} onChange={(e) => pickRep(e.target.value)} title="Show one rep's calls">
+            <option value="">All reps</option>
+            {roster.active.filter((r) => r.email).map((r) => <option key={r.id} value={r.email!}>{r.name}</option>)}
+          </select>
         )}
       </div>
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { openChat } from "./chatDockStore";
+import { useRoster } from "./useRoster";
 
 interface Thread {
   phone: string;
@@ -35,9 +36,13 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
   const [newNum, setNewNum] = useState("");
   const [showNew, setShowNew] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
+  // Admin: narrow to one rep's lines (remembered per browser).
+  const roster = useRoster();
+  const [repSel, setRepSel] = useState<string>(() => { try { return sessionStorage.getItem("textsRep") ?? ""; } catch { return ""; } });
+  const pickRep = (v: string) => { setRepSel(v); setThreads(null); try { sessionStorage.setItem("textsRep", v); } catch {} };
 
   const loadThreads = () =>
-    fetch("/api/texts")
+    fetch(`/api/texts${isAdmin && repSel ? `?rep=${encodeURIComponent(repSel)}` : ""}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => d && setThreads(d.threads));
 
@@ -45,7 +50,7 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
     void loadThreads();
     const iv = setInterval(loadThreads, 20_000);
     return () => clearInterval(iv);
-  }, []);
+  }, [repSel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openThread = (t: Thread) => {
     openChat({ phone: t.phone, name: t.contactName, dealId: t.crmDealId });
@@ -88,6 +93,12 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
       <h2 className="viewtitle">Text</h2>
       <div className="viewsub" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         Click a conversation to open it at the bottom of the page — minimize it to a tab, or pop it out (⧉) to its own window.
+        {isAdmin && (
+          <select className="vmsel" style={{ width: "auto", padding: "3px 8px", fontSize: 13 }} value={repSel} onChange={(e) => pickRep(e.target.value)} title="Show one rep's conversations">
+            <option value="">All reps</option>
+            {roster.active.filter((r) => r.email).map((r) => <option key={r.id} value={r.email!}>{r.name}</option>)}
+          </select>
+        )}
         {isAdmin && (
           <button className="btn ghost" style={{ padding: "3px 10px", fontSize: 13 }} onClick={runBackfill} disabled={backfilling}>
             {backfilling ? "Importing…" : "⤓ Import Quo history"}

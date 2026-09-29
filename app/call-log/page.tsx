@@ -10,7 +10,7 @@ export default async function CallLogPage() {
   if (!user) redirect("/login");
   return (
     <AppShell active="/call-log" user={{ name: user.repName ?? user.email, role: user.role }}>
-      <CallLogView />
+      <CallLogView isAdmin={user.role === "admin"} />
     </AppShell>
   );
 }

@@ -5,21 +5,21 @@ import { getSessionUser } from "@/lib/auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Thread list: one row per counterparty, newest first, contact-resolved. */
-export async function GET() {
+/** Thread list: one row per counterparty, newest first, contact-resolved.
+ *  Admins see everything, or one rep's lines with ?rep=<email> (Kyle 9/29). */
+export async function GET(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const db = supabaseAdmin();
-  // Reps see only conversations on their own line(s); admins see everything.
+  // Reps see only conversations on their own line(s); admins see everything
+  // unless they pick a rep.
   let ourNumbers: string[] | null = null;
-  if (user.role !== "admin") {
-    if (!user.repId) return NextResponse.json({ threads: [] });
-    const { data: rep } = await db
-      .from("reps")
-      .select("telnyx_number, quo_phone_number")
-      .eq("id", user.repId)
-      .maybeSingle();
+  const repParam = user.role === "admin" ? (new URL(req.url).searchParams.get("rep") ?? "").trim().toLowerCase() : "";
+  if (user.role !== "admin" || repParam) {
+    let q = db.from("reps").select("telnyx_number, quo_phone_number");
+    q = repParam ? q.eq("email", repParam) : q.eq("id", user.repId ?? "00000000-0000-0000-0000-000000000000");
+    const { data: rep } = await q.maybeSingle();
     ourNumbers = [rep?.telnyx_number, rep?.quo_phone_number].filter(Boolean) as string[];
     if (ourNumbers.length === 0) return NextResponse.json({ threads: [] });
   }
