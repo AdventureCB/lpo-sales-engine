@@ -92,6 +92,124 @@ fn attach_to_tool_tab_group(app: &tauri::AppHandle, w: &tauri::WebviewWindow, ow
     }
 }
 
+
+/// Real Safari UA: these are WebKit windows, but sites sniff the default wry
+/// UA string and throw "unsupported browser" banners (Gmail/ClickUp 9/9);
+/// Google can even hard-block sign-in.
+const SAFARI_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15";
+
+/// Floating bar injected into every tool window (and every popup): current
+/// URL (editable — Enter navigates, or searches Google), Copy, back/forward,
+/// collapse. Survives navigation because it's an initialization script.
+/// Skips our own app pages, which have their own chrome.
+const TOOL_BAR: &str = r#"(function(){
+  if (window.top !== window || window.__lpoNavBar) return; window.__lpoNavBar = true;
+  if (/lpo-sales-engine\.vercel\.app$/.test(location.host)) return;
+  var mk = function(){
+    if (!document.body) { setTimeout(mk, 50); return; }
+    var bar = document.createElement('div');
+    bar.style.cssText = 'position:fixed;top:10px;right:10px;z-index:2147483647;display:flex;gap:4px;align-items:center;background:rgba(20,22,26,.94);border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:5px 7px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 4px 20px rgba(0,0,0,.4)';
+    var btn = function(txt, fn, title){
+      var b = document.createElement('button'); b.textContent = txt; b.title = title;
+      b.style.cssText = 'all:unset;cursor:pointer;color:#e7e9ec;font-size:14px;line-height:1;padding:3px 8px;border-radius:6px;white-space:nowrap';
+      b.onmouseenter = function(){ b.style.background = 'rgba(255,255,255,.12)'; };
+      b.onmouseleave = function(){ b.style.background = 'transparent'; };
+      b.onclick = fn; return b;
+    };
+    bar.appendChild(btn('←', function(){ history.back(); }, 'Back'));
+    bar.appendChild(btn('→', function(){ history.forward(); }, 'Forward'));
+    var inp = document.createElement('input');
+    inp.value = location.href; inp.title = 'Current page — click to select, Enter to go';
+    inp.style.cssText = 'background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.14);color:#e7e9ec;border-radius:7px;padding:4px 10px;font-size:12.5px;width:300px;outline:none;text-overflow:ellipsis';
+    inp.addEventListener('focus', function(){ setTimeout(function(){ inp.select(); }, 0); });
+    inp.addEventListener('keydown', function(e){
+      e.stopPropagation();
+      if (e.key === 'Escape') { inp.value = location.href; inp.blur(); return; }
+      if (e.key !== 'Enter') return;
+      var v = inp.value.trim(); if (!v) return;
+      var hasScheme = /^[a-z]+:\/\//i.test(v);
+      var urlish = hasScheme || (/^[\w.-]+\.[a-z]{2,}(\/|$|\?)/i.test(v) && v.indexOf(' ') === -1);
+      location.href = urlish ? (hasScheme ? v : 'https://' + v) : 'https://www.google.com/search?q=' + encodeURIComponent(v);
+    }, true);
+    bar.appendChild(inp);
+    var copy = btn('⧉', function(){
+      var url = location.href;
+      var done = function(){ copy.textContent = '✓'; setTimeout(function(){ copy.textContent = '⧉'; }, 1200); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, function(){ inp.focus(); inp.select(); document.execCommand('copy'); done(); });
+      else { inp.focus(); inp.select(); document.execCommand('copy'); done(); }
+    }, 'Copy page URL');
+    bar.appendChild(copy);
+    var collapsed = false;
+    bar.appendChild(btn('–', function(){ collapsed = !collapsed; inp.style.display = collapsed ? 'none' : ''; copy.style.display = collapsed ? 'none' : ''; }, 'Collapse'));
+    document.body.appendChild(bar);
+    // Keep the URL current across in-page navigation (SPAs, pushState).
+    var last = location.href;
+    setInterval(function(){ if (location.href !== last) { last = location.href; if (document.activeElement !== inp) inp.value = last; } }, 500);
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mk); else mk();
+})();"#;
+
+/// Size a new tool window to the screen: the defaults on a laptop display
+/// used to overflow the bottom edge.
+fn fit_to_screen(app: &tauri::AppHandle, want_w: f64, want_h: f64) -> (f64, f64) {
+    if let Ok(Some(m)) = app.primary_monitor() {
+        let scale = m.scale_factor();
+        let size = m.size();
+        let sw = size.width as f64 / scale;
+        let sh = size.height as f64 / scale;
+        return (want_w.min((sw - 60.0).max(700.0)), want_h.min((sh - 110.0).max(500.0)));
+    }
+    (want_w, want_h)
+}
+
+/// Nudge the window size after creation so the webview relays out under a
+/// freshly added native tab bar (otherwise the last ~28px of page are hidden).
+fn relayout_soon(w: tauri::WebviewWindow) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        if let Ok(s) = w.inner_size() {
+            let _ = w.set_size(tauri::PhysicalSize::new(s.width, s.height + 2));
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            let _ = w.set_size(s);
+        }
+    });
+}
+
+static POPUP_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// window.open / target=_blank from a tool page → a real, interactive window
+/// that shares the opener's WebKit configuration (same cookies + process),
+/// with the tool bar injected. Falls back to the platform default if the
+/// build fails. Popups of popups use the platform default.
+fn popup_handler(app: tauri::AppHandle) -> impl Fn(tauri::Url, tauri::webview::NewWindowFeatures) -> tauri::webview::NewWindowResponse<tauri::Wry> + Send + 'static {
+    move |url, features| {
+        let n = POPUP_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let label = format!("popup-{n}");
+        let (dw, dh) = fit_to_screen(&app, 1000.0, 760.0);
+        let (w, h) = match features.size() {
+            Some(sz) if sz.width >= 320.0 && sz.height >= 240.0 => (sz.width.min(dw), sz.height.min(dh)),
+            _ => (dw, dh),
+        };
+        let mut b = tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::External(url))
+            .title("LPO")
+            .initialization_script(TOOL_BAR)
+            .user_agent(SAFARI_UA)
+            .inner_size(w, h)
+            .on_new_window(|_u, _f| tauri::webview::NewWindowResponse::Allow);
+        #[cfg(target_os = "macos")]
+        {
+            b = b.with_webview_configuration(features.opener().target_configuration.clone());
+        }
+        match b.build() {
+            Ok(win) => tauri::webview::NewWindowResponse::Create { window: win },
+            Err(e) => {
+                eprintln!("popup build failed: {e}");
+                tauri::webview::NewWindowResponse::Allow
+            }
+        }
+    }
+}
+
 /// Open (or focus) a native window on an EXTERNAL tool (Gorgias, Shopify,
 /// ClickUp, Calendly, a plain browser tab…). A top-level webview ignores
 /// X-Frame-Options — the reason these can't be iframed in the app — and the
@@ -113,60 +231,18 @@ fn open_tool_window(app: tauri::AppHandle, url: String, label: String, title: St
     }
     let app2 = app.clone();
     app.run_on_main_thread(move || {
-        // Browser tool only: persistent floating nav (back/forward/search) —
-        // injected natively into every page the window loads, so it survives
-        // navigation to external sites (Kyle 9/10). Skips our own start page,
-        // which has its own search UI.
-        const BROWSER_NAV: &str = r#"(function(){
-  if (window.top !== window || window.__lpoNavBar) return; window.__lpoNavBar = true;
-  if (/lpo-sales-engine\.vercel\.app$/.test(location.host)) return;
-  var mk = function(){
-    if (!document.body) { setTimeout(mk, 50); return; }
-    var bar = document.createElement('div');
-    bar.style.cssText = 'position:fixed;top:10px;right:10px;z-index:2147483647;display:flex;gap:4px;align-items:center;background:rgba(20,22,26,.94);border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:5px 7px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 4px 20px rgba(0,0,0,.4)';
-    var btn = function(txt, fn, title){
-      var b = document.createElement('button'); b.textContent = txt; b.title = title;
-      b.style.cssText = 'all:unset;cursor:pointer;color:#e7e9ec;font-size:15px;line-height:1;padding:3px 8px;border-radius:6px';
-      b.onmouseenter = function(){ b.style.background = 'rgba(255,255,255,.12)'; };
-      b.onmouseleave = function(){ b.style.background = 'transparent'; };
-      b.onclick = fn; return b;
-    };
-    bar.appendChild(btn('←', function(){ history.back(); }, 'Back'));
-    bar.appendChild(btn('→', function(){ history.forward(); }, 'Forward'));
-    var inp = document.createElement('input');
-    inp.placeholder = 'Search or URL…';
-    inp.style.cssText = 'background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.14);color:#e7e9ec;border-radius:7px;padding:4px 10px;font-size:13px;width:200px;outline:none';
-    inp.addEventListener('keydown', function(e){
-      e.stopPropagation();
-      if (e.key !== 'Enter') return;
-      var v = inp.value.trim(); if (!v) return;
-      var hasScheme = /^[a-z]+:\/\//i.test(v);
-      var urlish = hasScheme || (/^[\w.-]+\.[a-z]{2,}(\/|$|\?)/i.test(v) && v.indexOf(' ') === -1);
-      location.href = urlish ? (hasScheme ? v : 'https://' + v) : 'https://www.google.com/search?q=' + encodeURIComponent(v);
-    }, true);
-    bar.appendChild(inp);
-    bar.appendChild(btn('–', function(){ inp.style.display = inp.style.display === 'none' ? '' : 'none'; }, 'Collapse'));
-    document.body.appendChild(bar);
-  };
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mk); else mk();
-})();"#;
-
+        let (w_px, h_px) = fit_to_screen(&app2, 1240.0, 860.0);
         let mut builder = tauri::WebviewWindowBuilder::new(&app2, &safe, tauri::WebviewUrl::External(parsed))
-            .title(&title);
-        if clean == "browser" {
-            builder = builder.initialization_script(BROWSER_NAV);
-        }
-        builder = builder
-            // Real Safari UA: these are WebKit windows, but sites sniff the
-            // default wry UA string and throw "unsupported browser" banners
-            // (Gmail/ClickUp 9/9); Google can even hard-block sign-in.
-            .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15")
-            .inner_size(1240.0, 860.0)
-            // Allow window.open / target=_blank popups. Without a handler
-            // Tauri DENIES them, so tool buttons that open a doc/payment/OAuth
-            // popup did nothing (Ops + others, Kyle 9/15). Allow = open with
-            // the default implementation (real interactive window).
-            .on_new_window(|_url, _features| tauri::webview::NewWindowResponse::Allow);
+            .title(&title)
+            // Every tool window gets the floating bar (URL + copy + back/forward);
+            // it skips our own origin, which has its own chrome.
+            .initialization_script(TOOL_BAR)
+            .user_agent(SAFARI_UA)
+            .inner_size(w_px, h_px)
+            // window.open / target=_blank → a REAL window that shares this
+            // webview's configuration (cookies, process). "Allow" alone
+            // rendered nothing on macOS (Kyle 9/29: "buttons don't work").
+            .on_new_window(popup_handler(app2.clone()));
         // macOS native window tabbing: same identifier → windows merge into
         // ONE tabbed window (Kyle 9/9: main app + Ops + one tools window =
         // max 3). Ops passes no group and stays standalone.
@@ -188,6 +264,10 @@ fn open_tool_window(app: tauri::AppHandle, url: String, label: String, title: St
                 }
                 #[cfg(not(target_os = "macos"))]
                 let _ = grouped;
+                // Joining a tab group adds a tab bar the webview frame doesn't
+                // account for — the bottom of the page was clipped (Kyle 9/29).
+                // A size nudge forces a relayout.
+                relayout_soon(w.clone());
                 let app3 = app2.clone();
                 let lbl = clean.clone();
                 // Focus telemetry: the main window's web app turns these into
