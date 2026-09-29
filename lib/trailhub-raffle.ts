@@ -139,7 +139,13 @@ export async function runTrailhubRaffle(db: SupabaseClient, source: IntakeSource
         const { data: d } = await db.from("crm_deals").select("id").eq("contact_id", contact.id).order("updated_at", { ascending: false }).limit(1).maybeSingle();
         dealId = d?.id ?? null;
       }
-      const { data: deal } = dealId ? await db.from("crm_deals").select("owner_email").eq("id", dealId).maybeSingle() : { data: null };
+      // Owner for the ⭐ task: intake-created deals carry owner_pipedrive_id, not owner_email.
+      const { data: deal } = dealId ? await db.from("crm_deals").select("owner_email, owner_pipedrive_id").eq("id", dealId).maybeSingle() : { data: null };
+      let ownerEmail: string | null = deal?.owner_email ?? null;
+      if (!ownerEmail && deal?.owner_pipedrive_id != null) {
+        const { data: rep } = await db.from("reps").select("email").eq("pipedrive_user_id", deal.owner_pipedrive_id).maybeSingle();
+        ownerEmail = rep?.email ?? null;
+      }
       const now = new Date().toISOString();
       await db.from("crm_activities").insert({
         deal_id: dealId,
@@ -154,7 +160,7 @@ export async function runTrailhubRaffle(db: SupabaseClient, source: IntakeSource
           r.contact_opt_in ? null : `⚠️ No sales-contact consent — contact only about the prize.`,
           `${TRAILHUB_PUBLIC}/win/${r.event_slug}`,
         ].filter(Boolean).join("\n"),
-        actor: deal?.owner_email ?? "intake",
+        actor: ownerEmail ?? "intake",
         due_at: now,
         occurred_at: now,
         meta: { priority: true, trailhub_entry_id: r.entry_id, trailhub_win: true },
