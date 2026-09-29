@@ -83,9 +83,12 @@ export async function runTrailhubRaffle(db: SupabaseClient, source: IntakeSource
   };
 
   const ingest = async (r: Lead) => {
+    // Test drawings and our own staff never become leads.
+    if (/\btest\b/i.test(r.event_name ?? "")) return { action: "skipped" as const, dealId: null, detail: "test event" };
+    const { email, phone, name } = identity(r);
+    if (email && /@lonepeakoverland\.com$/i.test(email)) return { action: "skipped" as const, dealId: null, detail: "internal entrant" };
     const consent = r.contact_opt_in === true;
     if (!consent && !r.is_winner) return { action: "skipped" as const, dealId: null, detail: "no consent" };
-    const { email, phone, name } = identity(r);
     const note = [
       `Entered the "${r.event_name}" drawing on ${fmtDate(r.entered_at)}${r.handle ? ` as @${r.handle}` : ""}.`,
       `Prize: ${usd(r.event_discount_cents)} off${r.event_min_purchase_cents ? ` (min. purchase ${usd(r.event_min_purchase_cents)})` : ""}.`,
@@ -119,7 +122,8 @@ export async function runTrailhubRaffle(db: SupabaseClient, source: IntakeSource
 
     // B) Winner flip → one ⭐ task (idempotent via intake_events "win:<entry>").
     const wonAt = iso(r.won_at);
-    if (r.is_winner && wonAt && wonAt > since) {
+    const testOrInternal = /\btest\b/i.test(r.event_name ?? "") || /@lonepeakoverland\.com$/i.test(identity(r).email ?? "");
+    if (r.is_winner && wonAt && wonAt > since && !testOrInternal) {
       const winKey = `win:${r.entry_id}`;
       const { data: seen } = await db.from("intake_events").select("id").eq("source_id", source.id).eq("external_id", winKey).limit(1).maybeSingle();
       if (seen) { advance(r.updated_at); continue; }
