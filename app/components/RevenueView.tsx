@@ -1,0 +1,504 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+/**
+ * Admin revenue analytics: net revenue (never shipping or tax) for any
+ * period vs any comparison period, with collections toggled in/out, orders
+ * over a threshold deduped by customer, and revenue given away to discounts.
+ * Data = the local Shopify order mirror (shop_orders / shop_order_lines).
+ */
+
+interface Series { bucket: string; gross: number; discounts: number; returns: number; net: number; orders: number }
+interface BigCustomer { ckey: string; customer_name: string | null; email: string | null; orders: number; net: number; first_at: string; last_at: string; order_names: string[] }
+interface Report {
+  totals: { gross: number; discounts: number; returns: number; net: number; orders: number; units: number };
+  big: { orders: number; customers: number; list: BigCustomer[] };
+  series: Series[];
+  discounts: { label: string; cents: number; orders: number }[];
+}
+interface Collection { id: number; title: string; handle: string | null; products_count: number | null; rule_based: boolean }
+interface Payload {
+  a: Report | null;
+  b: Report | null;
+  bucket: string;
+  threshold: number;
+  collections: Collection[];
+  selected: number[];
+  unmatched: boolean;
+  sync: {
+    orders: number;
+    oldestOrderAt: string | null;
+    done?: boolean;
+    lastFullAt?: string;
+    lastIncrementalAt?: string;
+    catalogAt?: string;
+    catalogError?: string | null;
+    ordersScanned?: number;
+    configured: boolean;
+  };
+}
+
+type Compare = "yoy" | "prior" | "custom";
+type Bucket = "day" | "week" | "month";
+const LS_KEY = "rev_prefs_v1";
+
+const usd = (c: number | null | undefined, opts: { compact?: boolean } = {}) => {
+  if (c == null) return "—";
+  const v = c / 100;
+  if (opts.compact && Math.abs(v) >= 100000) return `$${(v / 1000).toFixed(0)}k`;
+  return v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+};
+const pad = (n: number) => String(n).padStart(2, "0");
+const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const parse = (s: string) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+const addDays = (s: string, n: number) => { const d = parse(s); d.setDate(d.getDate() + n); return ymd(d); };
+const addYears = (s: string, n: number) => { const d = parse(s); d.setFullYear(d.getFullYear() + n); return ymd(d); };
+const dayCount = (a: string, b: string) => Math.round((parse(b).getTime() - parse(a).getTime()) / 86_400_000) + 1;
+const fmtDate = (s: string) => parse(s.slice(0, 10)).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+const fmtBucket = (s: string, bucket: Bucket) => {
+  const d = parse(s.slice(0, 10));
+  if (bucket === "month") return d.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+};
+
+function presets(today: Date) {
+  const t = ymd(today);
+  const startOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1);
+  const six = startOfMonth(new Date(today.getFullYear(), today.getMonth() - 5, 1));
+  const twelve = startOfMonth(new Date(today.getFullYear(), today.getMonth() - 11, 1));
+  return [
+    { key: "6m", label: "Last 6 months vs same period last year", from: ymd(six), to: t, compare: "yoy" as Compare, bucket: "month" as Bucket },
+    { key: "12m", label: "Last 12 months vs prior 12", from: ymd(twelve), to: t, compare: "prior" as Compare, bucket: "month" as Bucket },
+    { key: "ytd", label: "Year to date vs last year", from: `${today.getFullYear()}-01-01`, to: t, compare: "yoy" as Compare, bucket: "month" as Bucket },
+    { key: "mtd", label: "Month to date vs last year", from: ymd(startOfMonth(today)), to: t, compare: "yoy" as Compare, bucket: "day" as Bucket },
+    { key: "30d", label: "Last 30 days vs prior 30", from: addDays(t, -29), to: t, compare: "prior" as Compare, bucket: "day" as Bucket },
+    { key: "90d", label: "Last 90 days vs prior 90", from: addDays(t, -89), to: t, compare: "prior" as Compare, bucket: "week" as Bucket },
+  ];
+}
+
+function derivedCompare(from: string, to: string, mode: Compare): [string, string] {
+  if (mode === "yoy") return [addYears(from, -1), addYears(to, -1)];
+  const n = dayCount(from, to);
+  return [addDays(from, -n), addDays(to, -n)];
+}
+
+export function RevenueView() {
+  const today = useMemo(() => new Date(), []);
+  const PRESETS = useMemo(() => presets(today), [today]);
+  const [from, setFrom] = useState(PRESETS[0].from);
+  const [to, setTo] = useState(PRESETS[0].to);
+  const [compare, setCompare] = useState<Compare>("yoy");
+  const [cfrom, setCfrom] = useState(() => derivedCompare(PRESETS[0].from, PRESETS[0].to, "yoy")[0]);
+  const [cto, setCto] = useState(() => derivedCompare(PRESETS[0].from, PRESETS[0].to, "yoy")[1]);
+  const [bucket, setBucket] = useState<Bucket>("month");
+  const [thresholdUsd, setThresholdUsd] = useState(5000);
+  const [selected, setSelected] = useState<number[] | "all">("all");
+  const [unmatched, setUnmatched] = useState(true);
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
+  const [data, setData] = useState<Payload | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState<string | null>(null);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [showBig, setShowBig] = useState<"a" | "b">("a");
+  const [showCollections, setShowCollections] = useState(false);
+
+  // Per-viewer preferences (collections + threshold) survive reloads.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) {
+        const p = JSON.parse(raw);
+        if (Array.isArray(p.selected)) setSelected(p.selected);
+        if (typeof p.unmatched === "boolean") setUnmatched(p.unmatched);
+        if (typeof p.thresholdUsd === "number") setThresholdUsd(p.thresholdUsd);
+      }
+    } catch {}
+    setPrefsLoaded(true);
+  }, []);
+  useEffect(() => {
+    if (!prefsLoaded) return;
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ selected, unmatched, thresholdUsd })); } catch {}
+  }, [selected, unmatched, thresholdUsd, prefsLoaded]);
+
+  useEffect(() => {
+    if (compare === "custom") return;
+    const [f, t] = derivedCompare(from, to, compare);
+    setCfrom(f);
+    setCto(t);
+  }, [from, to, compare]);
+
+  const load = useCallback(async () => {
+    if (!prefsLoaded) return;
+    setLoading(true);
+    setError(null);
+    const q = new URLSearchParams({ from, to, cfrom, cto, bucket, threshold: String(Math.round(thresholdUsd * 100)), unmatched: unmatched ? "1" : "0" });
+    if (selected !== "all") q.set("collections", selected.join(","));
+    try {
+      const r = await fetch(`/api/admin/revenue?${q}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error ?? r.statusText);
+      setData(j);
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setLoading(false);
+    }
+  }, [from, to, cfrom, cto, bucket, thresholdUsd, unmatched, selected, prefsLoaded]);
+
+  useEffect(() => { const h = setTimeout(load, 250); return () => clearTimeout(h); }, [load]);
+
+  const applyPreset = (p: (typeof PRESETS)[number]) => {
+    setFrom(p.from); setTo(p.to); setCompare(p.compare); setBucket(p.bucket);
+  };
+
+  const runSync = async (what: "incremental" | "full" | "catalog") => {
+    setSyncing(what);
+    setSyncMsg(null);
+    try {
+      const r = await fetch(`/api/admin/revenue?what=${what}`, { method: "POST" });
+      const j = await r.json();
+      if (!r.ok || j.ok === false) throw new Error(j.error ?? r.statusText);
+      setSyncMsg(
+        what === "catalog"
+          ? `Catalog synced: ${j.collections} collections, ${j.products} products.`
+          : `${j.scanned} orders updated${j.done === false ? " — backfill still in progress, run again to continue" : ""}.`
+      );
+      await load();
+    } catch (e: any) {
+      setSyncMsg(`Sync failed: ${String(e?.message ?? e)}`);
+    } finally {
+      setSyncing(null);
+    }
+  };
+
+  const cols = data?.collections ?? [];
+  const selectedSet = useMemo(() => new Set(selected === "all" ? cols.map((c) => c.id) : selected), [selected, cols]);
+  const toggleCol = (id: number) => {
+    const next = new Set(selectedSet);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setSelected(next.size === cols.length ? "all" : Array.from(next));
+  };
+
+  const a = data?.a ?? null;
+  const b = data?.b ?? null;
+  const delta = (x: number | undefined, y: number | undefined) => {
+    if (x == null || y == null) return null;
+    if (y === 0) return x === 0 ? 0 : null;
+    return ((x - y) / Math.abs(y)) * 100;
+  };
+  const DeltaTag = ({ x, y, invert }: { x?: number; y?: number; invert?: boolean }) => {
+    const d = delta(x, y);
+    if (d == null) return <span style={{ color: "var(--text-3)" }}>vs {y == null ? "—" : "0"}</span>;
+    const good = invert ? d <= 0 : d >= 0;
+    return (
+      <span style={{ color: good ? "var(--good)" : "var(--crit)", fontWeight: 700 }}>
+        {d >= 0 ? "▲" : "▼"} {Math.abs(d).toFixed(1)}%
+      </span>
+    );
+  };
+  const aov = (r: Report | null) => (r && r.totals.orders > 0 ? Math.round(r.totals.net / r.totals.orders) : null);
+  const discountRate = (r: Report | null) => (r && r.totals.gross > 0 ? (r.totals.discounts / r.totals.gross) * 100 : null);
+
+  const tile = (label: string, va: string, vb: string, d: React.ReactNode, sub?: string) => (
+    <div className="stat-tile">
+      <div className="n">{va}</div>
+      <div className="l">{label}</div>
+      <div className="d">{d} · prior {vb}{sub ? ` · ${sub}` : ""}</div>
+    </div>
+  );
+
+  const bigList = (showBig === "a" ? a : b)?.big.list ?? [];
+  const periodLabel = (f: string, t: string) => `${fmtDate(f)} – ${fmtDate(t)}`;
+  const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text-1)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 9px", fontSize: 13, fontVariantNumeric: "tabular-nums" };
+
+  return (
+    <div>
+      <h1 className="viewtitle">💵 Revenue</h1>
+      <p className="viewsub">Net revenue from Shopify orders — line items after discounts and refunds. Shipping and sales tax are never included. Cancelled, voided and test orders are out.</p>
+
+      <div className="card" style={{ padding: "14px 18px", marginTop: 8 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+          {PRESETS.map((p) => {
+            const active = p.from === from && p.to === to && p.compare === compare;
+            return (
+              <button key={p.key} className={`btn ${active ? "primary" : "ghost"}`} style={{ padding: "4px 10px", fontSize: 12.5 }} onClick={() => applyPreset(p)}>
+                {p.label}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 18, alignItems: "flex-end" }}>
+          <label style={{ display: "grid", gap: 4, fontSize: 12, color: "var(--text-3)" }}>
+            Period
+            <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input type="date" value={from} max={to} onChange={(e) => e.target.value && setFrom(e.target.value)} style={inputStyle} />
+              <span>→</span>
+              <input type="date" value={to} min={from} onChange={(e) => e.target.value && setTo(e.target.value)} style={inputStyle} />
+            </span>
+          </label>
+          <label style={{ display: "grid", gap: 4, fontSize: 12, color: "var(--text-3)" }}>
+            Compare to
+            <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <select value={compare} onChange={(e) => setCompare(e.target.value as Compare)} style={inputStyle}>
+                <option value="yoy">Same period last year</option>
+                <option value="prior">Prior period</option>
+                <option value="custom">Custom</option>
+              </select>
+              <input type="date" value={cfrom} max={cto} disabled={compare !== "custom"} onChange={(e) => e.target.value && setCfrom(e.target.value)} style={{ ...inputStyle, opacity: compare === "custom" ? 1 : 0.6 }} />
+              <span>→</span>
+              <input type="date" value={cto} min={cfrom} disabled={compare !== "custom"} onChange={(e) => e.target.value && setCto(e.target.value)} style={{ ...inputStyle, opacity: compare === "custom" ? 1 : 0.6 }} />
+            </span>
+          </label>
+          <label style={{ display: "grid", gap: 4, fontSize: 12, color: "var(--text-3)" }}>
+            Group by
+            <select value={bucket} onChange={(e) => setBucket(e.target.value as Bucket)} style={inputStyle}>
+              <option value="day">Day</option>
+              <option value="week">Week</option>
+              <option value="month">Month</option>
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 4, fontSize: 12, color: "var(--text-3)" }}>
+            Big-order threshold ($)
+            <input type="number" min={0} step={500} value={thresholdUsd} onChange={(e) => setThresholdUsd(Math.max(0, Number(e.target.value) || 0))} style={{ ...inputStyle, width: 110 }} />
+          </label>
+          <button className="btn ghost" style={{ padding: "6px 12px", fontSize: 12.5 }} onClick={() => setShowCollections((v) => !v)}>
+            🗂 Collections: {selected === "all" ? "all" : `${selectedSet.size} of ${cols.length}`}{unmatched ? "" : " · no uncategorized"} {showCollections ? "▴" : "▾"}
+          </button>
+        </div>
+
+        {showCollections && (
+          <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border-soft)" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, fontSize: 12.5 }}>
+              <button className="btn ghost" style={{ padding: "3px 9px", fontSize: 12 }} onClick={() => setSelected("all")}>All</button>
+              <button className="btn ghost" style={{ padding: "3px 9px", fontSize: 12 }} onClick={() => setSelected([])}>None</button>
+              <label style={{ display: "flex", gap: 6, alignItems: "center", marginLeft: 10, cursor: "pointer" }}>
+                <input type="checkbox" checked={unmatched} onChange={(e) => setUnmatched(e.target.checked)} />
+                Include lines with no collection (custom / unmatched products)
+              </label>
+              <span style={{ color: "var(--text-3)", marginLeft: "auto" }}>A product in several collections counts once when any of them is on.</span>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {cols.map((c) => {
+                const on = selectedSet.has(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    className="chip"
+                    onClick={() => toggleCol(c.id)}
+                    title={`${c.products_count ?? "?"} products${c.rule_based ? " · automated collection" : ""}`}
+                    style={{
+                      cursor: "pointer",
+                      border: "1px solid " + (on ? "var(--accent)" : "var(--border)"),
+                      background: on ? "var(--accent-soft)" : "transparent",
+                      color: on ? "var(--text-1)" : "var(--text-3)",
+                    }}
+                  >
+                    {on ? "✓" : "○"} {c.title}
+                    <span style={{ opacity: 0.6, fontWeight: 500 }}>{c.products_count ?? ""}</span>
+                  </button>
+                );
+              })}
+              {cols.length === 0 && <span style={{ color: "var(--text-3)", fontSize: 12.5 }}>No collections synced yet.</span>}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {error && <p className="viewsub" style={{ color: "var(--crit)" }}>{error}</p>}
+      {!data && !error && <p className="viewsub">Loading…</p>}
+
+      {a && (
+        <>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 16, flexWrap: "wrap", gap: 8 }}>
+            <div style={{ fontSize: 13, color: "var(--text-2)" }}>
+              <b style={{ color: "var(--text-1)" }}>{periodLabel(from, to)}</b>
+              <span style={{ color: "var(--text-3)" }}> vs {periodLabel(cfrom, cto)}{loading ? " · updating…" : ""}</span>
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-3)" }}>{a.totals.units.toLocaleString()} units · {a.totals.orders.toLocaleString()} orders</div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 10, marginTop: 10 }}>
+            {tile("Net revenue", usd(a.totals.net), usd(b?.totals.net), <DeltaTag x={a.totals.net} y={b?.totals.net} />)}
+            {tile("Gross sales", usd(a.totals.gross), usd(b?.totals.gross), <DeltaTag x={a.totals.gross} y={b?.totals.gross} />, "before discounts")}
+            {tile("Lost to discounts", usd(a.totals.discounts), usd(b?.totals.discounts), <DeltaTag x={a.totals.discounts} y={b?.totals.discounts} invert />, discountRate(a) != null ? `${discountRate(a)!.toFixed(1)}% of gross` : undefined)}
+            {tile("Returns", usd(a.totals.returns), usd(b?.totals.returns), <DeltaTag x={a.totals.returns} y={b?.totals.returns} invert />)}
+            {tile("Orders", a.totals.orders.toLocaleString(), (b?.totals.orders ?? 0).toLocaleString(), <DeltaTag x={a.totals.orders} y={b?.totals.orders} />)}
+            {tile("Avg order", usd(aov(a)), usd(aov(b)), <DeltaTag x={aov(a) ?? undefined} y={aov(b) ?? undefined} />, "net ÷ orders")}
+            {tile(`Orders > ${usd(thresholdUsd * 100)}`, a.big.orders.toLocaleString(), (b?.big.orders ?? 0).toLocaleString(), <DeltaTag x={a.big.orders} y={b?.big.orders} />)}
+            {tile("Customers > threshold", a.big.customers.toLocaleString(), (b?.big.customers ?? 0).toLocaleString(), <DeltaTag x={a.big.customers} y={b?.big.customers} />, "deduped by name")}
+          </div>
+
+          <div className="card" style={{ marginTop: 14, padding: "14px 18px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <div style={{ fontWeight: 750 }}>Net revenue by {bucket}</div>
+              <div style={{ fontSize: 12, color: "var(--text-3)", display: "flex", gap: 14 }}>
+                <span><span style={{ display: "inline-block", width: 10, height: 10, background: "var(--accent)", borderRadius: 2, marginRight: 5 }} />{periodLabel(from, to)}</span>
+                <span><span style={{ display: "inline-block", width: 10, height: 10, background: "var(--accent-2)", borderRadius: 2, marginRight: 5 }} />{periodLabel(cfrom, cto)}</span>
+              </div>
+            </div>
+            <BarChart a={a.series} b={b?.series ?? []} bucket={bucket} />
+            <div style={{ overflowX: "auto", marginTop: 10 }}>
+              <table className="data-table" style={{ fontSize: 13, width: "100%" }}>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Period</th><th style={{ textAlign: "right" }}>Net</th><th style={{ textAlign: "right" }}>Orders</th><th style={{ textAlign: "right" }}>Discounts</th>
+                    <th style={{ borderLeft: "1px solid var(--border)" }}>Compare</th><th style={{ textAlign: "right" }}>Net</th><th style={{ textAlign: "right" }}>Orders</th><th style={{ textAlign: "right" }}>Discounts</th>
+                    <th style={{ textAlign: "right" }}>Δ net</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.from({ length: Math.max(a.series.length, b?.series.length ?? 0) }).map((_, i) => {
+                    const ra = a.series[i];
+                    const rb = b?.series[i];
+                    return (
+                      <tr key={i}>
+                        <td style={{ color: "var(--text-3)" }}>{i + 1}</td>
+                        <td>{ra ? fmtBucket(ra.bucket, bucket) : "—"}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 650 }}>{usd(ra?.net)}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{ra?.orders ?? "—"}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{usd(ra?.discounts)}</td>
+                        <td style={{ borderLeft: "1px solid var(--border)", color: "var(--text-2)" }}>{rb ? fmtBucket(rb.bucket, bucket) : "—"}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{usd(rb?.net)}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{rb?.orders ?? "—"}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{usd(rb?.discounts)}</td>
+                        <td style={{ textAlign: "right" }}><DeltaTag x={ra?.net} y={rb?.net} /></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 8 }}>Rows are aligned by position (1st {bucket} vs 1st {bucket}). Refunds are netted against the original order date.</div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))", gap: 14, marginTop: 14 }}>
+            <div className="card" style={{ padding: "14px 18px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <div style={{ fontWeight: 750 }}>Customers with orders over {usd(thresholdUsd * 100)}</div>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <button className={`btn ${showBig === "a" ? "primary" : "ghost"}`} style={{ padding: "3px 9px", fontSize: 12 }} onClick={() => setShowBig("a")}>Period</button>
+                  <button className={`btn ${showBig === "b" ? "primary" : "ghost"}`} style={{ padding: "3px 9px", fontSize: 12 }} onClick={() => setShowBig("b")}>Compare</button>
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 8 }}>
+                One row per customer name — split payments on one camper collapse into a single row. Amounts are net for the selected collections.
+              </div>
+              <div style={{ maxHeight: 420, overflowY: "auto" }}>
+                <table className="data-table" style={{ fontSize: 13, width: "100%" }}>
+                  <thead><tr><th>Customer</th><th style={{ textAlign: "right" }}>Orders</th><th style={{ textAlign: "right" }}>Net</th><th>Dates</th></tr></thead>
+                  <tbody>
+                    {bigList.map((c) => (
+                      <tr key={c.ckey}>
+                        <td>
+                          <div style={{ fontWeight: 650 }}>{c.customer_name ?? c.email ?? "Unknown"}</div>
+                          <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{c.order_names.join(", ")}</div>
+                        </td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{c.orders}{c.orders > 1 ? " ⚠" : ""}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 650 }}>{usd(c.net)}</td>
+                        <td style={{ fontSize: 12, color: "var(--text-2)", whiteSpace: "nowrap" }}>
+                          {fmtDate(c.first_at)}{c.last_at.slice(0, 10) !== c.first_at.slice(0, 10) ? ` → ${fmtDate(c.last_at)}` : ""}
+                        </td>
+                      </tr>
+                    ))}
+                    {bigList.length === 0 && <tr><td colSpan={4} style={{ color: "var(--text-3)" }}>None in this period.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="card" style={{ padding: "14px 18px" }}>
+              <div style={{ fontWeight: 750, marginBottom: 8 }}>Where the discounts went</div>
+              <div style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 8 }}>Discount codes and manual discounts, by amount given away in the period.</div>
+              <div style={{ maxHeight: 420, overflowY: "auto" }}>
+                <table className="data-table" style={{ fontSize: 13, width: "100%" }}>
+                  <thead><tr><th>Discount</th><th style={{ textAlign: "right" }}>Given</th><th style={{ textAlign: "right" }}>Orders</th><th style={{ textAlign: "right" }}>Compare</th></tr></thead>
+                  <tbody>
+                    {a.discounts.map((d) => {
+                      const prior = b?.discounts.find((x) => x.label === d.label);
+                      return (
+                        <tr key={d.label}>
+                          <td style={{ fontWeight: 650 }}>{d.label}</td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{usd(d.cents)}</td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{d.orders}</td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{usd(prior?.cents ?? 0)}</td>
+                        </tr>
+                      );
+                    })}
+                    {a.discounts.length === 0 && <tr><td colSpan={4} style={{ color: "var(--text-3)" }}>No discounts in this period.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {data && (
+        <div className="card" style={{ marginTop: 14, padding: "12px 18px", fontSize: 12.5, color: "var(--text-2)" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 14, alignItems: "center" }}>
+            <span>
+              <b>{data.sync.orders.toLocaleString()}</b> orders mirrored
+              {data.sync.oldestOrderAt ? ` since ${fmtDate(data.sync.oldestOrderAt)}` : ""}
+              {data.sync.done ? "" : " · full history backfill in progress"}
+              {data.sync.lastIncrementalAt ? ` · last refresh ${new Date(data.sync.lastIncrementalAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}
+            </span>
+            <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+              <button className="btn ghost" style={{ padding: "4px 10px", fontSize: 12 }} disabled={!!syncing} onClick={() => runSync("incremental")}>{syncing === "incremental" ? "Syncing…" : "↻ Refresh orders"}</button>
+              {!data.sync.done && <button className="btn ghost" style={{ padding: "4px 10px", fontSize: 12 }} disabled={!!syncing} onClick={() => runSync("full")}>{syncing === "full" ? "Backfilling…" : "Continue backfill"}</button>}
+              <button className="btn ghost" style={{ padding: "4px 10px", fontSize: 12 }} disabled={!!syncing} onClick={() => runSync("catalog")}>{syncing === "catalog" ? "Syncing…" : "Sync collections"}</button>
+            </span>
+          </div>
+          {data.sync.catalogError && (
+            <div style={{ marginTop: 6, color: "var(--warn, #d9a441)" }}>
+              Collection sync needs the <code>read_products</code> scope on the Shopify Admin app (Dev Dashboard → app → Configuration → Admin API scopes, then release). Until then the collection map is the one seeded on {data.sync.catalogAt ? fmtDate(data.sync.catalogAt) : "setup"} and new products land in “no collection”.
+            </div>
+          )}
+          {syncMsg && <div style={{ marginTop: 6 }}>{syncMsg}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BarChart({ a, b, bucket }: { a: Series[]; b: Series[]; bucket: Bucket }) {
+  const n = Math.max(a.length, b.length);
+  if (n === 0) return <div style={{ color: "var(--text-3)", fontSize: 13, padding: "20px 0" }}>No orders in this period.</div>;
+  const W = 900, H = 220, padL = 56, padB = 26, padT = 10;
+  const max = Math.max(1, ...a.map((s) => s.net), ...b.map((s) => s.net));
+  const innerW = W - padL - 8;
+  const innerH = H - padB - padT;
+  const group = innerW / n;
+  const bw = Math.max(2, Math.min(28, (group - 6) / 2));
+  const y = (v: number) => padT + innerH - (Math.max(0, v) / max) * innerH;
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => f * max);
+  const labelEvery = n > 40 ? Math.ceil(n / 20) : n > 16 ? 2 : 1;
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", minWidth: 520, height: "auto", display: "block" }} role="img" aria-label="Net revenue by period, this period vs comparison">
+        {ticks.map((t, i) => (
+          <g key={i}>
+            <line x1={padL} x2={W - 8} y1={y(t)} y2={y(t)} stroke="var(--border-soft)" strokeWidth={1} />
+            <text x={padL - 6} y={y(t) + 4} fontSize={10} fill="var(--text-3)" textAnchor="end">{usd(t, { compact: true })}</text>
+          </g>
+        ))}
+        {Array.from({ length: n }).map((_, i) => {
+          const ra = a[i];
+          const rb = b[i];
+          const x0 = padL + i * group + (group - (bw * 2 + 3)) / 2;
+          return (
+            <g key={i}>
+              {ra && <rect x={x0} y={y(ra.net)} width={bw} height={Math.max(0, padT + innerH - y(ra.net))} fill="var(--accent)" rx={2}><title>{`${fmtBucket(ra.bucket, bucket)}: ${usd(ra.net)} net · ${ra.orders} orders`}</title></rect>}
+              {rb && <rect x={x0 + bw + 3} y={y(rb.net)} width={bw} height={Math.max(0, padT + innerH - y(rb.net))} fill="var(--accent-2)" rx={2} opacity={0.85}><title>{`${fmtBucket(rb.bucket, bucket)}: ${usd(rb.net)} net · ${rb.orders} orders`}</title></rect>}
+              {(ra || rb) && i % labelEvery === 0 && (
+                <text x={x0 + bw + 1.5} y={H - 8} fontSize={10} fill="var(--text-3)" textAnchor="middle">{fmtBucket((ra ?? rb)!.bucket, bucket)}</text>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}

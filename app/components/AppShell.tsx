@@ -52,6 +52,7 @@ const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[]
       { label: "🔍 Google", href: "/analytics/google", adminOnly: true },
       { label: "📘 Meta", href: "/analytics/meta", adminOnly: true },
       { label: "💰 Ad ROI", href: "/ad-roi", adminOnly: true },
+      { label: "💵 Revenue", href: "/analytics/revenue", adminOnly: true },
     ],
   },
   {
