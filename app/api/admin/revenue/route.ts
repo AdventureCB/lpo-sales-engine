@@ -116,7 +116,10 @@ async function seasonalGoal(run: (f: string | null, t: string | null) => Promise
   const net = new Map<string, number>();
   for (const s of rep?.series ?? []) net.set(monthStart(s.bucket), Number(s.net) || 0);
   const at = (ym: string) => net.get(ym) ?? 0;
-  const months: { bucket: string; goal: number | null; lastYear: number; ratio: number | null; future: boolean }[] = [];
+  const months: {
+    bucket: string; goal: number | null; lastYear: number; ratio: number | null; future: boolean;
+    windowFrom: string; windowTo: string; windowNet: number; windowPriorNet: number;
+  }[] = [];
   const endActual = monthStart(toDay);
   // The growth window never includes the current (partial) month or anything
   // after it: months beyond "now" all use the window ending last month.
@@ -132,7 +135,17 @@ async function seasonalGoal(run: (f: string | null, t: string | null) => Promise
     }
     const ratio = prior > 0 ? cur / prior : null;
     const ly = at(addMonths(ym, -12));
-    months.push({ bucket: ym, lastYear: ly, ratio, goal: ratio != null && ly > 0 ? Math.round(ly * ratio) : null, future: ym > endActual });
+    months.push({
+      bucket: ym,
+      lastYear: ly,
+      ratio,
+      goal: ratio != null && ly > 0 ? Math.round(ly * ratio) : null,
+      future: ym > endActual,
+      windowFrom: addMonths(anchor, -w),
+      windowTo: addMonths(anchor, -1),
+      windowNet: cur,
+      windowPriorNet: prior,
+    });
   }
   return { window: w, horizon: HORIZON, months };
 }

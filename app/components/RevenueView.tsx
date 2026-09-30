@@ -18,7 +18,11 @@ interface Report {
   discounts: { label: string; cents: number; orders: number }[];
 }
 interface Collection { id: number; title: string; handle: string | null; products_count: number | null; rule_based: boolean }
-interface GoalMonth { bucket: string; goal: number | null; lastYear: number; ratio: number | null; future: boolean }
+interface GoalMonth {
+  bucket: string; goal: number | null; lastYear: number; ratio: number | null; future: boolean;
+  windowFrom: string; windowTo: string; windowNet: number; windowPriorNet: number;
+}
+const windowLabel = (g: GoalMonth) => `${fmtBucket(g.windowFrom, "month")}–${fmtBucket(g.windowTo, "month")}`;
 interface Goal { window: number; horizon: number; months: GoalMonth[] }
 interface Payload {
   a: Report | null;
@@ -379,7 +383,7 @@ export function RevenueView() {
             {nextGoal && (
               <div style={{ fontSize: 13, marginTop: 8, color: "var(--text-2)" }}>
                 <b style={{ color: "var(--good)" }}>Goal for {fmtBucket(nextGoal.bucket, "month")}: {usd(nextGoal.goal)}</b>
-                <span style={{ color: "var(--text-3)" }}> — {fmtBucket(addYears(nextGoal.bucket, -1), "month")} was {usd(nextGoal.lastYear)}, and the last {data!.goal!.window} months ran {nextGoal.ratio != null ? `${((nextGoal.ratio - 1) * 100).toFixed(1)}%` : "—"} {nextGoal.ratio != null && nextGoal.ratio < 1 ? "below" : "above"} the same months a year earlier.</span>
+                <span style={{ color: "var(--text-3)" }}> — {fmtBucket(addYears(nextGoal.bucket, -1), "month")} was {usd(nextGoal.lastYear)} × {nextGoal.ratio?.toFixed(3)}. The window is {windowLabel(nextGoal)} ({usd(nextGoal.windowNet)}) against the same months a year earlier ({usd(nextGoal.windowPriorNet)}), so {nextGoal.ratio != null ? `${Math.abs((nextGoal.ratio - 1) * 100).toFixed(1)}% ${nextGoal.ratio < 1 ? "below" : "above"}` : "—"}. The current month joins the window once it ends.</span>
                 {laterGoals.length > 0 && (
                   <span style={{ color: "var(--text-3)" }}> Then {laterGoals.map((g) => `${fmtBucket(g.bucket, "month")} ${usd(g.goal)}`).join(", ")}.</span>
                 )}
@@ -424,7 +428,7 @@ export function RevenueView() {
                       <td style={{ color: "var(--text-3)" }}>→</td>
                       <td style={{ color: "var(--text-3)" }}>{fmtBucket(g.bucket, "month")} (upcoming)</td>
                       <td colSpan={8} style={{ color: "var(--text-3)", fontSize: 12 }}>
-                        {fmtBucket(addYears(g.bucket, -1), "month")} {usd(g.lastYear)} × {g.ratio != null ? g.ratio.toFixed(2) : "—"}
+                        {fmtBucket(addYears(g.bucket, -1), "month")} {usd(g.lastYear)} × {g.ratio != null ? g.ratio.toFixed(3) : "—"} (window {windowLabel(g)} vs a year earlier)
                       </td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--good)", fontWeight: 650, borderLeft: "1px solid var(--border)" }}>{usd(g.goal)}</td>
                       <td />
@@ -583,7 +587,7 @@ function BarChart({ a, b, bucket, goal }: { a: Series[]; b: Series[]; bucket: Bu
             <path d={path(goalPts)} fill="none" stroke="var(--good)" strokeWidth={2} strokeDasharray="6 4" strokeLinejoin="round" />
             {goalPts.map((p, i) => p && (
               <circle key={i} cx={p.x} cy={p.y} r={p.future ? 4 : 3} fill={p.future ? "var(--good)" : "var(--surface-1)"} stroke="var(--good)" strokeWidth={2}>
-                <title>{`Goal ${fmtBucket(p.g.bucket, "month")}: ${usd(p.g.goal)} = ${usd(p.g.lastYear)} last year × ${p.g.ratio?.toFixed(2)}`}</title>
+                <title>{`Goal ${fmtBucket(p.g.bucket, "month")}: ${usd(p.g.goal)} = ${usd(p.g.lastYear)} last year × ${p.g.ratio?.toFixed(3)} (window ${windowLabel(p.g)} vs a year earlier)`}</title>
               </circle>
             ))}
           </g>
