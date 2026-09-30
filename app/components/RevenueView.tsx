@@ -216,7 +216,7 @@ export function RevenueView() {
   return (
     <div>
       <h1 className="viewtitle">💵 Revenue</h1>
-      <p className="viewsub">Net revenue from Shopify orders — line items after discounts and refunds. Shipping and sales tax are never included. Cancelled, voided and test orders are out.</p>
+      <p className="viewsub">Net revenue from Shopify orders — line items after discounts and refunds. Shipping and sales tax are never included. Test orders are out; cancellations and refunds count as returns on the day they happen.</p>
 
       <div className="card" style={{ padding: "14px 18px", marginTop: 8 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
@@ -371,7 +371,7 @@ export function RevenueView() {
                 </tbody>
               </table>
             </div>
-            <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 8 }}>Rows are aligned by position (1st {bucket} vs 1st {bucket}). Refunds are netted against the original order date.</div>
+            <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 8 }}>Rows are aligned by position (1st {bucket} vs 1st {bucket}). Same method as Shopify&apos;s sales reports: gross and discounts book on the order date, returns on the refund date, and cancelled orders show up as returns.</div>
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))", gap: 14, marginTop: 14 }}>

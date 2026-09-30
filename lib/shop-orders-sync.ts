@@ -42,7 +42,7 @@ const ordersQuery = (withProducts: boolean) => `query($cursor: String, $q: Strin
       totalPriceSet { shopMoney { amount } }
       totalRefundedSet { shopMoney { amount } }
       discountCodes
-      refunds { refundLineItems(first: 60) { edges { node { quantity subtotalSet { shopMoney { amount } } lineItem { id } } } } }
+      refunds { id createdAt refundLineItems(first: 60) { edges { node { quantity subtotalSet { shopMoney { amount } } lineItem { id } } } } }
       lineItems(first: 60) { edges { node {
         id sku title quantity
         ${withProducts ? "product { id } variant { id }" : ""}
@@ -155,18 +155,34 @@ function orderRow(o: any) {
   };
 }
 
-function lineRows(o: any, orderId: number) {
-  const refunds = new Map<number, { cents: number; qty: number }>();
+/** One row per (refund, line): dated so returns can book on the refund date. */
+function refundRows(o: any, orderId: number) {
+  const out: { refund_id: number; line_id: number; order_id: number; created_at: string; cents: number; qty: number }[] = [];
   for (const r of o.refunds ?? []) {
+    const rid = gid(r.id);
+    if (!rid || !r.createdAt) continue;
+    const byLine = new Map<number, { cents: number; qty: number }>();
     for (const e of r.refundLineItems?.edges ?? []) {
       const n = e.node;
       const lid = gid(n.lineItem?.id);
       if (!lid) continue;
-      const cur = refunds.get(lid) ?? { cents: 0, qty: 0 };
+      const cur = byLine.get(lid) ?? { cents: 0, qty: 0 };
       cur.cents += cents(n.subtotalSet);
       cur.qty += Number(n.quantity ?? 0) || 0;
-      refunds.set(lid, cur);
+      byLine.set(lid, cur);
     }
+    for (const [line_id, v] of byLine) out.push({ refund_id: rid, line_id, order_id: orderId, created_at: r.createdAt, ...v });
+  }
+  return out;
+}
+
+function lineRows(o: any, orderId: number) {
+  const refunds = new Map<number, { cents: number; qty: number }>();
+  for (const r of refundRows(o, orderId)) {
+    const cur = refunds.get(r.line_id) ?? { cents: 0, qty: 0 };
+    cur.cents += r.cents;
+    cur.qty += r.qty;
+    refunds.set(r.line_id, cur);
   }
   return (o.lineItems?.edges ?? []).map((e: any) => {
     const n = e.node;
@@ -207,6 +223,13 @@ async function upsertOrders(db: SupabaseClient, nodes: any[]) {
   if (lines.length) {
     const { error: lineErr } = await db.from("shop_order_lines").upsert(lines, { onConflict: "id" });
     if (lineErr) throw new Error(`shop_order_lines upsert: ${lineErr.message}`);
+  }
+  const refunds = nodes.flatMap((o) => refundRows(o, gid(o.id)!));
+  const { error: rdel } = await db.from("shop_order_refunds").delete().in("order_id", ids);
+  if (rdel) throw new Error(`shop_order_refunds delete: ${rdel.message}`);
+  if (refunds.length) {
+    const { error: rerr } = await db.from("shop_order_refunds").upsert(refunds, { onConflict: "refund_id,line_id" });
+    if (rerr) throw new Error(`shop_order_refunds upsert: ${rerr.message}`);
   }
   return orders.length;
 }
