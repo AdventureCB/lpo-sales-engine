@@ -135,11 +135,13 @@ async function seasonalGoal(
   const bNet = Number(b?.totals?.net) || 0;
   const b2Net = Number(b2?.totals?.net) || 0;
   const ratio = bNet > 0 ? aNet / bNet : null;
-  // Normalized line: the two-years-ago month is first rescaled up to last
-  // year's level (compare ÷ compare-a-year-earlier), then averaged with last
-  // year's month, so the yellow line only differs from green where a month's
-  // share of its year was unusual. Same growth multiplier as green.
-  const scale = b2Net > 0 ? bNet / b2Net : null;
+  // Normalized line: plain average of the month one and two years ago, times
+  // the SAME growth multiplier as the green line. Kyle's read of the data is
+  // that the two prior years track each other in absolute terms apart from
+  // one-off months (Dec 2025), so averaging halves a spike without a second
+  // ratio to explain. (A rescaled variant was tried and rejected: mid-year
+  // growth of 2× does not describe Q4, where the two years were flat.)
+  const scale: number | null = null;
 
   const endActual = monthStart(d.to);
   const months = [] as {
@@ -150,7 +152,7 @@ async function seasonalGoal(
   for (let ym = first; ym <= lastGoal; ym = addMonths(ym, 1)) {
     const ly = at(addMonths(ym, -12));
     const y2 = has(addMonths(ym, -24)) ? at(addMonths(ym, -24)) : null;
-    const y2s = y2 != null && scale != null ? y2 * scale : null;
+    const y2s = y2 != null ? (scale != null ? y2 * scale : y2) : null;
     const base2 = y2s != null ? (ly + y2s) / 2 : ly;
     months.push({
       bucket: ym,
