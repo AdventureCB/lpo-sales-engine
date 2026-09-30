@@ -63,15 +63,16 @@ export async function GET(req: NextRequest) {
     return data;
   };
 
-  const growth = [3, 6, 12].includes(Number(p.get("growth"))) ? Number(p.get("growth")) : 6;
-
   try {
-    const [a, b, oldest, goal] = await Promise.all([
+    const [a, b, oldest] = await Promise.all([
       run(from, to),
       run(cfrom, cto),
       db.from("shop_orders").select("created_at").order("created_at", { ascending: true }).limit(1).maybeSingle(),
-      bucket === "month" && from && to ? seasonalGoal(run, p.get("from")!, p.get("to")!, growth) : Promise.resolve(null),
     ]);
+    const goal =
+      bucket === "month" && a && b && from && to && cfrom && cto
+        ? await seasonalGoal(run, { from: p.get("from")!, to: p.get("to")!, cfrom: p.get("cfrom")!, cto: p.get("cto")! }, a, b)
+        : null;
     return NextResponse.json({
       a,
       b,
@@ -101,53 +102,73 @@ function addMonths(ym: string, n: number): string {
   return `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, "0")}-01`;
 }
 
+const addYearsDay = (d: string, n: number) => `${Number(d.slice(0, 4)) + n}${d.slice(4)}`;
+
 /**
- * Seasonal goal line (month buckets only): for each month M from the period
- * start through HORIZON months past its end,
- *   goal(M) = net(M − 12) × [ Σ net(M−1 … M−w) ÷ Σ net(M−13 … M−12−w) ]
- * i.e. last year's month, scaled by the trailing-w-month year-over-year
- * growth as it stood going into M. Same collection filters as the report.
+ * Goal lines (month buckets only), always driven by the selector dates:
+ *   growth  = period net ÷ compare net
+ *   goal(M) = net(M − 12) × growth                       (green)
+ *   normalized(M) = avg(net(M−12), net(M−24)) × growth2  (yellow)
+ *     growth2 = period net ÷ avg(compare net, compare-a-year-earlier net)
+ * The normalized line halves one-off spikes (e.g. Dec 2025) and treats a
+ * product launch as a level shift over two years rather than one.
+ * Both run from the period start through HORIZON months past its end.
  */
-async function seasonalGoal(run: (f: string | null, t: string | null) => Promise<any>, fromDay: string, toDay: string, w: number) {
-  const first = monthStart(fromDay);
-  const lastGoal = addMonths(monthStart(toDay), HORIZON);
-  const histFrom = addMonths(first, -(12 + w));
-  const rep = await run(laMidnight(histFrom), laMidnight(addMonths(lastGoal, 1)));
+async function seasonalGoal(
+  run: (f: string | null, t: string | null) => Promise<any>,
+  d: { from: string; to: string; cfrom: string; cto: string },
+  a: any,
+  b: any
+) {
+  const first = monthStart(d.from);
+  const lastGoal = addMonths(monthStart(d.to), HORIZON);
+  const [hist, b2] = await Promise.all([
+    run(laMidnight(addMonths(first, -24)), laMidnight(addMonths(lastGoal, 1))),
+    run(laMidnight(addYearsDay(d.cfrom, -1)), laMidnight(addYearsDay(d.cto, -1), 1)),
+  ]);
   const net = new Map<string, number>();
-  for (const s of rep?.series ?? []) net.set(monthStart(s.bucket), Number(s.net) || 0);
+  for (const s of hist?.series ?? []) net.set(monthStart(s.bucket), Number(s.net) || 0);
+  const has = (ym: string) => net.has(ym);
   const at = (ym: string) => net.get(ym) ?? 0;
-  const months: {
-    bucket: string; goal: number | null; lastYear: number; ratio: number | null; future: boolean;
-    windowFrom: string; windowTo: string; windowNet: number; windowPriorNet: number;
-  }[] = [];
-  const endActual = monthStart(toDay);
-  // The growth window never includes the current (partial) month or anything
-  // after it: months beyond "now" all use the window ending last month.
-  const nowLA = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  const nowYm = monthStart(nowLA);
+
+  const aNet = Number(a?.totals?.net) || 0;
+  const bNet = Number(b?.totals?.net) || 0;
+  const b2Net = Number(b2?.totals?.net) || 0;
+  const ratio = bNet > 0 ? aNet / bNet : null;
+  const bAvg = b2Net > 0 ? (bNet + b2Net) / 2 : bNet;
+  const ratio2 = bAvg > 0 ? aNet / bAvg : null;
+
+  const endActual = monthStart(d.to);
+  const months = [] as {
+    bucket: string; future: boolean;
+    lastYear: number; goal: number | null;
+    twoYearsAgo: number | null; base2: number; normalized: number | null;
+  }[];
   for (let ym = first; ym <= lastGoal; ym = addMonths(ym, 1)) {
-    const anchor = ym > nowYm ? nowYm : ym;
-    let cur = 0;
-    let prior = 0;
-    for (let k = 1; k <= w; k++) {
-      cur += at(addMonths(anchor, -k));
-      prior += at(addMonths(anchor, -12 - k));
-    }
-    const ratio = prior > 0 ? cur / prior : null;
     const ly = at(addMonths(ym, -12));
+    const y2 = has(addMonths(ym, -24)) ? at(addMonths(ym, -24)) : null;
+    const base2 = y2 != null ? (ly + y2) / 2 : ly;
     months.push({
       bucket: ym,
-      lastYear: ly,
-      ratio,
-      goal: ratio != null && ly > 0 ? Math.round(ly * ratio) : null,
       future: ym > endActual,
-      windowFrom: addMonths(anchor, -w),
-      windowTo: addMonths(anchor, -1),
-      windowNet: cur,
-      windowPriorNet: prior,
+      lastYear: ly,
+      goal: ratio != null && ly > 0 ? Math.round(ly * ratio) : null,
+      twoYearsAgo: y2,
+      base2,
+      normalized: ratio2 != null && base2 > 0 ? Math.round(base2 * ratio2) : null,
     });
   }
-  return { window: w, horizon: HORIZON, months };
+  return {
+    horizon: HORIZON,
+    ratio,
+    ratio2,
+    periodNet: aNet,
+    compareNet: bNet,
+    compare2Net: b2Net,
+    compare2From: addYearsDay(d.cfrom, -1),
+    compare2To: addYearsDay(d.cto, -1),
+    months,
+  };
 }
 
 /** Admin "Sync now": one incremental pass (or ?what=catalog / ?what=full). */

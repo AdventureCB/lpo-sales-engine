@@ -19,11 +19,16 @@ interface Report {
 }
 interface Collection { id: number; title: string; handle: string | null; products_count: number | null; rule_based: boolean }
 interface GoalMonth {
-  bucket: string; goal: number | null; lastYear: number; ratio: number | null; future: boolean;
-  windowFrom: string; windowTo: string; windowNet: number; windowPriorNet: number;
+  bucket: string; future: boolean;
+  lastYear: number; goal: number | null;
+  twoYearsAgo: number | null; base2: number; normalized: number | null;
 }
-const windowLabel = (g: GoalMonth) => `${fmtBucket(g.windowFrom, "month")}–${fmtBucket(g.windowTo, "month")}`;
-interface Goal { window: number; horizon: number; months: GoalMonth[] }
+interface Goal {
+  horizon: number; ratio: number | null; ratio2: number | null;
+  periodNet: number; compareNet: number; compare2Net: number; compare2From: string; compare2To: string;
+  months: GoalMonth[];
+}
+const NORMALIZED_COLOR = "#e0b341";
 interface Payload {
   a: Report | null;
   b: Report | null;
@@ -100,7 +105,6 @@ export function RevenueView() {
   const [cto, setCto] = useState(() => derivedCompare(PRESETS[0].from, PRESETS[0].to, "yoy")[1]);
   const [bucket, setBucket] = useState<Bucket>("month");
   const [thresholdUsd, setThresholdUsd] = useState(5000);
-  const [growth, setGrowth] = useState<3 | 6 | 12>(6);
   const [selected, setSelected] = useState<number[] | "all">("all");
   const [unmatched, setUnmatched] = useState(true);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
@@ -150,7 +154,7 @@ export function RevenueView() {
     const seq = ++reqSeq.current;
     setLoading(true);
     setError(null);
-    const q = new URLSearchParams({ from, to, cfrom, cto, bucket, threshold: String(Math.round(thresholdUsd * 100)), unmatched: unmatched ? "1" : "0", growth: String(growth) });
+    const q = new URLSearchParams({ from, to, cfrom, cto, bucket, threshold: String(Math.round(thresholdUsd * 100)), unmatched: unmatched ? "1" : "0" });
     if (selected !== "all") q.set("collections", selected.join(","));
     try {
       const r = await fetch(`/api/admin/revenue?${q}`, { signal: ctrl.signal, cache: "no-store" });
@@ -164,7 +168,7 @@ export function RevenueView() {
     } finally {
       if (seq === reqSeq.current) setLoading(false);
     }
-  }, [from, to, cfrom, cto, bucket, thresholdUsd, unmatched, selected, prefsLoaded, growth]);
+  }, [from, to, cfrom, cto, bucket, thresholdUsd, unmatched, selected, prefsLoaded]);
 
   useEffect(() => { const h = setTimeout(load, 250); return () => clearTimeout(h); }, [load]);
 
@@ -363,30 +367,35 @@ export function RevenueView() {
               <div style={{ fontSize: 12, color: "var(--text-3)", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
                 <span><span style={{ display: "inline-block", width: 10, height: 10, background: "var(--accent)", borderRadius: 2, marginRight: 5 }} />{periodLabel(from, to)}</span>
                 <span><span style={{ display: "inline-block", width: 10, height: 10, background: "var(--accent-2)", borderRadius: 2, marginRight: 5 }} />{periodLabel(cfrom, cto)}</span>
-                {bucket === "month" && (
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ display: "inline-block", width: 14, height: 0, borderTop: "2px dashed var(--good)" }} />
-                    Goal = last year × trailing
-                    <select value={growth} onChange={(e) => setGrowth(Number(e.target.value) as 3 | 6 | 12)} style={{ ...inputStyle, padding: "2px 6px", fontSize: 12 }}>
-                      <option value={3}>3-mo</option>
-                      <option value={6}>6-mo</option>
-                      <option value={12}>12-mo</option>
-                    </select>
-                    growth
-                  </span>
+                {bucket === "month" && data?.goal && (
+                  <>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ display: "inline-block", width: 14, height: 0, borderTop: "2px dashed var(--good)" }} />
+                      Goal = last year&apos;s month × {data.goal.ratio != null ? data.goal.ratio.toFixed(3) : "—"}
+                    </span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ display: "inline-block", width: 14, height: 0, borderTop: `2px dashed ${NORMALIZED_COLOR}` }} />
+                      Normalized = 2-yr avg month × {data.goal.ratio2 != null ? data.goal.ratio2.toFixed(3) : "—"}
+                    </span>
+                  </>
                 )}
               </div>
             </div>
             <div style={{ opacity: loading ? 0.45 : 1, transition: "opacity 150ms" }}>
               <BarChart a={a.series} b={b?.series ?? []} bucket={bucket} goal={data?.goal ?? null} />
             </div>
-            {nextGoal && (
-              <div style={{ fontSize: 13, marginTop: 8, color: "var(--text-2)" }}>
-                <b style={{ color: "var(--good)" }}>Goal for {fmtBucket(nextGoal.bucket, "month")}: {usd(nextGoal.goal)}</b>
-                <span style={{ color: "var(--text-3)" }}> — {fmtBucket(addYears(nextGoal.bucket, -1), "month")} was {usd(nextGoal.lastYear)} × {nextGoal.ratio?.toFixed(3)}. The window is {windowLabel(nextGoal)} ({usd(nextGoal.windowNet)}) against the same months a year earlier ({usd(nextGoal.windowPriorNet)}), so {nextGoal.ratio != null ? `${Math.abs((nextGoal.ratio - 1) * 100).toFixed(1)}% ${nextGoal.ratio < 1 ? "below" : "above"}` : "—"}. The current month joins the window once it ends.</span>
-                {laterGoals.length > 0 && (
-                  <span style={{ color: "var(--text-3)" }}> Then {laterGoals.map((g) => `${fmtBucket(g.bucket, "month")} ${usd(g.goal)}`).join(", ")}.</span>
-                )}
+            {data?.goal && nextGoal && (
+              <div style={{ fontSize: 13, marginTop: 8, color: "var(--text-2)", display: "grid", gap: 4 }}>
+                <div>
+                  <b style={{ color: "var(--good)" }}>Goal for {fmtBucket(nextGoal.bucket, "month")}: {usd(nextGoal.goal)}</b>
+                  <span style={{ color: "var(--text-3)" }}> = {fmtBucket(addYears(nextGoal.bucket, -1), "month")} {usd(nextGoal.lastYear)} × {data.goal.ratio?.toFixed(3)}. Growth is {periodLabel(from, to)} ({usd(data.goal.periodNet)}) ÷ {periodLabel(cfrom, cto)} ({usd(data.goal.compareNet)}).</span>
+                  {laterGoals.length > 0 && <span style={{ color: "var(--text-3)" }}> Then {laterGoals.map((g) => `${fmtBucket(g.bucket, "month")} ${usd(g.goal)}`).join(", ")}.</span>}
+                </div>
+                <div>
+                  <b style={{ color: NORMALIZED_COLOR }}>Normalized: {usd(nextGoal.normalized)}</b>
+                  <span style={{ color: "var(--text-3)" }}> = avg of {fmtBucket(addYears(nextGoal.bucket, -1), "month")} {usd(nextGoal.lastYear)} and {fmtBucket(addYears(nextGoal.bucket, -2), "month")} {usd(nextGoal.twoYearsAgo)} ({usd(nextGoal.base2)}) × {data.goal.ratio2?.toFixed(3)}. Growth is the period ÷ the average of the compare period and {periodLabel(data.goal.compare2From, data.goal.compare2To)} ({usd(data.goal.compare2Net)}). Smooths one-off months like Dec 2025.</span>
+                  {laterGoals.length > 0 && <span style={{ color: "var(--text-3)" }}> Then {laterGoals.map((g) => `${fmtBucket(g.bucket, "month")} ${usd(g.normalized)}`).join(", ")}.</span>}
+                </div>
               </div>
             )}
             <div style={{ overflowX: "auto", marginTop: 10 }}>
@@ -399,6 +408,7 @@ export function RevenueView() {
                     <th style={{ textAlign: "right" }}>Δ net</th>
                     {data?.goal && <th style={{ textAlign: "right", borderLeft: "1px solid var(--border)" }}>Goal</th>}
                     {data?.goal && <th style={{ textAlign: "right" }}>vs goal</th>}
+                    {data?.goal && <th style={{ textAlign: "right" }}>Normalized</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -420,6 +430,7 @@ export function RevenueView() {
                         <td style={{ textAlign: "right" }}><DeltaTag x={ra?.net} y={rb?.net} /></td>
                         {data?.goal && <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--good)", borderLeft: "1px solid var(--border)" }}>{usd(g?.goal)}</td>}
                         {data?.goal && <td style={{ textAlign: "right" }}>{g?.goal != null && ra ? <DeltaTag x={ra.net} y={g.goal} /> : "—"}</td>}
+                        {data?.goal && <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: NORMALIZED_COLOR }}>{usd(g?.normalized)}</td>}
                       </tr>
                     );
                   })}
@@ -428,10 +439,11 @@ export function RevenueView() {
                       <td style={{ color: "var(--text-3)" }}>→</td>
                       <td style={{ color: "var(--text-3)" }}>{fmtBucket(g.bucket, "month")} (upcoming)</td>
                       <td colSpan={8} style={{ color: "var(--text-3)", fontSize: 12 }}>
-                        {fmtBucket(addYears(g.bucket, -1), "month")} {usd(g.lastYear)} × {g.ratio != null ? g.ratio.toFixed(3) : "—"} (window {windowLabel(g)} vs a year earlier)
+                        {fmtBucket(addYears(g.bucket, -1), "month")} {usd(g.lastYear)} × {data?.goal?.ratio?.toFixed(3) ?? "—"} · normalized: avg({usd(g.lastYear)}, {usd(g.twoYearsAgo)}) × {data?.goal?.ratio2?.toFixed(3) ?? "—"}
                       </td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--good)", fontWeight: 650, borderLeft: "1px solid var(--border)" }}>{usd(g.goal)}</td>
                       <td />
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: NORMALIZED_COLOR, fontWeight: 650 }}>{usd(g.normalized)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -545,7 +557,7 @@ function BarChart({ a, b, bucket, goal }: { a: Series[]; b: Series[]; bucket: Bu
   const n = cols.length;
   if (n === 0) return <div style={{ color: "var(--text-3)", fontSize: 13, padding: "20px 0" }}>No orders in this period.</div>;
   const W = 900, H = 220, padL = 56, padB = 26, padT = 10;
-  const max = Math.max(1, ...a.map((s) => s.net), ...b.map((s) => s.net), ...goalMonths.map((g) => g.goal ?? 0));
+  const max = Math.max(1, ...a.map((s) => s.net), ...b.map((s) => s.net), ...goalMonths.map((g) => Math.max(g.goal ?? 0, g.normalized ?? 0)));
   const innerW = W - padL - 8;
   const innerH = H - padB - padT;
   const group = innerW / n;
@@ -555,6 +567,7 @@ function BarChart({ a, b, bucket, goal }: { a: Series[]; b: Series[]; bucket: Bu
   const labelEvery = n > 40 ? Math.ceil(n / 20) : n > 16 ? 2 : 1;
   const cx = (i: number) => padL + i * group + group / 2;
   const goalPts = cols.map((c, i) => (c.g?.goal != null ? { x: cx(i), y: y(c.g.goal), future: c.future, g: c.g } : null));
+  const normPts = cols.map((c, i) => (c.g?.normalized != null ? { x: cx(i), y: y(c.g.normalized), future: c.future, g: c.g } : null));
   const path = (pts: typeof goalPts) => pts.filter(Boolean).map((p, i) => `${i === 0 ? "M" : "L"}${p!.x.toFixed(1)},${p!.y.toFixed(1)}`).join(" ");
   const lastActualIdx = cols.reduce((m, c, i) => (!c.future ? i : m), -1);
   return (
@@ -582,12 +595,22 @@ function BarChart({ a, b, bucket, goal }: { a: Series[]; b: Series[]; bucket: Bu
             </g>
           );
         })}
+        {normPts.some(Boolean) && (
+          <g>
+            <path d={path(normPts)} fill="none" stroke={NORMALIZED_COLOR} strokeWidth={2} strokeDasharray="3 4" strokeLinejoin="round" opacity={0.9} />
+            {normPts.map((p, i) => p && (
+              <circle key={i} cx={p.x} cy={p.y} r={p.future ? 4 : 3} fill={p.future ? NORMALIZED_COLOR : "var(--surface-1)"} stroke={NORMALIZED_COLOR} strokeWidth={2}>
+                <title>{`Normalized ${fmtBucket(p.g.bucket, "month")}: ${usd(p.g.normalized)} = avg(${usd(p.g.lastYear)}, ${usd(p.g.twoYearsAgo)}) × ${goal?.ratio2?.toFixed(3)}`}</title>
+              </circle>
+            ))}
+          </g>
+        )}
         {goalPts.some(Boolean) && (
           <g>
             <path d={path(goalPts)} fill="none" stroke="var(--good)" strokeWidth={2} strokeDasharray="6 4" strokeLinejoin="round" />
             {goalPts.map((p, i) => p && (
               <circle key={i} cx={p.x} cy={p.y} r={p.future ? 4 : 3} fill={p.future ? "var(--good)" : "var(--surface-1)"} stroke="var(--good)" strokeWidth={2}>
-                <title>{`Goal ${fmtBucket(p.g.bucket, "month")}: ${usd(p.g.goal)} = ${usd(p.g.lastYear)} last year × ${p.g.ratio?.toFixed(3)} (window ${windowLabel(p.g)} vs a year earlier)`}</title>
+                <title>{`Goal ${fmtBucket(p.g.bucket, "month")}: ${usd(p.g.goal)} = ${usd(p.g.lastYear)} last year × ${goal?.ratio?.toFixed(3)}`}</title>
               </circle>
             ))}
           </g>
