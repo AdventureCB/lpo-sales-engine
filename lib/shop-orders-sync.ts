@@ -26,7 +26,10 @@ export interface SyncState {
   ordersScanned?: number;
 }
 
-const ORDERS_QUERY = `query($cursor: String, $q: String, $sort: OrderSortKeys!) {
+// product/variant on line items need read_products; asking for them without
+// the scope floods the response with ACCESS_DENIED errors until Shopify
+// truncates it, so they are only requested when the scope is granted.
+const ordersQuery = (withProducts: boolean) => `query($cursor: String, $q: String, $sort: OrderSortKeys!) {
   orders(first: ${PAGE}, after: $cursor, query: $q, sortKey: $sort) {
     edges { cursor node {
       id name createdAt updatedAt cancelledAt test displayFinancialStatus
@@ -42,7 +45,7 @@ const ORDERS_QUERY = `query($cursor: String, $q: String, $sort: OrderSortKeys!) 
       refunds { refundLineItems(first: 60) { edges { node { quantity subtotalSet { shopMoney { amount } } lineItem { id } } } } }
       lineItems(first: 60) { edges { node {
         id sku title quantity
-        product { id } variant { id }
+        ${withProducts ? "product { id } variant { id }" : ""}
         originalTotalSet { shopMoney { amount } }
         totalDiscountSet { shopMoney { amount } }
         discountAllocations {
@@ -95,6 +98,17 @@ async function gql(token: string, query: string, variables: Record<string, unkno
   if (hard.length) throw new Error(`shopify: ${JSON.stringify(hard).slice(0, 300)}`);
   if (!j?.data) throw new Error(`shopify: ${JSON.stringify(errors).slice(0, 300)}`);
   return { data: j.data, accessDenied: errors.length > 0 };
+}
+
+const SCOPES_QUERY = `{ currentAppInstallation { accessScopes { handle } } }`;
+
+export async function hasProductsScope(token: string): Promise<boolean> {
+  try {
+    const { data } = await gql(token, SCOPES_QUERY, {});
+    return (data.currentAppInstallation?.accessScopes ?? []).some((s: any) => s.handle === "read_products");
+  } catch {
+    return false;
+  }
 }
 
 export async function readState(db: SupabaseClient): Promise<SyncState> {
@@ -225,13 +239,15 @@ export async function syncShopOrders(
     if (state.done && !opts.reset) return { mode: "full", done: true, scanned: 0, pages: 0, skipped: "already complete" };
   }
 
+  const withProducts = await hasProductsScope(token);
+  const query = ordersQuery(withProducts);
   let scanned = 0;
   let pages = 0;
   let hasNext = true;
   let endCursor: string | undefined;
-  let accessDenied = false;
+  let accessDenied = !withProducts;
   while (Date.now() - started < deadline) {
-    const { data, accessDenied: ad } = await gql(token, ORDERS_QUERY, { cursor: cursor ?? null, q, sort });
+    const { data, accessDenied: ad } = await gql(token, query, { cursor: cursor ?? null, q, sort });
     accessDenied = accessDenied || ad;
     const conn = data.orders;
     pages++;
