@@ -118,12 +118,17 @@ async function seasonalGoal(run: (f: string | null, t: string | null) => Promise
   const at = (ym: string) => net.get(ym) ?? 0;
   const months: { bucket: string; goal: number | null; lastYear: number; ratio: number | null; future: boolean }[] = [];
   const endActual = monthStart(toDay);
+  // The growth window never includes the current (partial) month or anything
+  // after it: months beyond "now" all use the window ending last month.
+  const nowLA = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const nowYm = monthStart(nowLA);
   for (let ym = first; ym <= lastGoal; ym = addMonths(ym, 1)) {
+    const anchor = ym > nowYm ? nowYm : ym;
     let cur = 0;
     let prior = 0;
     for (let k = 1; k <= w; k++) {
-      cur += at(addMonths(ym, -k));
-      prior += at(addMonths(ym, -12 - k));
+      cur += at(addMonths(anchor, -k));
+      prior += at(addMonths(anchor, -12 - k));
     }
     const ratio = prior > 0 ? cur / prior : null;
     const ly = at(addMonths(ym, -12));
