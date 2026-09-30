@@ -29,10 +29,17 @@ interface Goal {
   months: GoalMonth[];
 }
 const NORMALIZED_COLOR = "#e0b341";
+interface Health {
+  monthsExcl: number; avgExcl: number | null;
+  monthsIncl: number; avgIncl: number | null;
+  includesCurrent: boolean; mtd: number | null; mtdMonth: string | null; dayOfMonth: number; daysInMonth: number;
+  bands: { unhealthyBelow: number; okBelow: number; target: number };
+}
 interface Payload {
   a: Report | null;
   b: Report | null;
   goal: Goal | null;
+  health: Health | null;
   bucket: string;
   threshold: number;
   collections: Collection[];
@@ -361,6 +368,39 @@ export function RevenueView() {
             {tile("Customers > threshold", a.big.customers.toLocaleString(), (b?.big.customers ?? 0).toLocaleString(), <DeltaTag x={a.big.customers} y={b?.big.customers} />, "deduped by name")}
           </div>
 
+          {data?.health && (
+            <div className="card" style={{ marginTop: 14, padding: "14px 18px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+                <div style={{ fontWeight: 750 }}>Monthly revenue health</div>
+                <div style={{ fontSize: 12, color: "var(--text-3)", display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  <span><span style={{ display: "inline-block", width: 10, height: 10, background: "var(--crit)", borderRadius: 2, marginRight: 5 }} />under {usd(data.health.bands.unhealthyBelow, { compact: true })} unhealthy</span>
+                  <span><span style={{ display: "inline-block", width: 10, height: 10, background: NORMALIZED_COLOR, borderRadius: 2, marginRight: 5 }} />to {usd(data.health.bands.okBelow, { compact: true })} ok</span>
+                  <span><span style={{ display: "inline-block", width: 10, height: 10, background: "var(--good)", borderRadius: 2, marginRight: 5 }} />above optimal</span>
+                  <span>◆ target {usd(data.health.bands.target, { compact: true })}</span>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18, marginTop: 8 }}>
+                <Gauge
+                  value={data.health.avgExcl}
+                  bands={data.health.bands}
+                  title="Average per month"
+                  sub={data.health.monthsExcl ? `${data.health.monthsExcl} closed month${data.health.monthsExcl === 1 ? "" : "s"} in ${periodLabel(from, to)}, current month excluded` : "No closed months in this period"}
+                />
+                <Gauge
+                  value={data.health.includesCurrent ? data.health.avgIncl : data.health.avgExcl}
+                  bands={data.health.bands}
+                  title="With month to date"
+                  sub={
+                    data.health.includesCurrent && data.health.mtdMonth
+                      ? `${fmtBucket(data.health.mtdMonth, "month")} so far ${usd(data.health.mtd)} (day ${data.health.dayOfMonth} of ${data.health.daysInMonth}) → ${data.health.avgIncl != null && data.health.avgExcl != null ? `${data.health.avgIncl >= data.health.avgExcl ? "lifts" : "drags"} the average by ${usd(Math.abs(data.health.avgIncl - data.health.avgExcl))}` : "—"}`
+                      : "Period does not include the current month"
+                  }
+                  muted={!data.health.includesCurrent}
+                />
+              </div>
+            </div>
+          )}
+
           <div className="card" style={{ marginTop: 14, padding: "14px 18px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, flexWrap: "wrap", gap: 8 }}>
               <div style={{ fontWeight: 750 }}>Net revenue by {bucket}</div>
@@ -616,6 +656,58 @@ function BarChart({ a, b, bucket, goal }: { a: Series[]; b: Series[]; bucket: Bu
           </g>
         )}
       </svg>
+    </div>
+  );
+}
+
+/** Car-style half gauge: red / amber / green bands, a target diamond, a needle. */
+function Gauge({ value, bands, title, sub, muted }: { value: number | null; bands: Health["bands"]; title: string; sub: string; muted?: boolean }) {
+  const max = Math.max(bands.target * 1.25, (value ?? 0) * 1.05, 120_000_000);
+  const W = 320, H = 218, cx = 160, cy = 160, R = 130, r = 98;
+  const ang = (v: number) => Math.PI - (Math.min(Math.max(v, 0), max) / max) * Math.PI; // π → 0, left to right
+  const pt = (rad: number, a: number) => [cx + rad * Math.cos(a), cy - rad * Math.sin(a)] as const;
+  const arc = (from: number, to: number, color: string) => {
+    const a0 = ang(from), a1 = ang(to);
+    const [x0, y0] = pt(R, a0), [x1, y1] = pt(R, a1), [x2, y2] = pt(r, a1), [x3, y3] = pt(r, a0);
+    const large = a0 - a1 > Math.PI ? 1 : 0;
+    return <path d={`M${x0},${y0} A${R},${R} 0 ${large} 1 ${x1},${y1} L${x2},${y2} A${r},${r} 0 ${large} 0 ${x3},${y3} Z`} fill={color} opacity={muted ? 0.35 : 0.85} />;
+  };
+  const band = value == null ? null : value < bands.unhealthyBelow ? "unhealthy" : value < bands.okBelow ? "ok" : value >= bands.target ? "on target" : "optimal";
+  const bandColor = band === "unhealthy" ? "var(--crit)" : band === "ok" ? NORMALIZED_COLOR : "var(--good)";
+  const needle = value != null ? ang(value) : null;
+  const [tx, ty] = pt(R + 10, ang(bands.target));
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => f * max);
+  return (
+    <div style={{ display: "grid", justifyItems: "center", gap: 2, opacity: muted ? 0.7 : 1 }}>
+      <div style={{ fontSize: 12, color: "var(--text-3)", fontWeight: 750, letterSpacing: "0.06em", textTransform: "uppercase" }}>{title}</div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", maxWidth: 340, height: "auto", display: "block" }} role="img" aria-label={`${title}: ${usd(value)}`}>
+        {arc(0, bands.unhealthyBelow, "var(--crit)")}
+        {arc(bands.unhealthyBelow, bands.okBelow, NORMALIZED_COLOR)}
+        {arc(bands.okBelow, max, "var(--good)")}
+        {ticks.map((t, i) => {
+          const [x1, y1] = pt(r - 4, ang(t)), [x2, y2] = pt(r - 12, ang(t)), [lx, ly] = pt(r - 24, ang(t));
+          return (
+            <g key={i}>
+              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="var(--text-3)" strokeWidth={1.5} />
+              <text x={lx} y={ly + 3} fontSize={9} fill="var(--text-3)" textAnchor="middle">{usd(t, { compact: true })}</text>
+            </g>
+          );
+        })}
+        <g transform={`translate(${tx},${ty}) rotate(45)`}>
+          <rect x={-5} y={-5} width={10} height={10} fill="var(--text-1)" stroke="var(--surface-1)" strokeWidth={1.5}>
+            <title>{`Target ${usd(bands.target)}`}</title>
+          </rect>
+        </g>
+        {needle != null && (
+          <g>
+            <line x1={cx} y1={cy} x2={pt(R - 6, needle)[0]} y2={pt(R - 6, needle)[1]} stroke="var(--text-1)" strokeWidth={3.5} strokeLinecap="round" />
+            <circle cx={cx} cy={cy} r={7} fill="var(--text-1)" />
+          </g>
+        )}
+        <text x={cx} y={cy + 30} fontSize={22} fontWeight={800} fill="var(--text-1)" textAnchor="middle" style={{ fontVariantNumeric: "tabular-nums" }}>{usd(value)}</text>
+        {band && <text x={cx} y={cy + 48} fontSize={11} fontWeight={750} fill={bandColor} textAnchor="middle" letterSpacing="0.08em">{band.toUpperCase()}</text>}
+      </svg>
+      <div style={{ fontSize: 12, color: "var(--text-3)", textAlign: "center", maxWidth: 340 }}>{sub}</div>
     </div>
   );
 }

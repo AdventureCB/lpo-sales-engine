@@ -69,14 +69,17 @@ export async function GET(req: NextRequest) {
       run(cfrom, cto),
       db.from("shop_orders").select("created_at").order("created_at", { ascending: true }).limit(1).maybeSingle(),
     ]);
-    const goal =
+    const [goal, health] = await Promise.all([
       bucket === "month" && a && b && from && to && cfrom && cto
-        ? await seasonalGoal(run, { from: p.get("from")!, to: p.get("to")!, cfrom: p.get("cfrom")!, cto: p.get("cto")! }, a, b)
-        : null;
+        ? seasonalGoal(run, { from: p.get("from")!, to: p.get("to")!, cfrom: p.get("cfrom")!, cto: p.get("cto")! }, a, b)
+        : Promise.resolve(null),
+      from && to ? monthlyHealth(run, p.get("from")!, p.get("to")!, bucket === "month" ? a : null) : Promise.resolve(null),
+    ]);
     return NextResponse.json({
       a,
       b,
       goal,
+      health,
       bucket,
       threshold,
       collections: cols ?? [],
@@ -175,6 +178,40 @@ async function seasonalGoal(
     compare2From: addYearsDay(d.cfrom, -1),
     compare2To: addYearsDay(d.cto, -1),
     months,
+  };
+}
+
+/**
+ * Monthly revenue health: average net per calendar month over the selected
+ * period, (1) without the current month-to-date and (2) with it, so the
+ * gauge shows how the month in progress is moving the average.
+ */
+async function monthlyHealth(run: (f: string | null, t: string | null) => Promise<any>, fromDay: string, toDay: string, monthReport: any) {
+  const rep = monthReport ?? (await run(laMidnight(fromDay), laMidnight(toDay, 1)));
+  const net = new Map<string, number>();
+  for (const s of rep?.series ?? []) net.set(monthStart(s.bucket), Number(s.net) || 0);
+  const nowLA = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const nowYm = monthStart(nowLA);
+  const first = monthStart(fromDay);
+  const last = monthStart(toDay);
+  const months: { bucket: string; net: number; current: boolean }[] = [];
+  for (let ym = first; ym <= last; ym = addMonths(ym, 1)) months.push({ bucket: ym, net: net.get(ym) ?? 0, current: ym === nowYm });
+  const closed = months.filter((m) => !m.current && m.bucket < nowYm);
+  const current = months.find((m) => m.current) ?? null;
+  const avg = (xs: { net: number }[]) => (xs.length ? Math.round(xs.reduce((s, m) => s + m.net, 0) / xs.length) : null);
+  const withCurrent = current ? [...closed, current] : closed;
+  const [y, m, d] = nowLA.split("-").map(Number);
+  return {
+    monthsExcl: closed.length,
+    avgExcl: avg(closed),
+    monthsIncl: withCurrent.length,
+    avgIncl: avg(withCurrent),
+    includesCurrent: !!current,
+    mtd: current?.net ?? null,
+    mtdMonth: current?.bucket ?? null,
+    dayOfMonth: d,
+    daysInMonth: new Date(y, m, 0).getDate(),
+    bands: { unhealthyBelow: 60_000_000, okBelow: 78_000_000, target: 96_000_000 },
   };
 }
 
