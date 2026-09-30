@@ -135,33 +135,38 @@ async function seasonalGoal(
   const bNet = Number(b?.totals?.net) || 0;
   const b2Net = Number(b2?.totals?.net) || 0;
   const ratio = bNet > 0 ? aNet / bNet : null;
-  const bAvg = b2Net > 0 ? (bNet + b2Net) / 2 : bNet;
-  const ratio2 = bAvg > 0 ? aNet / bAvg : null;
+  // Normalized line: the two-years-ago month is first rescaled up to last
+  // year's level (compare ÷ compare-a-year-earlier), then averaged with last
+  // year's month, so the yellow line only differs from green where a month's
+  // share of its year was unusual. Same growth multiplier as green.
+  const scale = b2Net > 0 ? bNet / b2Net : null;
 
   const endActual = monthStart(d.to);
   const months = [] as {
     bucket: string; future: boolean;
     lastYear: number; goal: number | null;
-    twoYearsAgo: number | null; base2: number; normalized: number | null;
+    twoYearsAgo: number | null; twoYearsAgoScaled: number | null; base2: number; normalized: number | null;
   }[];
   for (let ym = first; ym <= lastGoal; ym = addMonths(ym, 1)) {
     const ly = at(addMonths(ym, -12));
     const y2 = has(addMonths(ym, -24)) ? at(addMonths(ym, -24)) : null;
-    const base2 = y2 != null ? (ly + y2) / 2 : ly;
+    const y2s = y2 != null && scale != null ? y2 * scale : null;
+    const base2 = y2s != null ? (ly + y2s) / 2 : ly;
     months.push({
       bucket: ym,
       future: ym > endActual,
       lastYear: ly,
       goal: ratio != null && ly > 0 ? Math.round(ly * ratio) : null,
       twoYearsAgo: y2,
-      base2,
-      normalized: ratio2 != null && base2 > 0 ? Math.round(base2 * ratio2) : null,
+      twoYearsAgoScaled: y2s != null ? Math.round(y2s) : null,
+      base2: Math.round(base2),
+      normalized: ratio != null && base2 > 0 ? Math.round(base2 * ratio) : null,
     });
   }
   return {
     horizon: HORIZON,
     ratio,
-    ratio2,
+    scale,
     periodNet: aNet,
     compareNet: bNet,
     compare2Net: b2Net,

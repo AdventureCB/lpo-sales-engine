@@ -21,10 +21,10 @@ interface Collection { id: number; title: string; handle: string | null; product
 interface GoalMonth {
   bucket: string; future: boolean;
   lastYear: number; goal: number | null;
-  twoYearsAgo: number | null; base2: number; normalized: number | null;
+  twoYearsAgo: number | null; twoYearsAgoScaled: number | null; base2: number; normalized: number | null;
 }
 interface Goal {
-  horizon: number; ratio: number | null; ratio2: number | null;
+  horizon: number; ratio: number | null; scale: number | null;
   periodNet: number; compareNet: number; compare2Net: number; compare2From: string; compare2To: string;
   months: GoalMonth[];
 }
@@ -375,7 +375,7 @@ export function RevenueView() {
                     </span>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                       <span style={{ display: "inline-block", width: 14, height: 0, borderTop: `2px dashed ${NORMALIZED_COLOR}` }} />
-                      Normalized = 2-yr avg month × {data.goal.ratio2 != null ? data.goal.ratio2.toFixed(3) : "—"}
+                      Normalized = avg(last year, 2 yrs ago × {data.goal.scale != null ? data.goal.scale.toFixed(2) : "—"}) × {data.goal.ratio != null ? data.goal.ratio.toFixed(3) : "—"}
                     </span>
                   </>
                 )}
@@ -393,7 +393,7 @@ export function RevenueView() {
                 </div>
                 <div>
                   <b style={{ color: NORMALIZED_COLOR }}>Normalized: {usd(nextGoal.normalized)}</b>
-                  <span style={{ color: "var(--text-3)" }}> = avg of {fmtBucket(addYears(nextGoal.bucket, -1), "month")} {usd(nextGoal.lastYear)} and {fmtBucket(addYears(nextGoal.bucket, -2), "month")} {usd(nextGoal.twoYearsAgo)} ({usd(nextGoal.base2)}) × {data.goal.ratio2?.toFixed(3)}. Growth is the period ÷ the average of the compare period and {periodLabel(data.goal.compare2From, data.goal.compare2To)} ({usd(data.goal.compare2Net)}). Smooths one-off months like Dec 2025.</span>
+                  <span style={{ color: "var(--text-3)" }}> = avg of {fmtBucket(addYears(nextGoal.bucket, -1), "month")} {usd(nextGoal.lastYear)} and {fmtBucket(addYears(nextGoal.bucket, -2), "month")} {usd(nextGoal.twoYearsAgo)} rescaled to last year&apos;s level (× {data.goal.scale?.toFixed(2)} = {usd(nextGoal.twoYearsAgoScaled)}), giving {usd(nextGoal.base2)} × the same {data.goal.ratio?.toFixed(3)}. The rescale is {periodLabel(cfrom, cto)} ÷ {periodLabel(data.goal.compare2From, data.goal.compare2To)} ({usd(data.goal.compareNet)} ÷ {usd(data.goal.compare2Net)}). Differs from the goal only where a month&apos;s share of its year was unusual, like Dec 2025.</span>
                   {laterGoals.length > 0 && <span style={{ color: "var(--text-3)" }}> Then {laterGoals.map((g) => `${fmtBucket(g.bucket, "month")} ${usd(g.normalized)}`).join(", ")}.</span>}
                 </div>
               </div>
@@ -439,7 +439,7 @@ export function RevenueView() {
                       <td style={{ color: "var(--text-3)" }}>→</td>
                       <td style={{ color: "var(--text-3)" }}>{fmtBucket(g.bucket, "month")} (upcoming)</td>
                       <td colSpan={8} style={{ color: "var(--text-3)", fontSize: 12 }}>
-                        {fmtBucket(addYears(g.bucket, -1), "month")} {usd(g.lastYear)} × {data?.goal?.ratio?.toFixed(3) ?? "—"} · normalized: avg({usd(g.lastYear)}, {usd(g.twoYearsAgo)}) × {data?.goal?.ratio2?.toFixed(3) ?? "—"}
+                        {fmtBucket(addYears(g.bucket, -1), "month")} {usd(g.lastYear)} × {data?.goal?.ratio?.toFixed(3) ?? "—"} · normalized: avg({usd(g.lastYear)}, {usd(g.twoYearsAgo)} × {data?.goal?.scale?.toFixed(2) ?? "—"}) = {usd(g.base2)} × {data?.goal?.ratio?.toFixed(3) ?? "—"}
                       </td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--good)", fontWeight: 650, borderLeft: "1px solid var(--border)" }}>{usd(g.goal)}</td>
                       <td />
@@ -600,7 +600,7 @@ function BarChart({ a, b, bucket, goal }: { a: Series[]; b: Series[]; bucket: Bu
             <path d={path(normPts)} fill="none" stroke={NORMALIZED_COLOR} strokeWidth={2} strokeDasharray="3 4" strokeLinejoin="round" opacity={0.9} />
             {normPts.map((p, i) => p && (
               <circle key={i} cx={p.x} cy={p.y} r={p.future ? 4 : 3} fill={p.future ? NORMALIZED_COLOR : "var(--surface-1)"} stroke={NORMALIZED_COLOR} strokeWidth={2}>
-                <title>{`Normalized ${fmtBucket(p.g.bucket, "month")}: ${usd(p.g.normalized)} = avg(${usd(p.g.lastYear)}, ${usd(p.g.twoYearsAgo)}) × ${goal?.ratio2?.toFixed(3)}`}</title>
+                <title>{`Normalized ${fmtBucket(p.g.bucket, "month")}: ${usd(p.g.normalized)} = avg(${usd(p.g.lastYear)}, ${usd(p.g.twoYearsAgo)} × ${goal?.scale?.toFixed(2)}) = ${usd(p.g.base2)} × ${goal?.ratio?.toFixed(3)}`}</title>
               </circle>
             ))}
           </g>
