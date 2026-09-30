@@ -18,9 +18,12 @@ interface Report {
   discounts: { label: string; cents: number; orders: number }[];
 }
 interface Collection { id: number; title: string; handle: string | null; products_count: number | null; rule_based: boolean }
+interface GoalMonth { bucket: string; goal: number | null; lastYear: number; ratio: number | null; future: boolean }
+interface Goal { window: number; horizon: number; months: GoalMonth[] }
 interface Payload {
   a: Report | null;
   b: Report | null;
+  goal: Goal | null;
   bucket: string;
   threshold: number;
   collections: Collection[];
@@ -93,6 +96,7 @@ export function RevenueView() {
   const [cto, setCto] = useState(() => derivedCompare(PRESETS[0].from, PRESETS[0].to, "yoy")[1]);
   const [bucket, setBucket] = useState<Bucket>("month");
   const [thresholdUsd, setThresholdUsd] = useState(5000);
+  const [growth, setGrowth] = useState<3 | 6 | 12>(6);
   const [selected, setSelected] = useState<number[] | "all">("all");
   const [unmatched, setUnmatched] = useState(true);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
@@ -142,7 +146,7 @@ export function RevenueView() {
     const seq = ++reqSeq.current;
     setLoading(true);
     setError(null);
-    const q = new URLSearchParams({ from, to, cfrom, cto, bucket, threshold: String(Math.round(thresholdUsd * 100)), unmatched: unmatched ? "1" : "0" });
+    const q = new URLSearchParams({ from, to, cfrom, cto, bucket, threshold: String(Math.round(thresholdUsd * 100)), unmatched: unmatched ? "1" : "0", growth: String(growth) });
     if (selected !== "all") q.set("collections", selected.join(","));
     try {
       const r = await fetch(`/api/admin/revenue?${q}`, { signal: ctrl.signal, cache: "no-store" });
@@ -156,7 +160,7 @@ export function RevenueView() {
     } finally {
       if (seq === reqSeq.current) setLoading(false);
     }
-  }, [from, to, cfrom, cto, bucket, thresholdUsd, unmatched, selected, prefsLoaded]);
+  }, [from, to, cfrom, cto, bucket, thresholdUsd, unmatched, selected, prefsLoaded, growth]);
 
   useEffect(() => { const h = setTimeout(load, 250); return () => clearTimeout(h); }, [load]);
 
@@ -221,6 +225,14 @@ export function RevenueView() {
   );
 
   const bigList = (showBig === "a" ? a : b)?.big.list ?? [];
+  const goalByMonth = useMemo(() => {
+    const m = new Map<string, GoalMonth>();
+    for (const g of data?.goal?.months ?? []) m.set(g.bucket.slice(0, 7), g);
+    return m;
+  }, [data?.goal]);
+  const futureGoals = (data?.goal?.months ?? []).filter((g) => g.future && g.goal != null);
+  const nextGoal = futureGoals[0] ?? null;
+  const laterGoals = futureGoals.slice(1);
   const periodLabel = (f: string, t: string) => `${fmtDate(f)} – ${fmtDate(t)}`;
   const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text-1)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 9px", fontSize: 13, fontVariantNumeric: "tabular-nums" };
 
@@ -342,16 +354,37 @@ export function RevenueView() {
           </div>
 
           <div className="card" style={{ marginTop: 14, padding: "14px 18px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, flexWrap: "wrap", gap: 8 }}>
               <div style={{ fontWeight: 750 }}>Net revenue by {bucket}</div>
-              <div style={{ fontSize: 12, color: "var(--text-3)", display: "flex", gap: 14 }}>
+              <div style={{ fontSize: 12, color: "var(--text-3)", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
                 <span><span style={{ display: "inline-block", width: 10, height: 10, background: "var(--accent)", borderRadius: 2, marginRight: 5 }} />{periodLabel(from, to)}</span>
                 <span><span style={{ display: "inline-block", width: 10, height: 10, background: "var(--accent-2)", borderRadius: 2, marginRight: 5 }} />{periodLabel(cfrom, cto)}</span>
+                {bucket === "month" && (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ display: "inline-block", width: 14, height: 0, borderTop: "2px dashed var(--good)" }} />
+                    Goal = last year × trailing
+                    <select value={growth} onChange={(e) => setGrowth(Number(e.target.value) as 3 | 6 | 12)} style={{ ...inputStyle, padding: "2px 6px", fontSize: 12 }}>
+                      <option value={3}>3-mo</option>
+                      <option value={6}>6-mo</option>
+                      <option value={12}>12-mo</option>
+                    </select>
+                    growth
+                  </span>
+                )}
               </div>
             </div>
             <div style={{ opacity: loading ? 0.45 : 1, transition: "opacity 150ms" }}>
-              <BarChart a={a.series} b={b?.series ?? []} bucket={bucket} />
+              <BarChart a={a.series} b={b?.series ?? []} bucket={bucket} goal={data?.goal ?? null} />
             </div>
+            {nextGoal && (
+              <div style={{ fontSize: 13, marginTop: 8, color: "var(--text-2)" }}>
+                <b style={{ color: "var(--good)" }}>Goal for {fmtBucket(nextGoal.bucket, "month")}: {usd(nextGoal.goal)}</b>
+                <span style={{ color: "var(--text-3)" }}> — {fmtBucket(addYears(nextGoal.bucket, -1), "month")} was {usd(nextGoal.lastYear)}, and the last {data!.goal!.window} months ran {nextGoal.ratio != null ? `${((nextGoal.ratio - 1) * 100).toFixed(1)}%` : "—"} {nextGoal.ratio != null && nextGoal.ratio < 1 ? "below" : "above"} the same months a year earlier.</span>
+                {laterGoals.length > 0 && (
+                  <span style={{ color: "var(--text-3)" }}> Then {laterGoals.map((g) => `${fmtBucket(g.bucket, "month")} ${usd(g.goal)}`).join(", ")}.</span>
+                )}
+              </div>
+            )}
             <div style={{ overflowX: "auto", marginTop: 10 }}>
               <table className="data-table" style={{ fontSize: 13, width: "100%" }}>
                 <thead>
@@ -360,12 +393,15 @@ export function RevenueView() {
                     <th>Period</th><th style={{ textAlign: "right" }}>Net</th><th style={{ textAlign: "right" }}>Orders</th><th style={{ textAlign: "right" }}>Discounts</th>
                     <th style={{ borderLeft: "1px solid var(--border)" }}>Compare</th><th style={{ textAlign: "right" }}>Net</th><th style={{ textAlign: "right" }}>Orders</th><th style={{ textAlign: "right" }}>Discounts</th>
                     <th style={{ textAlign: "right" }}>Δ net</th>
+                    {data?.goal && <th style={{ textAlign: "right", borderLeft: "1px solid var(--border)" }}>Goal</th>}
+                    {data?.goal && <th style={{ textAlign: "right" }}>vs goal</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {Array.from({ length: Math.max(a.series.length, b?.series.length ?? 0) }).map((_, i) => {
                     const ra = a.series[i];
                     const rb = b?.series[i];
+                    const g = ra && data?.goal ? goalByMonth.get(ra.bucket.slice(0, 7)) : undefined;
                     return (
                       <tr key={i}>
                         <td style={{ color: "var(--text-3)" }}>{i + 1}</td>
@@ -378,9 +414,22 @@ export function RevenueView() {
                         <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{rb?.orders ?? "—"}</td>
                         <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{usd(rb?.discounts)}</td>
                         <td style={{ textAlign: "right" }}><DeltaTag x={ra?.net} y={rb?.net} /></td>
+                        {data?.goal && <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--good)", borderLeft: "1px solid var(--border)" }}>{usd(g?.goal)}</td>}
+                        {data?.goal && <td style={{ textAlign: "right" }}>{g?.goal != null && ra ? <DeltaTag x={ra.net} y={g.goal} /> : "—"}</td>}
                       </tr>
                     );
                   })}
+                  {futureGoals.map((g) => (
+                    <tr key={g.bucket} style={{ opacity: 0.75 }}>
+                      <td style={{ color: "var(--text-3)" }}>→</td>
+                      <td style={{ color: "var(--text-3)" }}>{fmtBucket(g.bucket, "month")} (upcoming)</td>
+                      <td colSpan={8} style={{ color: "var(--text-3)", fontSize: 12 }}>
+                        {fmtBucket(addYears(g.bucket, -1), "month")} {usd(g.lastYear)} × {g.ratio != null ? g.ratio.toFixed(2) : "—"}
+                      </td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--good)", fontWeight: 650, borderLeft: "1px solid var(--border)" }}>{usd(g.goal)}</td>
+                      <td />
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -481,11 +530,18 @@ export function RevenueView() {
   );
 }
 
-function BarChart({ a, b, bucket }: { a: Series[]; b: Series[]; bucket: Bucket }) {
-  const n = Math.max(a.length, b.length);
+function BarChart({ a, b, bucket, goal }: { a: Series[]; b: Series[]; bucket: Bucket; goal: Goal | null }) {
+  // Month mode with a goal line: columns = every month of the period plus the
+  // upcoming horizon; otherwise columns = the report buckets by position.
+  const goalMonths = bucket === "month" && goal ? goal.months : [];
+  const aByMonth = new Map(a.map((s) => [s.bucket.slice(0, 7), s]));
+  const cols: { ra?: Series; rb?: Series; g?: GoalMonth; label: string; future: boolean }[] = goalMonths.length
+    ? goalMonths.map((g, i) => ({ ra: aByMonth.get(g.bucket.slice(0, 7)), rb: b[i], g, label: fmtBucket(g.bucket, "month"), future: g.future }))
+    : Array.from({ length: Math.max(a.length, b.length) }).map((_, i) => ({ ra: a[i], rb: b[i], label: fmtBucket((a[i] ?? b[i]).bucket, bucket), future: false }));
+  const n = cols.length;
   if (n === 0) return <div style={{ color: "var(--text-3)", fontSize: 13, padding: "20px 0" }}>No orders in this period.</div>;
   const W = 900, H = 220, padL = 56, padB = 26, padT = 10;
-  const max = Math.max(1, ...a.map((s) => s.net), ...b.map((s) => s.net));
+  const max = Math.max(1, ...a.map((s) => s.net), ...b.map((s) => s.net), ...goalMonths.map((g) => g.goal ?? 0));
   const innerW = W - padL - 8;
   const innerH = H - padB - padT;
   const group = innerW / n;
@@ -493,29 +549,45 @@ function BarChart({ a, b, bucket }: { a: Series[]; b: Series[]; bucket: Bucket }
   const y = (v: number) => padT + innerH - (Math.max(0, v) / max) * innerH;
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => f * max);
   const labelEvery = n > 40 ? Math.ceil(n / 20) : n > 16 ? 2 : 1;
+  const cx = (i: number) => padL + i * group + group / 2;
+  const goalPts = cols.map((c, i) => (c.g?.goal != null ? { x: cx(i), y: y(c.g.goal), future: c.future, g: c.g } : null));
+  const path = (pts: typeof goalPts) => pts.filter(Boolean).map((p, i) => `${i === 0 ? "M" : "L"}${p!.x.toFixed(1)},${p!.y.toFixed(1)}`).join(" ");
+  const lastActualIdx = cols.reduce((m, c, i) => (!c.future ? i : m), -1);
   return (
     <div style={{ overflowX: "auto" }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", minWidth: 520, height: "auto", display: "block" }} role="img" aria-label="Net revenue by period, this period vs comparison">
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", minWidth: 520, height: "auto", display: "block" }} role="img" aria-label="Net revenue by period, this period vs comparison, with seasonal goal line">
         {ticks.map((t, i) => (
           <g key={i}>
             <line x1={padL} x2={W - 8} y1={y(t)} y2={y(t)} stroke="var(--border-soft)" strokeWidth={1} />
             <text x={padL - 6} y={y(t) + 4} fontSize={10} fill="var(--text-3)" textAnchor="end">{usd(t, { compact: true })}</text>
           </g>
         ))}
-        {Array.from({ length: n }).map((_, i) => {
-          const ra = a[i];
-          const rb = b[i];
+        {cols.some((c) => c.future) && lastActualIdx >= 0 && (
+          <rect x={padL + (lastActualIdx + 1) * group} y={padT} width={(n - lastActualIdx - 1) * group} height={innerH} fill="var(--surface-2)" opacity={0.5} />
+        )}
+        {cols.map((c, i) => {
+          const { ra, rb } = c;
           const x0 = padL + i * group + (group - (bw * 2 + 3)) / 2;
           return (
             <g key={i}>
               {ra && <rect x={x0} y={y(ra.net)} width={bw} height={Math.max(0, padT + innerH - y(ra.net))} fill="var(--accent)" rx={2}><title>{`${fmtBucket(ra.bucket, bucket)}: ${usd(ra.net)} net · ${ra.orders} orders`}</title></rect>}
               {rb && <rect x={x0 + bw + 3} y={y(rb.net)} width={bw} height={Math.max(0, padT + innerH - y(rb.net))} fill="var(--accent-2)" rx={2} opacity={0.85}><title>{`${fmtBucket(rb.bucket, bucket)}: ${usd(rb.net)} net · ${rb.orders} orders`}</title></rect>}
-              {(ra || rb) && i % labelEvery === 0 && (
-                <text x={x0 + bw + 1.5} y={H - 8} fontSize={10} fill="var(--text-3)" textAnchor="middle">{fmtBucket((ra ?? rb)!.bucket, bucket)}</text>
+              {i % labelEvery === 0 && (
+                <text x={cx(i)} y={H - 8} fontSize={10} fill="var(--text-3)" textAnchor="middle" fontStyle={c.future ? "italic" : "normal"}>{c.label}</text>
               )}
             </g>
           );
         })}
+        {goalPts.some(Boolean) && (
+          <g>
+            <path d={path(goalPts)} fill="none" stroke="var(--good)" strokeWidth={2} strokeDasharray="6 4" strokeLinejoin="round" />
+            {goalPts.map((p, i) => p && (
+              <circle key={i} cx={p.x} cy={p.y} r={p.future ? 4 : 3} fill={p.future ? "var(--good)" : "var(--surface-1)"} stroke="var(--good)" strokeWidth={2}>
+                <title>{`Goal ${fmtBucket(p.g.bucket, "month")}: ${usd(p.g.goal)} = ${usd(p.g.lastYear)} last year × ${p.g.ratio?.toFixed(2)}`}</title>
+              </circle>
+            ))}
+          </g>
+        )}
       </svg>
     </div>
   );

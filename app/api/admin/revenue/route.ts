@@ -63,15 +63,19 @@ export async function GET(req: NextRequest) {
     return data;
   };
 
+  const growth = [3, 6, 12].includes(Number(p.get("growth"))) ? Number(p.get("growth")) : 6;
+
   try {
-    const [a, b, oldest] = await Promise.all([
+    const [a, b, oldest, goal] = await Promise.all([
       run(from, to),
       run(cfrom, cto),
       db.from("shop_orders").select("created_at").order("created_at", { ascending: true }).limit(1).maybeSingle(),
+      bucket === "month" && from && to ? seasonalGoal(run, p.get("from")!, p.get("to")!, growth) : Promise.resolve(null),
     ]);
     return NextResponse.json({
       a,
       b,
+      goal,
       bucket,
       threshold,
       collections: cols ?? [],
@@ -87,6 +91,45 @@ export async function GET(req: NextRequest) {
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e) }, { status: 500 });
   }
+}
+
+const HORIZON = 3;
+const monthStart = (d: string) => d.slice(0, 7) + "-01";
+function addMonths(ym: string, n: number): string {
+  const [y, m] = ym.split("-").map(Number);
+  const t = y * 12 + (m - 1) + n;
+  return `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, "0")}-01`;
+}
+
+/**
+ * Seasonal goal line (month buckets only): for each month M from the period
+ * start through HORIZON months past its end,
+ *   goal(M) = net(M − 12) × [ Σ net(M−1 … M−w) ÷ Σ net(M−13 … M−12−w) ]
+ * i.e. last year's month, scaled by the trailing-w-month year-over-year
+ * growth as it stood going into M. Same collection filters as the report.
+ */
+async function seasonalGoal(run: (f: string | null, t: string | null) => Promise<any>, fromDay: string, toDay: string, w: number) {
+  const first = monthStart(fromDay);
+  const lastGoal = addMonths(monthStart(toDay), HORIZON);
+  const histFrom = addMonths(first, -(12 + w));
+  const rep = await run(laMidnight(histFrom), laMidnight(addMonths(lastGoal, 1)));
+  const net = new Map<string, number>();
+  for (const s of rep?.series ?? []) net.set(monthStart(s.bucket), Number(s.net) || 0);
+  const at = (ym: string) => net.get(ym) ?? 0;
+  const months: { bucket: string; goal: number | null; lastYear: number; ratio: number | null; future: boolean }[] = [];
+  const endActual = monthStart(toDay);
+  for (let ym = first; ym <= lastGoal; ym = addMonths(ym, 1)) {
+    let cur = 0;
+    let prior = 0;
+    for (let k = 1; k <= w; k++) {
+      cur += at(addMonths(ym, -k));
+      prior += at(addMonths(ym, -12 - k));
+    }
+    const ratio = prior > 0 ? cur / prior : null;
+    const ly = at(addMonths(ym, -12));
+    months.push({ bucket: ym, lastYear: ly, ratio, goal: ratio != null && ly > 0 ? Math.round(ly * ratio) : null, future: ym > endActual });
+  }
+  return { window: w, horizon: HORIZON, months };
 }
 
 /** Admin "Sync now": one incremental pass (or ?what=catalog / ?what=full). */
