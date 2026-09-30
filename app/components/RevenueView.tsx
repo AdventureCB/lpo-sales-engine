@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 /**
  * Admin revenue analytics: net revenue (never shipping or tax) for any
@@ -129,21 +129,32 @@ export function RevenueView() {
     setCto(t);
   }, [from, to, compare]);
 
+  // Each report takes a second or two; toggling chips in a row can make
+  // responses land out of order, so only the newest request may paint and
+  // superseded ones are aborted.
+  const reqSeq = useRef(0);
+  const inflight = useRef<AbortController | null>(null);
   const load = useCallback(async () => {
     if (!prefsLoaded) return;
+    inflight.current?.abort();
+    const ctrl = new AbortController();
+    inflight.current = ctrl;
+    const seq = ++reqSeq.current;
     setLoading(true);
     setError(null);
     const q = new URLSearchParams({ from, to, cfrom, cto, bucket, threshold: String(Math.round(thresholdUsd * 100)), unmatched: unmatched ? "1" : "0" });
     if (selected !== "all") q.set("collections", selected.join(","));
     try {
-      const r = await fetch(`/api/admin/revenue?${q}`);
+      const r = await fetch(`/api/admin/revenue?${q}`, { signal: ctrl.signal, cache: "no-store" });
       const j = await r.json();
+      if (seq !== reqSeq.current) return;
       if (!r.ok) throw new Error(j.error ?? r.statusText);
       setData(j);
     } catch (e: any) {
+      if (e?.name === "AbortError" || seq !== reqSeq.current) return;
       setError(String(e?.message ?? e));
     } finally {
-      setLoading(false);
+      if (seq === reqSeq.current) setLoading(false);
     }
   }, [from, to, cfrom, cto, bucket, thresholdUsd, unmatched, selected, prefsLoaded]);
 
@@ -338,7 +349,9 @@ export function RevenueView() {
                 <span><span style={{ display: "inline-block", width: 10, height: 10, background: "var(--accent-2)", borderRadius: 2, marginRight: 5 }} />{periodLabel(cfrom, cto)}</span>
               </div>
             </div>
-            <BarChart a={a.series} b={b?.series ?? []} bucket={bucket} />
+            <div style={{ opacity: loading ? 0.45 : 1, transition: "opacity 150ms" }}>
+              <BarChart a={a.series} b={b?.series ?? []} bucket={bucket} />
+            </div>
             <div style={{ overflowX: "auto", marginTop: 10 }}>
               <table className="data-table" style={{ fontSize: 13, width: "100%" }}>
                 <thead>
