@@ -9,10 +9,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
  * Data = the local Shopify order mirror (shop_orders / shop_order_lines).
  */
 
-interface Series { bucket: string; gross: number; discounts: number; returns: number; net: number; orders: number }
+interface Series { bucket: string; gross: number; discounts: number; depositCredits: number; returns: number; net: number; orders: number }
 interface BigCustomer { ckey: string; customer_name: string | null; email: string | null; orders: number; net: number; first_at: string; last_at: string; order_names: string[] }
 interface Report {
-  totals: { gross: number; discounts: number; returns: number; net: number; orders: number; units: number };
+  totals: { gross: number; discounts: number; depositCredits: number; returns: number; net: number; orders: number; units: number };
   big: { orders: number; customers: number; list: BigCustomer[] };
   series: Series[];
   discounts: { label: string; cents: number; orders: number }[];
@@ -227,7 +227,7 @@ export function RevenueView() {
   return (
     <div>
       <h1 className="viewtitle">💵 Revenue</h1>
-      <p className="viewsub">Net revenue from Shopify orders — line items after discounts and refunds. Shipping and sales tax are never included. Test orders are out; cancellations and refunds count as returns on the day they happen.</p>
+      <p className="viewsub">Net revenue from Shopify orders — line items after discounts and refunds. Shipping and sales tax are never included. Unpaid, voided and test orders are out (including staff checkouts on a 100% test code); cancellations and refunds count as returns on the day they happen.</p>
 
       <div className="card" style={{ padding: "14px 18px", marginTop: 8 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
@@ -333,7 +333,7 @@ export function RevenueView() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 10, marginTop: 10 }}>
             {tile("Net revenue", usd(a.totals.net), usd(b?.totals.net), <DeltaTag x={a.totals.net} y={b?.totals.net} />)}
             {tile("Gross sales", usd(a.totals.gross), usd(b?.totals.gross), <DeltaTag x={a.totals.gross} y={b?.totals.gross} />, "before discounts")}
-            {tile("Lost to discounts", usd(a.totals.discounts), usd(b?.totals.discounts), <DeltaTag x={a.totals.discounts} y={b?.totals.discounts} invert />, discountRate(a) != null ? `${discountRate(a)!.toFixed(1)}% of gross` : undefined)}
+            {tile("Lost to discounts", usd(a.totals.discounts), usd(b?.totals.discounts), <DeltaTag x={a.totals.discounts} y={b?.totals.discounts} invert />, `${discountRate(a) != null ? `${discountRate(a)!.toFixed(1)}% of gross` : ""}${a.totals.depositCredits ? ` · excludes ${usd(a.totals.depositCredits)} deposit credits` : ""}`)}
             {tile("Returns", usd(a.totals.returns), usd(b?.totals.returns), <DeltaTag x={a.totals.returns} y={b?.totals.returns} invert />)}
             {tile("Orders", a.totals.orders.toLocaleString(), (b?.totals.orders ?? 0).toLocaleString(), <DeltaTag x={a.totals.orders} y={b?.totals.orders} />)}
             {tile("Avg order", usd(aov(a)), usd(aov(b)), <DeltaTag x={aov(a) ?? undefined} y={aov(b) ?? undefined} />, "net ÷ orders")}
@@ -424,7 +424,12 @@ export function RevenueView() {
 
             <div className="card" style={{ padding: "14px 18px" }}>
               <div style={{ fontWeight: 750, marginBottom: 8 }}>Where the discounts went</div>
-              <div style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 8 }}>Discount codes and manual discounts, by amount given away in the period.</div>
+              <div style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 8 }}>
+                Discount codes and manual discounts, by amount given away in the period.
+                {a.totals.depositCredits > 0 && (
+                  <> Deposit / down-payment credits ({usd(a.totals.depositCredits)}{b ? `, prior ${usd(b.totals.depositCredits)}` : ""}) are money already taken on an earlier order and are not listed here.</>
+                )}
+              </div>
               <div style={{ maxHeight: 420, overflowY: "auto" }}>
                 <table className="data-table" style={{ fontSize: 13, width: "100%" }}>
                   <thead><tr><th>Discount</th><th style={{ textAlign: "right" }}>Given</th><th style={{ textAlign: "right" }}>Orders</th><th style={{ textAlign: "right" }}>Compare</th></tr></thead>
