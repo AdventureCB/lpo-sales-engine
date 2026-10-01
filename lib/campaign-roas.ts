@@ -111,11 +111,19 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
   for (const d of [...created, ...won]) for (const e of emailsOf((d as any).crm_contacts)) allEmails.add(e);
   const emailList = [...allEmails];
 
+  // `.in()` filters travel in the URL. Chunks are sized so the URL stays well
+  // under the gateway limit (gclids are ~100 chars each; 500 of them silently
+  // failed and left every Google deal "campaign unresolved" on long windows),
+  // and every page error is thrown instead of ignored.
+  const must = <T,>(r: { data: T | null; error: any }): T => {
+    if (r.error) throw new Error(r.error.message ?? String(r.error));
+    return (r.data ?? ([] as unknown as T)) as T;
+  };
   const emailToVids = new Map<string, string[]>();
   const allVids = new Set<string>();
-  for (let i = 0; i < emailList.length; i += 500) {
-    const { data: links } = await db.from("web_visitor_links").select("email, visitor_id").in("email", emailList.slice(i, i + 500));
-    for (const l of links ?? []) {
+  for (let i = 0; i < emailList.length; i += 150) {
+    const links = must<any[]>(await db.from("web_visitor_links").select("email, visitor_id").in("email", emailList.slice(i, i + 150)).limit(5000));
+    for (const l of links) {
       const e = String(l.email).toLowerCase();
       (emailToVids.get(e) ?? emailToVids.set(e, []).get(e)!).push(l.visitor_id);
       allVids.add(l.visitor_id);
@@ -125,12 +133,15 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
   const touchesByVid = new Map<string, any[]>();
   const gclids = new Set<string>();
   const vidList = [...allVids];
-  for (let i = 0; i < vidList.length; i += 300) {
-    const { data: touches } = await db
-      .from("web_touches")
-      .select("visitor_id, at, source, campaign, content, gclid, gbraid, wbraid, fbclid")
-      .in("visitor_id", vidList.slice(i, i + 300));
-    for (const t of touches ?? []) {
+  for (let i = 0; i < vidList.length; i += 150) {
+    const touches = must<any[]>(
+      await db
+        .from("web_touches")
+        .select("visitor_id, at, source, campaign, content, gclid, gbraid, wbraid, fbclid")
+        .in("visitor_id", vidList.slice(i, i + 150))
+        .limit(5000)
+    );
+    for (const t of touches) {
       (touchesByVid.get(t.visitor_id) ?? touchesByVid.set(t.visitor_id, []).get(t.visitor_id)!).push(t);
       if (t.gclid) gclids.add(String(t.gclid));
     }
@@ -138,19 +149,23 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
 
   const clickMap = new Map<string, ClickInfo>();
   const gclidList = [...gclids];
-  for (let i = 0; i < gclidList.length; i += 500) {
-    const { data: rows } = await db
-      .from("google_click_map")
-      .select("gclid, campaign_id, ad_id")
-      .in("gclid", gclidList.slice(i, i + 500));
-    for (const r of rows ?? []) {
+  for (let i = 0; i < gclidList.length; i += 60) {
+    const rows = must<any[]>(
+      await db.from("google_click_map").select("gclid, campaign_id, ad_id").in("gclid", gclidList.slice(i, i + 60)).limit(5000)
+    );
+    for (const r of rows) {
       if (r.campaign_id) clickMap.set(String(r.gclid), { campaignId: String(r.campaign_id), adId: r.ad_id ? String(r.ad_id) : null });
     }
   }
 
-  const resolve = (contact: any): DealAttribution | null => {
+  // Last paid click AT OR BEFORE `beforeIso` (deal creation for leads, won
+  // time for revenue). Without the bound, a branded search a month after the
+  // sale was taking credit for it.
+  const resolve = (contact: any, beforeIso: string | null): DealAttribution | null => {
     const touches: any[] = [];
-    for (const e of emailsOf(contact)) for (const vid of emailToVids.get(e) ?? []) touches.push(...(touchesByVid.get(vid) ?? []));
+    const cutoff = beforeIso ? Date.parse(beforeIso) + 3_600_000 : null; // 1h grace for beacon/CRM clock skew
+    const inTime = (t: any) => cutoff == null || !t?.at || !(Date.parse(String(t.at)) > cutoff);
+    for (const e of emailsOf(contact)) for (const vid of emailToVids.get(e) ?? []) touches.push(...(touchesByVid.get(vid) ?? []).filter(inTime));
     // Off-site captures live in the contact's attribution blob, not the site
     // beacon: Typeform survey hidden fields (utm_* / fbclid / gclid carried from
     // a Meta or Google ad straight into the survey — Quote Survey / Survey West
@@ -158,7 +173,7 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
     // props. Same shape as a web_touch (source, campaign, content = ad id,
     // click ids, at), so they join the same last-paid-click pick.
     const blob = (contact?.attribution ?? {}) as { first?: any; last?: any; touches?: any[] };
-    for (const t of [...(blob.touches ?? []), blob.last, blob.first]) if (t && typeof t === "object") touches.push(t);
+    for (const t of [...(blob.touches ?? []), blob.last, blob.first]) if (t && typeof t === "object" && inTime(t)) touches.push(t);
     if (touches.length === 0) return null;
     touches.sort((a, b) => String(b.at ?? "").localeCompare(String(a.at ?? ""))); // newest first
     for (const t of touches) {
@@ -175,14 +190,14 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
       valueCents: 0,
       at: d.pd_add_time ?? d.created_at ?? null,
       contact: d.crm_contacts,
-      attr: resolve(d.crm_contacts),
+      attr: resolve(d.crm_contacts, d.pd_add_time ?? d.created_at ?? null),
     })),
     won: won.map((d: any) => ({
       id: d.id,
       valueCents: d.value_cents ?? 0,
       at: d.won_at ?? null,
       contact: d.crm_contacts,
-      attr: resolve(d.crm_contacts),
+      attr: resolve(d.crm_contacts, d.won_at ?? null),
     })),
   };
   cache.set(key, { at: Date.now(), value });
