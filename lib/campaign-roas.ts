@@ -5,7 +5,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * campaign pages, the analytics overview, and lead-cost.
  *
  * For each deal we walk contact emails → web_visitor_links → web_touches and
- * take the canonical paid click (last paid touch):
+ * take the paid click that ORIGINATED the deal (last paid touch in the 30 days
+ * before deal creation; survey deals default to Meta; Klaviyo-engine deals are
+ * never paid — see resolve()). Won revenue follows the same origin.
  *   • Facebook — web_touches.campaign already IS the Meta campaign id.
  *   • Google   — web_touches carries a gclid but an often-unusable utm_campaign,
  *                so gclid → campaign resolves via google_click_map (click_view).
@@ -88,7 +90,7 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
     pageAll((f, t) =>
       db
         .from("crm_deals")
-        .select("id, pd_add_time, created_at, crm_contacts ( emails, attribution )")
+        .select("id, pd_add_time, created_at, deal_sources ( name ), crm_contacts ( emails, attribution )")
         .or(
           `and(pd_add_time.gte.${startIso},pd_add_time.lte.${endIso}),` +
             `and(pd_add_time.is.null,created_at.gte.${startIso},created_at.lte.${endIso})`
@@ -98,7 +100,7 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
     pageAll((f, t) =>
       db
         .from("crm_deals")
-        .select("id, value_cents, won_at, crm_contacts ( emails, attribution )")
+        .select("id, value_cents, won_at, pd_add_time, created_at, deal_sources ( name ), crm_contacts ( emails, attribution )")
         .eq("status", "won")
         .gte("won_at", startIso)
         .lte("won_at", endIso)
@@ -158,13 +160,30 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
     }
   }
 
-  // Last paid click AT OR BEFORE `beforeIso` (deal creation for leads, won
-  // time for revenue). Without the bound, a branded search a month after the
-  // sale was taking credit for it.
-  const resolve = (contact: any, beforeIso: string | null): DealAttribution | null => {
+  // ORIGIN attribution (Kyle 10/1): a lead belongs to the paid source that
+  // caused the deal to enter the CRM, judged at deal creation:
+  //   • survey deals (Typeform: Survey West / Quote Survey / Survey East) can
+  //     only come from an ad → Meta by definition; the survey's own hidden
+  //     fields pick the campaign when present;
+  //   • Klaviyo-driven engines (Hot List Import, CAI segments, Synchrony list)
+  //     are email-originated → never a paid lead;
+  //   • everything else (Saved Build, Abandoned Cart, calls, bookings…) = the
+  //     last paid click in the LOOKBACK before creation, i.e. the click that
+  //     brought them to the site. Older clicks don't count.
+  // Won revenue uses the same origin, so leads/won/revenue describe one cohort.
+  const LOOKBACK_MS = 30 * 86_400_000;
+  const resolve = (contact: any, createdIso: string | null, sourceName: string | null): DealAttribution | null => {
+    const src = (sourceName ?? "").toLowerCase();
+    if (/hot list|\bcai\b|synchrony/.test(src)) return { channel: null, campaignId: null, adId: null, source: sourceName };
     const touches: any[] = [];
-    const cutoff = beforeIso ? Date.parse(beforeIso) + 3_600_000 : null; // 1h grace for beacon/CRM clock skew
-    const inTime = (t: any) => cutoff == null || !t?.at || !(Date.parse(String(t.at)) > cutoff);
+    const created = createdIso ? Date.parse(createdIso) : null;
+    const cutoff = created != null ? created + 3_600_000 : null; // 1h grace for beacon/CRM clock skew
+    const floor = created != null ? created - LOOKBACK_MS : null;
+    const inTime = (t: any) => {
+      if (cutoff == null || !t?.at) return true;
+      const at = Date.parse(String(t.at));
+      return !(at > cutoff) && !(floor != null && at < floor);
+    };
     for (const e of emailsOf(contact)) for (const vid of emailToVids.get(e) ?? []) touches.push(...(touchesByVid.get(vid) ?? []).filter(inTime));
     // Off-site captures live in the contact's attribution blob, not the site
     // beacon: Typeform survey hidden fields (utm_* / fbclid / gclid carried from
@@ -174,12 +193,16 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
     // click ids, at), so they join the same last-paid-click pick.
     const blob = (contact?.attribution ?? {}) as { first?: any; last?: any; touches?: any[] };
     for (const t of [...(blob.touches ?? []), blob.last, blob.first]) if (t && typeof t === "object" && inTime(t)) touches.push(t);
-    if (touches.length === 0) return null;
+    const isSurvey = /survey/.test(src);
     touches.sort((a, b) => String(b.at ?? "").localeCompare(String(a.at ?? ""))); // newest first
     for (const t of touches) {
       const paid = classifyPaid(t, clickMap);
       if (paid) return { channel: paid.channel, campaignId: paid.campaignId ?? "", adId: paid.adId, source: t.source ?? paid.channel };
     }
+    // A survey deal with no click id on record is still a Meta lead — that's
+    // the only way the survey is reached — just with the campaign unresolved.
+    if (isSurvey) return { channel: "facebook", campaignId: "", adId: null, source: sourceName ?? "survey" };
+    if (touches.length === 0) return null;
     const organic = touches.find((t) => t.source);
     return organic ? { channel: null, campaignId: null, adId: null, source: String(organic.source) } : null;
   };
@@ -190,14 +213,15 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
       valueCents: 0,
       at: d.pd_add_time ?? d.created_at ?? null,
       contact: d.crm_contacts,
-      attr: resolve(d.crm_contacts, d.pd_add_time ?? d.created_at ?? null),
+      attr: resolve(d.crm_contacts, d.pd_add_time ?? d.created_at ?? null, d.deal_sources?.name ?? null),
     })),
     won: won.map((d: any) => ({
       id: d.id,
       valueCents: d.value_cents ?? 0,
       at: d.won_at ?? null,
       contact: d.crm_contacts,
-      attr: resolve(d.crm_contacts, d.won_at ?? null),
+      // revenue follows the lead's origin (judged at creation), not the last click before purchase
+      attr: resolve(d.crm_contacts, d.pd_add_time ?? d.created_at ?? null, d.deal_sources?.name ?? null),
     })),
   };
   cache.set(key, { at: Date.now(), value });

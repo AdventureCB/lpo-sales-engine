@@ -254,7 +254,7 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
             </table>
           </div>
           <div className="viewsub" style={{ marginTop: 10, fontSize: 12.5 }}>
-            Leads/Won/Revenue/ROAS are attributed from first-party clicks{isGoogle ? " (Google clicks resolved to campaigns and ads via the click-view map)" : " (Meta campaign + ad ids on the click)"}.
+            A lead belongs to the paid click that brought the deal into the CRM: the last {channelName === "Google" ? "Google" : "Meta"}-or-other paid click in the 30 days before the deal was created{isGoogle ? " (Google clicks resolved to campaigns and ads via the click-view map)" : " (Meta campaign + ad ids on the click)"}. Survey deals (Survey West, Quote Survey) are Meta leads by definition; Hot List / CAI / Synchrony deals come from email and are never paid leads. Won revenue follows the lead&apos;s origin, so Leads, Won and Revenue on a row are the same cohort.
             {isGoogle && " Impression share is blank where Google withholds it (low volume or non-Search campaigns)."}
             {` The two right-hand columns are what ${channelName} itself reports (its own conversion tracking and attribution window), so they will not match ours.`}
           </div>
