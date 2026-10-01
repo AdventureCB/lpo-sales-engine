@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
-import { campaignRevenue } from "@/lib/campaign-roas";
+import { campaignRevenue, attributeDeals } from "@/lib/campaign-roas";
+import { isAuthorizedCron } from "@/lib/cron";
 import type { SupabaseClient } from "@supabase/supabase-js";
+
+export const maxDuration = 60;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,9 +21,12 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(req: NextRequest) {
   const user = await getSessionUser();
-  if (!user || user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
+  const cronOk = isAuthorizedCron(req); // lets the operator probe the report from a shell
+  if (!cronOk && (!user || user.role !== "admin")) return NextResponse.json({ error: "admin only" }, { status: 403 });
 
   const p = new URL(req.url).searchParams;
+  const debug = p.get("debug") === "1";
+  const t0 = Date.now();
   const raw = (p.get("channel") ?? "").toLowerCase();
   const channel = raw === "meta" ? "facebook" : raw;
   if (!["google", "facebook"].includes(channel)) {
@@ -58,6 +64,19 @@ export async function GET(req: NextRequest) {
     prev: prev?.byId.get(r.campaignId) ?? null,
   }));
 
+  let debugInfo: any = undefined;
+  if (debug) {
+    const attributed = await attributeDeals(db, `${start}T00:00:00Z`, `${end}T23:59:59.999Z`);
+    debugInfo = {
+      ms: Date.now() - t0,
+      createdDeals: attributed.created.length,
+      wonDeals: attributed.won.length,
+      wonForChannel: attributed.won
+        .filter((d) => d.attr?.channel === channel)
+        .map((d) => ({ id: d.id, wonAt: d.at, valueCents: d.valueCents, campaignId: d.attr?.campaignId, source: d.attr?.source })),
+    };
+  }
+
   return NextResponse.json({
     channel: isGoogle ? "google" : "meta",
     start, end, spanDays,
@@ -65,6 +84,7 @@ export async function GET(req: NextRequest) {
     rows,
     totals: cur.totals,
     prevTotals: prev?.totals ?? null,
+    ...(debugInfo ? { debug: debugInfo } : {}),
   });
 }
 
@@ -75,6 +95,7 @@ interface CampRow {
   imprShare: number | null; lostIsBudget: number | null; lostIsRank: number | null;
   leads: number; wonDeals: number; revenueCents: number;
   roas: number | null; cplCents: number | null; cacCents: number | null;
+  conversions: number; convValueCents: number; channelRoas: number | null; // as reported by Google / Meta
 }
 
 async function periodReport(
@@ -82,7 +103,7 @@ async function periodReport(
 ): Promise<{ rows: CampRow[]; byId: Map<string, CampRow>; totals: any }> {
   const { data } = await db
     .from("ad_campaign_daily")
-    .select("campaign_id, name, day, spend_cents, clicks, impressions, impr_share, lost_is_budget, lost_is_rank")
+    .select("campaign_id, name, day, spend_cents, clicks, impressions, impr_share, lost_is_budget, lost_is_rank, conversions, conv_value_cents")
     .eq("channel", channel)
     .gte("day", startDay)
     .lte("day", endDay)
@@ -90,17 +111,19 @@ async function periodReport(
 
   type Acc = {
     campaignId: string; name: string; lastDay: string;
-    spendCents: number; clicks: number; impressions: number;
+    spendCents: number; clicks: number; impressions: number; conversions: number; convValueCents: number;
     isNum: number; isDen: number; budNum: number; budDen: number; rankNum: number; rankDen: number;
   };
   const acc = new Map<string, Acc>();
   for (const r of data ?? []) {
     const id = String(r.campaign_id);
-    const a = acc.get(id) ?? { campaignId: id, name: r.name ?? id, lastDay: "", spendCents: 0, clicks: 0, impressions: 0, isNum: 0, isDen: 0, budNum: 0, budDen: 0, rankNum: 0, rankDen: 0 };
+    const a = acc.get(id) ?? { campaignId: id, name: r.name ?? id, lastDay: "", spendCents: 0, clicks: 0, impressions: 0, conversions: 0, convValueCents: 0, isNum: 0, isDen: 0, budNum: 0, budDen: 0, rankNum: 0, rankDen: 0 };
     const impr = Number(r.impressions ?? 0);
     a.spendCents += Number(r.spend_cents ?? 0);
     a.clicks += Number(r.clicks ?? 0);
     a.impressions += impr;
+    a.conversions += Number(r.conversions ?? 0);
+    a.convValueCents += Number(r.conv_value_cents ?? 0);
     if ((r.day as string) > a.lastDay) { a.lastDay = r.day as string; a.name = r.name ?? a.name; }
     const wt = (rate: unknown, addN: (n: number) => void, addD: (n: number) => void) => {
       if (rate == null) return; const n = Number(rate); if (!Number.isFinite(n)) return; addN(n * impr); addD(impr);
@@ -145,6 +168,9 @@ async function periodReport(
       roas: spend > 0 ? r.wonValueCents / spend : null,
       cplCents: r.leads > 0 && spend > 0 ? Math.round(spend / r.leads) : null,
       cacCents: r.wonDeals > 0 && spend > 0 ? Math.round(spend / r.wonDeals) : null,
+      conversions: a?.conversions ?? 0,
+      convValueCents: a?.convValueCents ?? 0,
+      channelRoas: a && spend > 0 ? a.convValueCents / spend : null,
     });
   }
   rows.sort((a, b) => b.spendCents - a.spendCents || b.revenueCents - a.revenueCents);
@@ -158,16 +184,18 @@ async function periodReport(
       imprShare: null, lostIsBudget: null, lostIsRank: null,
       leads: unresolved.leads, wonDeals: unresolved.wonDeals, revenueCents: unresolved.wonValueCents,
       roas: null, cplCents: null, cacCents: null,
+      conversions: 0, convValueCents: 0, channelRoas: null,
     });
   }
 
   const byId = new Map(rows.map((r) => [r.campaignId, r]));
   const t = rows.reduce(
-    (s, r) => { s.spendCents += r.spendCents; s.clicks += r.clicks; s.impressions += r.impressions; s.leads += r.leads; s.wonDeals += r.wonDeals; s.revenueCents += r.revenueCents; return s; },
-    { spendCents: 0, clicks: 0, impressions: 0, leads: 0, wonDeals: 0, revenueCents: 0 }
+    (s, r) => { s.spendCents += r.spendCents; s.clicks += r.clicks; s.impressions += r.impressions; s.leads += r.leads; s.wonDeals += r.wonDeals; s.revenueCents += r.revenueCents; s.conversions += r.conversions; s.convValueCents += r.convValueCents; return s; },
+    { spendCents: 0, clicks: 0, impressions: 0, leads: 0, wonDeals: 0, revenueCents: 0, conversions: 0, convValueCents: 0 }
   );
   const totals = {
     ...t,
+    channelRoas: t.spendCents > 0 ? t.convValueCents / t.spendCents : null,
     ctr: t.impressions > 0 ? t.clicks / t.impressions : null,
     cpcCents: t.clicks > 0 ? Math.round(t.spendCents / t.clicks) : null,
     cpmCents: t.impressions > 0 ? Math.round((t.spendCents / t.impressions) * 1000) : null,
