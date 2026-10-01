@@ -259,9 +259,15 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
             </table>
           </div>
           <div className="viewsub" style={{ marginTop: 10, fontSize: 12.5 }}>
-            A lead belongs to the paid click that brought the deal into the CRM: the last {channelName === "Google" ? "Google" : "Meta"}-or-other paid click in the 30 days before the deal was created{isGoogle ? " (Google clicks resolved to campaigns and ads via the click-view map)" : " (Meta campaign + ad ids on the click)"}. Survey deals (Survey West, Quote Survey) are Meta leads by definition; Hot List / CAI / Synchrony deals come from email and are never paid leads. Won revenue follows the lead&apos;s origin, so Leads, Won and Revenue on a row are the same cohort.
+            <b>Leads</b> are deals this campaign brought into the CRM: the last paid click (any channel) in the 30 days before the deal was created decides who gets it{isGoogle ? ", with Google clicks resolved to campaigns and ads through the click-view map" : ", read from the Meta campaign and ad ids carried on the click"}.
+            {isGoogle
+              ? " Survey deals (Survey West, Quote Survey) can only be reached from Meta ads, so they are never Google leads."
+              : " Survey deals (Survey West, Quote Survey) are Meta leads by definition — when the submission carries no click id they land in “(campaign not resolved)”."}
+            {" Saved Build, Abandoned Cart, Synchrony financing and every other site-originated deal follow the click rule; Hot List and CAI deals come from email and are never paid leads."}
+            {" "}<b>Won</b> and <b>Revenue</b> follow the lead&apos;s origin, so the three columns describe one cohort.
+            {" "}<b>Last click</b> is the older read: deals whose most recent paid touch on record, at any time, was this campaign (hover for its won deals and revenue).
             {isGoogle && " Impression share is blank where Google withholds it (low volume or non-Search campaigns)."}
-            {` The two right-hand columns are what ${channelName} itself reports (its own conversion tracking and attribution window), so they will not match ours.`}
+            {` The two right-hand columns are what ${channelName} itself reports from its own conversion tracking and attribution window, so they will not match ours.`}
           </div>
         </>
       )}
