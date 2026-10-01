@@ -566,7 +566,7 @@ export function RevenueView() {
                 </div>
               </div>
               <div style={{ fontSize: 12, color: "var(--text-3)", margin: "4px 0 8px" }}>
-                Same purchases as the customer-value chart. A purchase is <b>sales team</b> when any order in it was built by staff in Shopify (draft order, invoice or POS rather than the online store), used a rep-coded discount, or the customer had a logged rep conversation in the {data.purchaseSource.gapDays} days before the last camper payment (CRM call history starts May 2026). Everything else is <b>organic web</b>.
+                Same purchases as the customer-value chart. A purchase is <b>sales team</b> when the customer&apos;s first order in it was built by staff in Shopify (draft order, invoice or POS rather than their own web checkout), any order through the last camper payment used a rep&apos;s discount code (PARKER, JACKSON-…), or the customer had a logged rep conversation in the {data.purchaseSource.gapDays} days before that payment (CRM history starts mid-2026). Everything else is <b>organic web</b>. Balance invoices are always staff-built, so only the first order counts for that signal.
               </div>
               <div style={{ opacity: loading ? 0.45 : 1, transition: "opacity 150ms" }}>
                 <SourceBars rows={data.purchaseSource.rows} mode={srcMode} />
