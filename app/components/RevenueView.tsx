@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 /**
  * Admin revenue analytics: net revenue (never shipping or tax) for any
@@ -29,6 +29,9 @@ interface Goal {
   months: GoalMonth[];
 }
 const NORMALIZED_COLOR = "#e0b341";
+interface CvRow { month: string; purchases: number; totalCents: number; avgCents: number; medianCents: number }
+const AVG_SALE_CENTS = 1_200_000; // Kyle's working average camper sale, for the "≈ campers" readout
+const YEAR_COLORS = ["var(--accent)", "var(--accent-2)", "#7aa7d9"]; // current year first
 interface Health {
   monthsExcl: number; avgExcl: number | null;
   monthsIncl: number; avgIncl: number | null;
@@ -40,6 +43,7 @@ interface Payload {
   b: Report | null;
   goal: Goal | null;
   health: Health | null;
+  customerValue: { gapDays: number; rows: CvRow[] } | null;
   bucket: string;
   threshold: number;
   collections: Collection[];
@@ -245,6 +249,12 @@ export function RevenueView() {
     for (const g of data?.goal?.months ?? []) m.set(g.bucket.slice(0, 7), g);
     return m;
   }, [data?.goal]);
+  const cvRows = data?.customerValue?.rows ?? [];
+  const cvYears = useMemo(() => {
+    const ys = Array.from(new Set(cvRows.map((r) => r.month.slice(0, 4)))).sort().reverse();
+    return ys.length ? ys : [String(new Date().getFullYear())];
+  }, [cvRows]);
+  const cvByKey = useMemo(() => new Map(cvRows.map((r) => [r.month.slice(0, 7), r])), [cvRows]);
   const futureGoals = (data?.goal?.months ?? []).filter((g) => g.future && g.goal != null);
   const nextGoal = futureGoals[0] ?? null;
   const laterGoals = futureGoals.slice(1);
@@ -492,6 +502,53 @@ export function RevenueView() {
             <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 8 }}>Rows are aligned by position (1st {bucket} vs 1st {bucket}). Same method as Shopify&apos;s sales reports: gross and discounts book on the order date, returns on the refund date, and cancelled orders show up as returns.</div>
           </div>
 
+          {data?.customerValue && (
+            <div className="card" style={{ marginTop: 14, padding: "14px 18px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+                <div style={{ fontWeight: 750 }}>Average camper customer value by month</div>
+                <div style={{ fontSize: 12, color: "var(--text-3)", display: "flex", gap: 14 }}>
+                  {cvYears.map((yr, i) => (
+                    <span key={yr}><span style={{ display: "inline-block", width: 14, height: 0, borderTop: `3px solid ${YEAR_COLORS[i] ?? "var(--text-3)"}`, marginRight: 5, verticalAlign: "middle" }} />{yr}</span>
+                  ))}
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-3)", margin: "4px 0 8px" }}>
+                A customer&apos;s orders within {data.customerValue.gapDays} days of each other count as one purchase. It counts when any order in it nets over {usd(thresholdUsd * 100)}, its value is every order in it (deposit included), and it lands in the month of the last payment. Customers deduped by name. The newest month can still rise as remaining balances come in.
+              </div>
+              <div style={{ opacity: loading ? 0.45 : 1, transition: "opacity 150ms" }}>
+                <LineChart rows={data.customerValue.rows} years={cvYears} />
+              </div>
+              <div style={{ overflowX: "auto", marginTop: 10 }}>
+                <table className="data-table" style={{ fontSize: 13, width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th>Month</th>
+                      {cvYears.map((yr) => (
+                        <th key={yr} colSpan={2} style={{ textAlign: "right", borderLeft: "1px solid var(--border)" }}>{yr} avg · purchases</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Array.from({ length: 12 }).map((_, mi) => (
+                      <tr key={mi}>
+                        <td>{new Date(2000, mi, 1).toLocaleDateString("en-US", { month: "short" })}</td>
+                        {cvYears.map((yr) => {
+                          const r = cvByKey.get(`${yr}-${String(mi + 1).padStart(2, "0")}`);
+                          return (
+                            <Fragment key={yr}>
+                              <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 650, borderLeft: "1px solid var(--border)" }}>{usd(r?.avgCents)}</td>
+                              <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{r?.purchases ?? "—"}</td>
+                            </Fragment>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))", gap: 14, marginTop: 14 }}>
             <div className="card" style={{ padding: "14px 18px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -707,7 +764,62 @@ function Gauge({ value, bands, title, sub, muted }: { value: number | null; band
         <text x={cx} y={cy + 30} fontSize={22} fontWeight={800} fill="var(--text-1)" textAnchor="middle" style={{ fontVariantNumeric: "tabular-nums" }}>{usd(value)}</text>
         {band && <text x={cx} y={cy + 48} fontSize={11} fontWeight={750} fill={bandColor} textAnchor="middle" letterSpacing="0.08em">{band.toUpperCase()}</text>}
       </svg>
+      {value != null && (
+        <div style={{ fontSize: 13, color: "var(--text-2)", fontWeight: 650 }}>
+          ≈ {(value / AVG_SALE_CENTS).toFixed(1)} campers / month <span style={{ color: "var(--text-3)", fontWeight: 500 }}>at a {usd(AVG_SALE_CENTS)} average sale</span>
+        </div>
+      )}
       <div style={{ fontSize: 12, color: "var(--text-3)", textAlign: "center", maxWidth: 340 }}>{sub}</div>
+    </div>
+  );
+}
+
+/** Jan–Dec line chart, one line per year (current year brightest). */
+function LineChart({ rows, years }: { rows: CvRow[]; years: string[] }) {
+  if (rows.length === 0) return <div style={{ color: "var(--text-3)", fontSize: 13, padding: "20px 0" }}>No qualifying purchases yet.</div>;
+  const W = 900, H = 240, padL = 56, padR = 12, padT = 12, padB = 26;
+  const byKey = new Map(rows.map((r) => [r.month.slice(0, 7), r]));
+  const vals = rows.map((r) => r.avgCents);
+  const max = Math.max(1, ...vals) * 1.08;
+  const min = Math.max(0, Math.min(...vals) * 0.85);
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const x = (mi: number) => padL + (mi / 11) * innerW;
+  const y = (v: number) => padT + innerH - ((v - min) / (max - min)) * innerH;
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => min + f * (max - min));
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", minWidth: 520, height: "auto", display: "block" }} role="img" aria-label="Average camper customer value by month, one line per year">
+        {ticks.map((t, i) => (
+          <g key={i}>
+            <line x1={padL} x2={W - padR} y1={y(t)} y2={y(t)} stroke="var(--border-soft)" strokeWidth={1} />
+            <text x={padL - 6} y={y(t) + 4} fontSize={10} fill="var(--text-3)" textAnchor="end">{usd(t, { compact: true })}</text>
+          </g>
+        ))}
+        {Array.from({ length: 12 }).map((_, mi) => (
+          <text key={mi} x={x(mi)} y={H - 8} fontSize={10} fill="var(--text-3)" textAnchor="middle">
+            {new Date(2000, mi, 1).toLocaleDateString("en-US", { month: "short" })}
+          </text>
+        ))}
+        {years.map((yr, yi) => {
+          const color = YEAR_COLORS[yi] ?? "var(--text-3)";
+          const pts = Array.from({ length: 12 }).map((_, mi) => {
+            const r = byKey.get(`${yr}-${String(mi + 1).padStart(2, "0")}`);
+            return r ? { mi, r } : null;
+          });
+          const d = pts.filter(Boolean).map((p, i) => `${i === 0 ? "M" : "L"}${x(p!.mi).toFixed(1)},${y(p!.r.avgCents).toFixed(1)}`).join(" ");
+          return (
+            <g key={yr}>
+              <path d={d} fill="none" stroke={color} strokeWidth={yi === 0 ? 2.5 : 2} opacity={yi === 0 ? 1 : 0.8} strokeLinejoin="round" strokeLinecap="round" />
+              {pts.map((p) => p && (
+                <circle key={p.mi} cx={x(p.mi)} cy={y(p.r.avgCents)} r={yi === 0 ? 4 : 3} fill={color} stroke="var(--surface-1)" strokeWidth={1.5}>
+                  <title>{`${new Date(2000, p.mi, 1).toLocaleDateString("en-US", { month: "short" })} ${yr}: avg ${usd(p.r.avgCents)} · median ${usd(p.r.medianCents)} · ${p.r.purchases} purchases`}</title>
+                </circle>
+              ))}
+            </g>
+          );
+        })}
+      </svg>
     </div>
   );
 }
