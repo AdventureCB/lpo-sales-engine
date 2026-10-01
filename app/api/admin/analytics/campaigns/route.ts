@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
-import { campaignRevenue, attributeDeals } from "@/lib/campaign-roas";
+import { campaignRevenue, attributeDeals, type CampaignRevenue } from "@/lib/campaign-roas";
 import { isAuthorizedCron } from "@/lib/cron";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -95,6 +95,7 @@ interface CampRow {
   imprShare: number | null; lostIsBudget: number | null; lostIsRank: number | null;
   leads: number; wonDeals: number; revenueCents: number;
   roas: number | null; cplCents: number | null; cacCents: number | null;
+  lastClickLeads: number; lastClickWonDeals: number; lastClickValueCents: number; // most recent paid touch, any time
   conversions: number; convValueCents: number; channelRoas: number | null; // as reported by Google / Meta
 }
 
@@ -136,7 +137,7 @@ async function periodReport(
 
   // Revenue attribution for this window, filtered to this channel.
   const rev = await campaignRevenue(db, `${startDay}T00:00:00Z`, `${endDay}T23:59:59.999Z`);
-  const revByCampaign = new Map<string, { leads: number; wonDeals: number; wonValueCents: number }>();
+  const revByCampaign = new Map<string, CampaignRevenue>();
   for (const [key, v] of rev) {
     const [ch, cid] = key.split("|");
     if (ch !== channel) continue;
@@ -148,7 +149,7 @@ async function periodReport(
   const rows: CampRow[] = [];
   for (const id of ids) {
     const a = acc.get(id);
-    const r = revByCampaign.get(id) ?? { leads: 0, wonDeals: 0, wonValueCents: 0 };
+    const r = revByCampaign.get(id) ?? { leads: 0, wonDeals: 0, wonValueCents: 0, lastClickLeads: 0, lastClickWonDeals: 0, lastClickValueCents: 0 };
     const spend = a?.spendCents ?? 0;
     rows.push({
       campaignId: id,
@@ -168,6 +169,9 @@ async function periodReport(
       roas: spend > 0 ? r.wonValueCents / spend : null,
       cplCents: r.leads > 0 && spend > 0 ? Math.round(spend / r.leads) : null,
       cacCents: r.wonDeals > 0 && spend > 0 ? Math.round(spend / r.wonDeals) : null,
+      lastClickLeads: r.lastClickLeads,
+      lastClickWonDeals: r.lastClickWonDeals,
+      lastClickValueCents: r.lastClickValueCents,
       conversions: a?.conversions ?? 0,
       convValueCents: a?.convValueCents ?? 0,
       channelRoas: a && spend > 0 ? a.convValueCents / spend : null,
@@ -177,21 +181,22 @@ async function periodReport(
 
   // Channel-known but campaign-unresolved revenue → a pseudo-row so it's visible.
   const unresolved = revByCampaign.get("");
-  if (unresolved && (unresolved.leads > 0 || unresolved.wonDeals > 0)) {
+  if (unresolved && (unresolved.leads > 0 || unresolved.wonDeals > 0 || unresolved.lastClickLeads > 0)) {
     rows.push({
       campaignId: "__unresolved__", name: "(campaign not resolved)",
       spendCents: 0, clicks: 0, impressions: 0, ctr: null, cpcCents: null, cpmCents: null,
       imprShare: null, lostIsBudget: null, lostIsRank: null,
       leads: unresolved.leads, wonDeals: unresolved.wonDeals, revenueCents: unresolved.wonValueCents,
       roas: null, cplCents: null, cacCents: null,
+      lastClickLeads: unresolved.lastClickLeads, lastClickWonDeals: unresolved.lastClickWonDeals, lastClickValueCents: unresolved.lastClickValueCents,
       conversions: 0, convValueCents: 0, channelRoas: null,
     });
   }
 
   const byId = new Map(rows.map((r) => [r.campaignId, r]));
   const t = rows.reduce(
-    (s, r) => { s.spendCents += r.spendCents; s.clicks += r.clicks; s.impressions += r.impressions; s.leads += r.leads; s.wonDeals += r.wonDeals; s.revenueCents += r.revenueCents; s.conversions += r.conversions; s.convValueCents += r.convValueCents; return s; },
-    { spendCents: 0, clicks: 0, impressions: 0, leads: 0, wonDeals: 0, revenueCents: 0, conversions: 0, convValueCents: 0 }
+    (s, r) => { s.spendCents += r.spendCents; s.clicks += r.clicks; s.impressions += r.impressions; s.leads += r.leads; s.wonDeals += r.wonDeals; s.revenueCents += r.revenueCents; s.conversions += r.conversions; s.convValueCents += r.convValueCents; s.lastClickLeads += r.lastClickLeads; s.lastClickWonDeals += r.lastClickWonDeals; s.lastClickValueCents += r.lastClickValueCents; return s; },
+    { spendCents: 0, clicks: 0, impressions: 0, leads: 0, wonDeals: 0, revenueCents: 0, conversions: 0, convValueCents: 0, lastClickLeads: 0, lastClickWonDeals: 0, lastClickValueCents: 0 }
   );
   const totals = {
     ...t,

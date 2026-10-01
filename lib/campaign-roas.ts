@@ -26,7 +26,8 @@ export interface DealAttr {
   valueCents: number;
   at: string | null; // created (pd_add_time/created_at) for `created`, won_at for `won`
   contact: any; // raw crm_contacts row (emails, attribution) for callers' fallbacks
-  attr: DealAttribution | null;
+  attr: DealAttribution | null; // ORIGIN (what made the deal exist)
+  lastClick: DealAttribution | null; // most recent paid touch on record, any time (the old "lead")
 }
 export interface AttributedDeals {
   created: DealAttr[];
@@ -36,6 +37,9 @@ export interface CampaignRevenue {
   leads: number;
   wonDeals: number;
   wonValueCents: number;
+  lastClickLeads: number; // deals whose most recent paid touch (any time) is this campaign
+  lastClickWonDeals: number;
+  lastClickValueCents: number;
 }
 
 async function pageAll(build: (from: number, to: number) => any): Promise<any[]> {
@@ -174,7 +178,9 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
   const LOOKBACK_MS = 30 * 86_400_000;
   const resolve = (contact: any, createdIso: string | null, sourceName: string | null): DealAttribution | null => {
     const src = (sourceName ?? "").toLowerCase();
-    if (/hot list|\bcai\b|synchrony/.test(src)) return { channel: null, campaignId: null, adId: null, source: sourceName };
+    // Synchrony is NOT here: that Klaviyo form lives on a site page people
+    // reach from Meta, Google or organically, so it follows the click rule.
+    if (/hot list|\bcai\b/.test(src)) return { channel: null, campaignId: null, adId: null, source: sourceName };
     const touches: any[] = [];
     const created = createdIso ? Date.parse(createdIso) : null;
     const cutoff = created != null ? created + 3_600_000 : null; // 1h grace for beacon/CRM clock skew
@@ -207,6 +213,22 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
     return organic ? { channel: null, campaignId: null, adId: null, source: String(organic.source) } : null;
   };
 
+  // LAST CLICK: the most recent paid touch on record, no time bound and no
+  // source rules — the number the pages called "leads" before 10/1. Kept as a
+  // side-by-side read of "most recent marketing touch".
+  const resolveLastClick = (contact: any): DealAttribution | null => {
+    const touches: any[] = [];
+    for (const e of emailsOf(contact)) for (const vid of emailToVids.get(e) ?? []) touches.push(...(touchesByVid.get(vid) ?? []));
+    const blob = (contact?.attribution ?? {}) as { first?: any; last?: any; touches?: any[] };
+    for (const t of [...(blob.touches ?? []), blob.last, blob.first]) if (t && typeof t === "object") touches.push(t);
+    touches.sort((a, b) => String(b.at ?? "").localeCompare(String(a.at ?? "")));
+    for (const t of touches) {
+      const paid = classifyPaid(t, clickMap);
+      if (paid) return { channel: paid.channel, campaignId: paid.campaignId ?? "", adId: paid.adId, source: t.source ?? paid.channel };
+    }
+    return null;
+  };
+
   const value: AttributedDeals = {
     created: created.map((d: any) => ({
       id: d.id,
@@ -214,6 +236,7 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
       at: d.pd_add_time ?? d.created_at ?? null,
       contact: d.crm_contacts,
       attr: resolve(d.crm_contacts, d.pd_add_time ?? d.created_at ?? null, d.deal_sources?.name ?? null),
+      lastClick: resolveLastClick(d.crm_contacts),
     })),
     won: won.map((d: any) => ({
       id: d.id,
@@ -222,6 +245,7 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
       contact: d.crm_contacts,
       // revenue follows the lead's origin (judged at creation), not the last click before purchase
       attr: resolve(d.crm_contacts, d.pd_add_time ?? d.created_at ?? null, d.deal_sources?.name ?? null),
+      lastClick: resolveLastClick(d.crm_contacts),
     })),
   };
   cache.set(key, { at: Date.now(), value });
@@ -237,13 +261,23 @@ export async function campaignRevenue(
   const { created, won } = await attributeDeals(db, startIso, endIso);
   const out = new Map<string, CampaignRevenue>();
   const bump = (key: string, patch: Partial<CampaignRevenue>) => {
-    const cur = out.get(key) ?? { leads: 0, wonDeals: 0, wonValueCents: 0 };
+    const cur = out.get(key) ?? { leads: 0, wonDeals: 0, wonValueCents: 0, lastClickLeads: 0, lastClickWonDeals: 0, lastClickValueCents: 0 };
     cur.leads += patch.leads ?? 0;
     cur.wonDeals += patch.wonDeals ?? 0;
     cur.wonValueCents += patch.wonValueCents ?? 0;
+    cur.lastClickLeads += patch.lastClickLeads ?? 0;
+    cur.lastClickWonDeals += patch.lastClickWonDeals ?? 0;
+    cur.lastClickValueCents += patch.lastClickValueCents ?? 0;
     out.set(key, cur);
   };
-  for (const d of created) if (d.attr?.channel) bump(`${d.attr.channel}|${d.attr.campaignId ?? ""}`, { leads: 1 });
-  for (const d of won) if (d.attr?.channel) bump(`${d.attr.channel}|${d.attr.campaignId ?? ""}`, { wonDeals: 1, wonValueCents: d.valueCents });
+  const keyOf = (a: DealAttribution) => `${a.channel}|${a.campaignId ?? ""}`;
+  for (const d of created) {
+    if (d.attr?.channel) bump(keyOf(d.attr), { leads: 1 });
+    if (d.lastClick?.channel) bump(keyOf(d.lastClick), { lastClickLeads: 1 });
+  }
+  for (const d of won) {
+    if (d.attr?.channel) bump(keyOf(d.attr), { wonDeals: 1, wonValueCents: d.valueCents });
+    if (d.lastClick?.channel) bump(keyOf(d.lastClick), { lastClickWonDeals: 1, lastClickValueCents: d.valueCents });
+  }
   return out;
 }

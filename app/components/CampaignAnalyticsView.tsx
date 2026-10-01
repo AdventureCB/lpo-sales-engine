@@ -11,9 +11,10 @@ interface Row {
   leads: number; wonDeals: number; revenueCents: number;
   roas: number | null; cplCents: number | null; cacCents: number | null;
   conversions: number; convValueCents: number; channelRoas: number | null;
+  lastClickLeads: number; lastClickWonDeals: number; lastClickValueCents: number;
   prev: Prev | null;
 }
-interface Totals { spendCents: number; clicks: number; impressions: number; ctr: number | null; cpcCents: number | null; cpmCents: number | null; leads: number; wonDeals: number; revenueCents: number; roas: number | null; cplCents: number | null; cacCents: number | null; conversions: number; convValueCents: number; channelRoas: number | null }
+interface Totals { spendCents: number; clicks: number; impressions: number; ctr: number | null; cpcCents: number | null; cpmCents: number | null; leads: number; wonDeals: number; revenueCents: number; roas: number | null; cplCents: number | null; cacCents: number | null; conversions: number; convValueCents: number; channelRoas: number | null; lastClickLeads: number; lastClickWonDeals: number; lastClickValueCents: number }
 interface Report { channel: string; start: string; end: string; spanDays: number; compare: { start: string; end: string } | null; rows: Row[]; totals: Totals; prevTotals: Totals | null }
 
 interface AdRow {
@@ -99,7 +100,7 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
   const td: React.CSSProperties = { textAlign: "right", padding: "7px 9px", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
   const tdSub: React.CSSProperties = { ...td, fontSize: 12.5, color: "var(--text-2)" };
   const isCols = isGoogle ? 3 : 0;
-  const colCount = 13 + isCols;
+  const colCount = 14 + isCols;
   const channelName = isGoogle ? "Google" : "Meta";
 
   const pt = data?.prevTotals ?? null;
@@ -128,6 +129,7 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
           {isGoogle && <td style={tdSub}></td>}
           {isGoogle && <td style={tdSub}></td>}
           <td style={tdSub}>{num(ad.leads)}</td>
+          <td style={tdSub}></td>
           <td style={tdSub}>{num(ad.wonDeals)}</td>
           <td style={tdSub}>{usd(ad.revenueCents)}</td>
           <td style={{ ...tdSub, fontWeight: 600 }}>
@@ -181,7 +183,8 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
             {stat("Revenue", usd(data.totals.revenueCents), compare && <Delta cur={data.totals.revenueCents} prev={pt?.revenueCents} />, `${data.totals.wonDeals} won`)}
             {stat("ROAS", roasFmt(data.totals.roas), compare && <Delta cur={data.totals.roas} prev={pt?.roas} />, "our attribution: won revenue ÷ spend")}
             {stat(`${channelName} ROAS`, roasFmt(data.totals.channelRoas), compare && <Delta cur={data.totals.channelRoas} prev={pt?.channelRoas} />, `${channelName} says ${usd(data.totals.convValueCents)} · ${data.totals.conversions.toFixed(0)} conv.`)}
-            {stat("Leads", num(data.totals.leads), compare && <Delta cur={data.totals.leads} prev={pt?.leads} />, `CPL ${usd(data.totals.cplCents)}`)}
+            {stat("Leads", num(data.totals.leads), compare && <Delta cur={data.totals.leads} prev={pt?.leads} />, `origin · CPL ${usd(data.totals.cplCents)}`)}
+            {stat("Last click", num(data.totals.lastClickLeads), compare && <Delta cur={data.totals.lastClickLeads} prev={pt?.lastClickLeads} />, `most recent paid touch · ${data.totals.lastClickWonDeals} won · ${usd(data.totals.lastClickValueCents)}`)}
             {stat("Impressions", num(data.totals.impressions), compare && <Delta cur={data.totals.impressions} prev={pt?.impressions} />)}
             {stat("Clicks", num(data.totals.clicks), undefined, `CTR ${pct(data.totals.ctr, 2)} · CPC ${usd2(data.totals.cpcCents)}`)}
           </div>
@@ -199,7 +202,8 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
                   {isGoogle && <th style={th} title="Search impression share">Impr. share</th>}
                   {isGoogle && <th style={th} title="Impressions lost to budget">Lost (bud)</th>}
                   {isGoogle && <th style={th} title="Impressions lost to Ad Rank">Lost (rank)</th>}
-                  <th style={th}>Leads</th>
+                  <th style={th} title="Deals this campaign brought into the CRM (last paid click in the 30 days before creation)">Leads</th>
+                  <th style={th} title="Deals whose most recent paid touch on record is this campaign — the old lead definition">Last click</th>
                   <th style={th}>Won</th>
                   <th style={th}>Revenue</th>
                   <th style={th}>ROAS</th>
@@ -238,6 +242,7 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
                       {isGoogle && <td style={td}>{pct(r.lostIsBudget)}</td>}
                       {isGoogle && <td style={td}>{pct(r.lostIsRank)}</td>}
                       <td style={td}>{num(r.leads)}</td>
+                      <td style={{ ...td, color: "var(--text-2)" }} title={`${r.lastClickWonDeals} won · ${usd(r.lastClickValueCents)} by last click`}>{num(r.lastClickLeads)}</td>
                       <td style={td}>{num(r.wonDeals)}</td>
                       <td style={td}>{usd(r.revenueCents)}</td>
                       <td style={{ ...td, fontWeight: 600 }}>{roasFmt(r.roas)}{compare && <Delta cur={r.roas} prev={r.prev?.roas} />}</td>
