@@ -10,9 +10,10 @@ interface Row {
   imprShare: number | null; lostIsBudget: number | null; lostIsRank: number | null;
   leads: number; wonDeals: number; revenueCents: number;
   roas: number | null; cplCents: number | null; cacCents: number | null;
+  conversions: number; convValueCents: number; channelRoas: number | null;
   prev: Prev | null;
 }
-interface Totals { spendCents: number; clicks: number; impressions: number; ctr: number | null; cpcCents: number | null; cpmCents: number | null; leads: number; wonDeals: number; revenueCents: number; roas: number | null; cplCents: number | null; cacCents: number | null }
+interface Totals { spendCents: number; clicks: number; impressions: number; ctr: number | null; cpcCents: number | null; cpmCents: number | null; leads: number; wonDeals: number; revenueCents: number; roas: number | null; cplCents: number | null; cacCents: number | null; conversions: number; convValueCents: number; channelRoas: number | null }
 interface Report { channel: string; start: string; end: string; spanDays: number; compare: { start: string; end: string } | null; rows: Row[]; totals: Totals; prevTotals: Totals | null }
 
 interface AdRow {
@@ -98,7 +99,8 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
   const td: React.CSSProperties = { textAlign: "right", padding: "7px 9px", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
   const tdSub: React.CSSProperties = { ...td, fontSize: 12.5, color: "var(--text-2)" };
   const isCols = isGoogle ? 3 : 0;
-  const colCount = 11 + isCols;
+  const colCount = 13 + isCols;
+  const channelName = isGoogle ? "Google" : "Meta";
 
   const pt = data?.prevTotals ?? null;
 
@@ -128,9 +130,11 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
           <td style={tdSub}>{num(ad.leads)}</td>
           <td style={tdSub}>{num(ad.wonDeals)}</td>
           <td style={tdSub}>{usd(ad.revenueCents)}</td>
-          <td style={{ ...tdSub, fontWeight: 600 }} title={ad.platformRoas != null ? `Platform-reported ROAS ${roasFmt(ad.platformRoas)}` : undefined}>
+          <td style={{ ...tdSub, fontWeight: 600 }}>
             {roasFmt(ad.roas)}{compare && <Delta cur={ad.roas} prev={ad.prev?.roas} />}
           </td>
+          <td style={{ ...tdSub, borderLeft: "1px solid var(--border)" }}>{usd(ad.convValueCents)}</td>
+          <td style={tdSub}>{roasFmt(ad.platformRoas)}</td>
         </tr>
       )),
     ]);
@@ -175,7 +179,8 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
             {stat("Spend", usd(data.totals.spendCents), compare && <Delta cur={data.totals.spendCents} prev={pt?.spendCents} higherIsBetter={false} />)}
             {stat("Revenue", usd(data.totals.revenueCents), compare && <Delta cur={data.totals.revenueCents} prev={pt?.revenueCents} />, `${data.totals.wonDeals} won`)}
-            {stat("ROAS", roasFmt(data.totals.roas), compare && <Delta cur={data.totals.roas} prev={pt?.roas} />, "revenue ÷ spend")}
+            {stat("ROAS", roasFmt(data.totals.roas), compare && <Delta cur={data.totals.roas} prev={pt?.roas} />, "our attribution: won revenue ÷ spend")}
+            {stat(`${channelName} ROAS`, roasFmt(data.totals.channelRoas), compare && <Delta cur={data.totals.channelRoas} prev={pt?.channelRoas} />, `${channelName} says ${usd(data.totals.convValueCents)} · ${data.totals.conversions.toFixed(0)} conv.`)}
             {stat("Leads", num(data.totals.leads), compare && <Delta cur={data.totals.leads} prev={pt?.leads} />, `CPL ${usd(data.totals.cplCents)}`)}
             {stat("Impressions", num(data.totals.impressions), compare && <Delta cur={data.totals.impressions} prev={pt?.impressions} />)}
             {stat("Clicks", num(data.totals.clicks), undefined, `CTR ${pct(data.totals.ctr, 2)} · CPC ${usd2(data.totals.cpcCents)}`)}
@@ -198,6 +203,8 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
                   <th style={th}>Won</th>
                   <th style={th}>Revenue</th>
                   <th style={th}>ROAS</th>
+                  <th style={{ ...th, borderLeft: "1px solid var(--border)" }} title={`Conversion value as reported by ${channelName}`}>{channelName} value</th>
+                  <th style={th} title={`${channelName}-reported conversion value ÷ spend`}>{channelName} ROAS</th>
                 </tr>
               </thead>
               <tbody>
@@ -234,6 +241,8 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
                       <td style={td}>{num(r.wonDeals)}</td>
                       <td style={td}>{usd(r.revenueCents)}</td>
                       <td style={{ ...td, fontWeight: 600 }}>{roasFmt(r.roas)}{compare && <Delta cur={r.roas} prev={r.prev?.roas} />}</td>
+                      <td style={{ ...td, color: "var(--text-2)", borderLeft: "1px solid var(--border)" }} title={`${r.conversions.toFixed(1)} conversions reported`}>{usd(r.convValueCents)}</td>
+                      <td style={{ ...td, color: "var(--text-2)" }}>{roasFmt(r.channelRoas)}</td>
                     </tr>,
                     ...(open ? [<tr key={`x:${r.campaignId}`}><td colSpan={colCount} style={{ padding: 0 }}><table style={{ borderCollapse: "collapse", width: "100%" }}><tbody>{adRows(r.campaignId)}</tbody></table></td></tr>] : []),
                   ];
@@ -247,7 +256,7 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
           <div className="viewsub" style={{ marginTop: 10, fontSize: 12.5 }}>
             Leads/Won/Revenue/ROAS are attributed from first-party clicks{isGoogle ? " (Google clicks resolved to campaigns and ads via the click-view map)" : " (Meta campaign + ad ids on the click)"}.
             {isGoogle && " Impression share is blank where Google withholds it (low volume or non-Search campaigns)."}
-            {" Ad rows hover-show the platform-reported ROAS."}
+            {` The two right-hand columns are what ${channelName} itself reports (its own conversion tracking and attribution window), so they will not match ours.`}
           </div>
         </>
       )}
