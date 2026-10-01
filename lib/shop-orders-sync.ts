@@ -291,7 +291,10 @@ export async function syncShopOrders(
   } else if (!hasNext) {
     await mergeState(db, { cursor: undefined, done: true, lastFullAt: runStartedAt, lastIncrementalAt: runStartedAt });
   }
-  if (scanned) await db.rpc("shop_resolve_lines");
+  if (scanned) {
+    await db.rpc("shop_resolve_lines");
+    await db.rpc("shop_refresh_order_flags"); // test-checkout / rep-code / staff-built / net per order
+  }
   return { mode: opts.mode, done: !hasNext, scanned, pages, productFieldsDenied: accessDenied };
 }
 
