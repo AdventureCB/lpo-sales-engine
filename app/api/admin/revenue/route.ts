@@ -71,7 +71,8 @@ export async function GET(req: NextRequest) {
     ]);
     const cvYears = 3;
     const cvFromYear = new Date().getFullYear() - (cvYears - 1);
-    const [goal, health, cv, src] = await Promise.all([
+    const kwin = [1, 3, 5, 7, 14].includes(Number(p.get("kwin"))) ? Number(p.get("kwin")) : 5;
+    const [goal, health, cv, src, klav] = await Promise.all([
       bucket === "month" && a && b && from && to && cfrom && cto
         ? seasonalGoal(run, { from: p.get("from")!, to: p.get("to")!, cfrom: p.get("cfrom")!, cto: p.get("cto")! }, a, b)
         : Promise.resolve(null),
@@ -90,9 +91,16 @@ export async function GET(req: NextRequest) {
         p_threshold_cents: threshold,
         p_gap_days: 180,
       }),
+      db.rpc("shop_klaviyo_attribution_by_month", {
+        p_from: laMidnight(`${cvFromYear}-01-01`),
+        p_window_days: kwin,
+        p_gap_days: 180,
+        p_threshold_cents: threshold,
+      }),
     ]);
     if (cv.error) throw new Error(cv.error.message);
     if (src.error) throw new Error(src.error.message);
+    if (klav.error) throw new Error(klav.error.message);
     return NextResponse.json({
       a,
       b,
@@ -119,6 +127,21 @@ export async function GET(req: NextRequest) {
           sigDraft: Number(r.sig_draft),
           sigRepcode: Number(r.sig_repcode),
           sigCrm: Number(r.sig_crm),
+        })),
+      },
+      klaviyo: {
+        windowDays: kwin,
+        coverageFrom: ((klav.data ?? []) as any[])[0]?.coverage_from ?? null,
+        rows: ((klav.data ?? []) as any[]).map((r) => ({
+          month: String(r.month).slice(0, 10),
+          allOrders: Number(r.all_orders),
+          allCents: Number(r.all_cents),
+          organicOrders: Number(r.organic_orders),
+          organicCents: Number(r.organic_cents),
+          clickOrders: Number(r.click_orders),
+          clickCents: Number(r.click_cents),
+          openOrders: Number(r.open_orders),
+          openCents: Number(r.open_cents),
         })),
       },
       bucket,

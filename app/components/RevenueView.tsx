@@ -31,6 +31,9 @@ interface Goal {
 const NORMALIZED_COLOR = "#e0b341";
 interface CvRow { month: string; purchases: number; totalCents: number; avgCents: number; medianCents: number }
 interface SrcRow { month: string; sales: number; salesCents: number; organic: number; organicCents: number; sigDraft: number; sigRepcode: number; sigCrm: number }
+interface KlavRow { month: string; allOrders: number; allCents: number; organicOrders: number; organicCents: number; clickOrders: number; clickCents: number; openOrders: number; openCents: number }
+const KLAVIYO_COLOR = "#2bb673";
+const KLAVIYO_SOFT = "#8fd4b3";
 const AVG_SALE_CENTS = 1_200_000; // Kyle's working average camper sale, for the "≈ campers" readout
 const YEAR_COLORS = ["var(--accent)", "var(--accent-2)", "#7aa7d9"]; // current year first
 interface Health {
@@ -46,6 +49,7 @@ interface Payload {
   health: Health | null;
   customerValue: { gapDays: number; rows: CvRow[] } | null;
   purchaseSource: { gapDays: number; rows: SrcRow[] } | null;
+  klaviyo: { windowDays: number; coverageFrom: string | null; rows: KlavRow[] } | null;
   bucket: string;
   threshold: number;
   collections: Collection[];
@@ -128,6 +132,7 @@ export function RevenueView() {
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [showBig, setShowBig] = useState<"a" | "b">("a");
   const [srcMode, setSrcMode] = useState<"count" | "value">("count");
+  const [kwin, setKwin] = useState<1 | 3 | 5 | 7 | 14>(5);
   const [showCollections, setShowCollections] = useState(false);
 
   // Per-viewer preferences (collections + threshold) survive reloads.
@@ -168,7 +173,7 @@ export function RevenueView() {
     const seq = ++reqSeq.current;
     setLoading(true);
     setError(null);
-    const q = new URLSearchParams({ from, to, cfrom, cto, bucket, threshold: String(Math.round(thresholdUsd * 100)), unmatched: unmatched ? "1" : "0" });
+    const q = new URLSearchParams({ from, to, cfrom, cto, bucket, threshold: String(Math.round(thresholdUsd * 100)), unmatched: unmatched ? "1" : "0", kwin: String(kwin) });
     if (selected !== "all") q.set("collections", selected.join(","));
     try {
       const r = await fetch(`/api/admin/revenue?${q}`, { signal: ctrl.signal, cache: "no-store" });
@@ -182,7 +187,7 @@ export function RevenueView() {
     } finally {
       if (seq === reqSeq.current) setLoading(false);
     }
-  }, [from, to, cfrom, cto, bucket, thresholdUsd, unmatched, selected, prefsLoaded]);
+  }, [from, to, cfrom, cto, bucket, thresholdUsd, unmatched, selected, prefsLoaded, kwin]);
 
   useEffect(() => { const h = setTimeout(load, 250); return () => clearTimeout(h); }, [load]);
 
@@ -603,6 +608,64 @@ export function RevenueView() {
             </div>
           )}
 
+          {data?.klaviyo && (
+            <div className="card" style={{ marginTop: 14, padding: "14px 18px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                <div style={{ fontWeight: 750 }}>Revenue Klaviyo should actually get</div>
+                <div style={{ display: "flex", gap: 12, alignItems: "center", fontSize: 12, color: "var(--text-3)", flexWrap: "wrap" }}>
+                  <span><span style={{ display: "inline-block", width: 10, height: 10, background: "var(--surface-3)", border: "1px solid var(--border)", borderRadius: 2, marginRight: 5 }} />Organic revenue (no sales person)</span>
+                  <span><span style={{ display: "inline-block", width: 10, height: 10, background: KLAVIYO_COLOR, borderRadius: 2, marginRight: 5 }} />Clicked a Klaviyo email</span>
+                  <span><span style={{ display: "inline-block", width: 10, height: 10, background: KLAVIYO_SOFT, borderRadius: 2, marginRight: 5 }} />Only opened one</span>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    within
+                    <select value={kwin} onChange={(e) => setKwin(Number(e.target.value) as 1 | 3 | 5 | 7 | 14)} style={{ ...inputStyle, padding: "2px 6px", fontSize: 12 }}>
+                      {[1, 3, 5, 7, 14].map((d) => <option key={d} value={d}>{d} day{d === 1 ? "" : "s"}</option>)}
+                    </select>
+                    before the order
+                  </label>
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-3)", margin: "4px 0 8px" }}>
+                Every order counts here, accessories and merch included. An order is organic when no sales person was involved, using the same rules as the sales-vs-organic chart (orders inside a camper purchase inherit that purchase&apos;s status). Of those, Klaviyo gets credit when the customer clicked (or only opened) a Klaviyo email in the window before ordering. Klaviyo&apos;s own default is 5 days and counts opens, which is where the over-attribution comes from.
+                {data.klaviyo.coverageFrom && <> Email engagement history starts {fmtDate(data.klaviyo.coverageFrom)}, so earlier months show no attribution.</>}
+              </div>
+              <div style={{ opacity: loading ? 0.45 : 1, transition: "opacity 150ms" }}>
+                <KlaviyoBars rows={data.klaviyo.rows.filter((r) => !data.klaviyo!.coverageFrom || r.month >= data.klaviyo!.coverageFrom.slice(0, 7) + "-01")} />
+              </div>
+              <div style={{ overflowX: "auto", marginTop: 10 }}>
+                <table className="data-table" style={{ fontSize: 13, width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th>Month</th>
+                      <th style={{ textAlign: "right" }}>All revenue</th>
+                      <th style={{ textAlign: "right", borderLeft: "1px solid var(--border)" }}>Organic</th><th style={{ textAlign: "right" }}>Orders</th>
+                      <th style={{ textAlign: "right", borderLeft: "1px solid var(--border)" }}>Klaviyo click</th><th style={{ textAlign: "right" }}>Orders</th>
+                      <th style={{ textAlign: "right", borderLeft: "1px solid var(--border)" }}>Open only</th><th style={{ textAlign: "right" }}>Orders</th>
+                      <th style={{ textAlign: "right", borderLeft: "1px solid var(--border)" }}>Klaviyo share of all</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...data.klaviyo.rows].reverse().map((r) => (
+                      <tr key={r.month}>
+                        <td>{fmtBucket(r.month, "month")}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{usd(r.allCents)}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", borderLeft: "1px solid var(--border)" }}>{usd(r.organicCents)}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{r.organicOrders}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 650, color: KLAVIYO_COLOR, borderLeft: "1px solid var(--border)" }}>{usd(r.clickCents)}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{r.clickOrders}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", borderLeft: "1px solid var(--border)" }}>{usd(r.openCents)}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{r.openOrders}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", borderLeft: "1px solid var(--border)" }}>
+                          {r.allCents > 0 ? `${((r.clickCents / r.allCents) * 100).toFixed(1)}% · ${(((r.clickCents + r.openCents) / r.allCents) * 100).toFixed(1)}% w/ opens` : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))", gap: 14, marginTop: 14 }}>
             <div className="card" style={{ padding: "14px 18px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -915,6 +978,52 @@ function SourceBars({ rows, mode }: { rows: SrcRow[]; mode: "count" | "value" })
                 <title>{`${label} organic web: ${r.organic} purchases · ${usd(r.organicCents)}`}</title>
               </rect>
               {i % labelEvery === 0 && <text x={x0 + bw + 1.5} y={H - 8} fontSize={10} fill="var(--text-3)" textAnchor="middle">{label}</text>}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+/** Per month: organic revenue (outline) with the Klaviyo-attributed part stacked inside (click, then open-only). */
+function KlaviyoBars({ rows }: { rows: KlavRow[] }) {
+  if (rows.length === 0) return <div style={{ color: "var(--text-3)", fontSize: 13, padding: "20px 0" }}>No months with email engagement history yet.</div>;
+  const W = 900, H = 240, padL = 56, padR = 8, padT = 12, padB = 26;
+  const n = rows.length;
+  const max = Math.max(1, ...rows.map((r) => r.organicCents));
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const group = innerW / n;
+  const bw = Math.max(6, Math.min(44, group - 10));
+  const y = (v: number) => padT + innerH - (v / max) * innerH;
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => f * max);
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", minWidth: 520, height: "auto", display: "block" }} role="img" aria-label="Organic revenue per month with the Klaviyo-attributed portion">
+        {ticks.map((t, i) => (
+          <g key={i}>
+            <line x1={padL} x2={W - padR} y1={y(t)} y2={y(t)} stroke="var(--border-soft)" strokeWidth={1} />
+            <text x={padL - 6} y={y(t) + 4} fontSize={10} fill="var(--text-3)" textAnchor="end">{usd(t, { compact: true })}</text>
+          </g>
+        ))}
+        {rows.map((r, i) => {
+          const x0 = padL + i * group + (group - bw) / 2;
+          const label = fmtBucket(r.month, "month");
+          const clickTop = y(r.clickCents);
+          const openTop = y(r.clickCents + r.openCents);
+          return (
+            <g key={r.month}>
+              <rect x={x0} y={y(r.organicCents)} width={bw} height={Math.max(0, padT + innerH - y(r.organicCents))} fill="var(--surface-3)" stroke="var(--border)" strokeWidth={1} rx={2}>
+                <title>{`${label} organic revenue: ${usd(r.organicCents)} · ${r.organicOrders} orders (all revenue ${usd(r.allCents)})`}</title>
+              </rect>
+              <rect x={x0} y={openTop} width={bw} height={Math.max(0, clickTop - openTop)} fill={KLAVIYO_SOFT} rx={1}>
+                <title>{`${label} only opened a Klaviyo email: ${usd(r.openCents)} · ${r.openOrders} orders`}</title>
+              </rect>
+              <rect x={x0} y={clickTop} width={bw} height={Math.max(0, padT + innerH - clickTop)} fill={KLAVIYO_COLOR} rx={1}>
+                <title>{`${label} clicked a Klaviyo email: ${usd(r.clickCents)} · ${r.clickOrders} orders`}</title>
+              </rect>
+              <text x={x0 + bw / 2} y={H - 8} fontSize={10} fill="var(--text-3)" textAnchor="middle">{label}</text>
             </g>
           );
         })}
