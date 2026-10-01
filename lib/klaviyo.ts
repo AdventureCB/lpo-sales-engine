@@ -260,6 +260,43 @@ export interface KlaviyoEvent {
   meta: Record<string, unknown>;
 }
 
+/**
+ * One page of events for a metric inside [fromIso, toIso), oldest first,
+ * profile emails resolved. `cursorUrl` = the previous page's `next`; the
+ * caller persists it between runs (historical backfills span many runs).
+ */
+export async function pageEventsForMetric(
+  cursorUrl: string | null,
+  metricId: string,
+  fromIso: string,
+  toIso: string
+): Promise<{ events: KlaviyoEvent[]; next: string | null }> {
+  const filter = encodeURIComponent(
+    `and(equals(metric_id,"${metricId}"),greater-or-equal(datetime,${fromIso}),less-than(datetime,${toIso}))`
+  );
+  const url = cursorUrl ?? `${BASE}/events/?filter=${filter}&include=profile&sort=datetime`;
+  const page = await kGet(url);
+  const profileEmails = new Map<string, string>();
+  for (const inc of page.included ?? []) {
+    const email = normalizeEmail(inc.attributes?.email);
+    if (inc.type === "profile" && email) profileEmails.set(inc.id, email);
+  }
+  const events: KlaviyoEvent[] = [];
+  for (const ev of page.data ?? []) {
+    const profileId = ev.relationships?.profile?.data?.id;
+    const email = profileId ? profileEmails.get(profileId) : null;
+    if (!email || !ev.attributes?.datetime) continue;
+    const props = ev.attributes?.event_properties ?? {};
+    const detail: Record<string, unknown> = {};
+    for (const key of ["Subject", "Campaign Name", "URL"]) {
+      const v = props[key];
+      if (v !== undefined && v !== null && v !== "") detail[key] = typeof v === "object" ? JSON.stringify(v).slice(0, 200) : v;
+    }
+    events.push({ email, occurredAt: ev.attributes.datetime, meta: { klaviyo_event_id: ev.id, backfill: true, ...detail } });
+  }
+  return { events, next: page.links?.next ?? null };
+}
+
 /** Events for one metric since a timestamp, profile emails resolved. */
 export async function getEventsForMetric(
   metricId: string,
