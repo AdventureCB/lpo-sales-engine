@@ -513,7 +513,7 @@ export function RevenueView() {
                 </div>
               </div>
               <div style={{ fontSize: 12, color: "var(--text-3)", margin: "4px 0 8px" }}>
-                A customer&apos;s orders within {data.customerValue.gapDays} days of each other count as one purchase. It counts when any order in it nets over {usd(thresholdUsd * 100)}, its value is every order in it (deposit included), and it lands in the month of the last payment. Customers deduped by name. The newest month can still rise as remaining balances come in.
+                A customer&apos;s orders within {data.customerValue.gapDays} days of each other count as one purchase. It counts when any order in it nets over {usd(thresholdUsd * 100)}, and it lands in the month of the last payment over that amount. Its value is every order in it (deposit included) up to 60 days after that last big payment, so install-time add-ons count but a later accessory neither moves nor inflates it. Customers deduped by name. The newest month can still rise as remaining balances come in.
               </div>
               <div style={{ opacity: loading ? 0.45 : 1, transition: "opacity 150ms" }}>
                 <LineChart rows={data.customerValue.rows} years={cvYears} />
