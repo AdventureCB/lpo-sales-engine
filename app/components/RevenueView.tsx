@@ -30,6 +30,7 @@ interface Goal {
 }
 const NORMALIZED_COLOR = "#e0b341";
 interface CvRow { month: string; purchases: number; totalCents: number; avgCents: number; medianCents: number }
+interface SrcRow { month: string; sales: number; salesCents: number; organic: number; organicCents: number; sigDraft: number; sigRepcode: number; sigCrm: number }
 const AVG_SALE_CENTS = 1_200_000; // Kyle's working average camper sale, for the "≈ campers" readout
 const YEAR_COLORS = ["var(--accent)", "var(--accent-2)", "#7aa7d9"]; // current year first
 interface Health {
@@ -44,6 +45,7 @@ interface Payload {
   goal: Goal | null;
   health: Health | null;
   customerValue: { gapDays: number; rows: CvRow[] } | null;
+  purchaseSource: { gapDays: number; rows: SrcRow[] } | null;
   bucket: string;
   threshold: number;
   collections: Collection[];
@@ -125,6 +127,7 @@ export function RevenueView() {
   const [syncing, setSyncing] = useState<string | null>(null);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [showBig, setShowBig] = useState<"a" | "b">("a");
+  const [srcMode, setSrcMode] = useState<"count" | "value">("count");
   const [showCollections, setShowCollections] = useState(false);
 
   // Per-viewer preferences (collections + threshold) survive reloads.
@@ -549,6 +552,57 @@ export function RevenueView() {
             </div>
           )}
 
+          {data?.purchaseSource && (
+            <div className="card" style={{ marginTop: 14, padding: "14px 18px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                <div style={{ fontWeight: 750 }}>Camper purchases: sales team vs organic web</div>
+                <div style={{ display: "flex", gap: 12, alignItems: "center", fontSize: 12, color: "var(--text-3)" }}>
+                  <span><span style={{ display: "inline-block", width: 10, height: 10, background: "var(--accent)", borderRadius: 2, marginRight: 5 }} />Sales team</span>
+                  <span><span style={{ display: "inline-block", width: 10, height: 10, background: "#7aa7d9", borderRadius: 2, marginRight: 5 }} />Organic web</span>
+                  <span style={{ display: "flex", gap: 4 }}>
+                    <button className={`btn ${srcMode === "count" ? "primary" : "ghost"}`} style={{ padding: "3px 9px", fontSize: 12 }} onClick={() => setSrcMode("count")}>Purchases</button>
+                    <button className={`btn ${srcMode === "value" ? "primary" : "ghost"}`} style={{ padding: "3px 9px", fontSize: 12 }} onClick={() => setSrcMode("value")}>Value</button>
+                  </span>
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-3)", margin: "4px 0 8px" }}>
+                Same purchases as the customer-value chart. A purchase is <b>sales team</b> when any order in it was built by staff in Shopify (draft order, invoice or POS rather than the online store), used a rep-coded discount, or the customer had a logged rep conversation in the {data.purchaseSource.gapDays} days before the last camper payment (CRM call history starts May 2026). Everything else is <b>organic web</b>.
+              </div>
+              <div style={{ opacity: loading ? 0.45 : 1, transition: "opacity 150ms" }}>
+                <SourceBars rows={data.purchaseSource.rows} mode={srcMode} />
+              </div>
+              <div style={{ overflowX: "auto", marginTop: 10 }}>
+                <table className="data-table" style={{ fontSize: 13, width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th>Month</th>
+                      <th style={{ textAlign: "right" }}>Sales team</th><th style={{ textAlign: "right" }}>Value</th>
+                      <th style={{ textAlign: "right", borderLeft: "1px solid var(--border)" }}>Organic web</th><th style={{ textAlign: "right" }}>Value</th>
+                      <th style={{ textAlign: "right", borderLeft: "1px solid var(--border)" }}>Sales share</th>
+                      <th style={{ textAlign: "right" }}>Signals: staff-built · rep code · CRM call</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...data.purchaseSource.rows].reverse().map((r) => {
+                      const total = r.sales + r.organic;
+                      return (
+                        <tr key={r.month}>
+                          <td>{fmtBucket(r.month, "month")}</td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 650 }}>{r.sales}</td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{usd(r.salesCents)}</td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 650, borderLeft: "1px solid var(--border)" }}>{r.organic}</td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{usd(r.organicCents)}</td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", borderLeft: "1px solid var(--border)" }}>{total ? `${Math.round((r.sales / total) * 100)}%` : "—"}</td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{r.sigDraft} · {r.sigRepcode} · {r.sigCrm}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))", gap: 14, marginTop: 14 }}>
             <div className="card" style={{ padding: "14px 18px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -816,6 +870,51 @@ function LineChart({ rows, years }: { rows: CvRow[]; years: string[] }) {
                   <title>{`${new Date(2000, p.mi, 1).toLocaleDateString("en-US", { month: "short" })} ${yr}: avg ${usd(p.r.avgCents)} · median ${usd(p.r.medianCents)} · ${p.r.purchases} purchases`}</title>
                 </circle>
               ))}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+/** Grouped bars per month: sales-team vs organic-web camper purchases (count or value). */
+function SourceBars({ rows, mode }: { rows: SrcRow[]; mode: "count" | "value" }) {
+  if (rows.length === 0) return <div style={{ color: "var(--text-3)", fontSize: 13, padding: "20px 0" }}>No qualifying purchases yet.</div>;
+  const W = 900, H = 240, padL = 48, padR = 8, padT = 12, padB = 26;
+  const n = rows.length;
+  const val = (r: SrcRow, k: "sales" | "organic") => (mode === "count" ? r[k] : k === "sales" ? r.salesCents : r.organicCents);
+  const max = Math.max(1, ...rows.flatMap((r) => [val(r, "sales"), val(r, "organic")]));
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const group = innerW / n;
+  const bw = Math.max(2, Math.min(22, (group - 6) / 2));
+  const y = (v: number) => padT + innerH - (v / max) * innerH;
+  const fmt = (v: number) => (mode === "count" ? String(v) : usd(v, { compact: true }));
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => Math.round(f * max));
+  const labelEvery = n > 18 ? 2 : 1;
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", minWidth: 520, height: "auto", display: "block" }} role="img" aria-label="Camper purchases per month, sales team vs organic web">
+        {ticks.map((t, i) => (
+          <g key={i}>
+            <line x1={padL} x2={W - padR} y1={y(t)} y2={y(t)} stroke="var(--border-soft)" strokeWidth={1} />
+            <text x={padL - 6} y={y(t) + 4} fontSize={10} fill="var(--text-3)" textAnchor="end">{fmt(t)}</text>
+          </g>
+        ))}
+        {rows.map((r, i) => {
+          const x0 = padL + i * group + (group - (bw * 2 + 3)) / 2;
+          const s = val(r, "sales"), o = val(r, "organic");
+          const label = fmtBucket(r.month, "month");
+          return (
+            <g key={r.month}>
+              <rect x={x0} y={y(s)} width={bw} height={Math.max(0, padT + innerH - y(s))} fill="var(--accent)" rx={2}>
+                <title>{`${label} sales team: ${r.sales} purchases · ${usd(r.salesCents)} (staff-built ${r.sigDraft}, rep code ${r.sigRepcode}, CRM call ${r.sigCrm})`}</title>
+              </rect>
+              <rect x={x0 + bw + 3} y={y(o)} width={bw} height={Math.max(0, padT + innerH - y(o))} fill="#7aa7d9" rx={2}>
+                <title>{`${label} organic web: ${r.organic} purchases · ${usd(r.organicCents)}`}</title>
+              </rect>
+              {i % labelEvery === 0 && <text x={x0 + bw + 1.5} y={H - 8} fontSize={10} fill="var(--text-3)" textAnchor="middle">{label}</text>}
             </g>
           );
         })}

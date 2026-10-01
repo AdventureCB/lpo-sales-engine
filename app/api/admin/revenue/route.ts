@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
     ]);
     const cvYears = 3;
     const cvFromYear = new Date().getFullYear() - (cvYears - 1);
-    const [goal, health, cv] = await Promise.all([
+    const [goal, health, cv, src] = await Promise.all([
       bucket === "month" && a && b && from && to && cfrom && cto
         ? seasonalGoal(run, { from: p.get("from")!, to: p.get("to")!, cfrom: p.get("cfrom")!, cto: p.get("cto")! }, a, b)
         : Promise.resolve(null),
@@ -83,8 +83,16 @@ export async function GET(req: NextRequest) {
         p_threshold_cents: threshold,
         p_gap_days: 180,
       }),
+      db.rpc("shop_camper_purchases_by_source", {
+        p_from: laMidnight(`${cvFromYear}-01-01`),
+        p_collections: selected,
+        p_include_unmatched: unmatched,
+        p_threshold_cents: threshold,
+        p_gap_days: 180,
+      }),
     ]);
     if (cv.error) throw new Error(cv.error.message);
+    if (src.error) throw new Error(src.error.message);
     return NextResponse.json({
       a,
       b,
@@ -98,6 +106,19 @@ export async function GET(req: NextRequest) {
           totalCents: Number(r.total_cents),
           avgCents: Number(r.avg_cents),
           medianCents: Number(r.median_cents),
+        })),
+      },
+      purchaseSource: {
+        gapDays: 180,
+        rows: ((src.data ?? []) as any[]).map((r) => ({
+          month: String(r.month).slice(0, 10),
+          sales: Number(r.sales_purchases),
+          salesCents: Number(r.sales_cents),
+          organic: Number(r.organic_purchases),
+          organicCents: Number(r.organic_cents),
+          sigDraft: Number(r.sig_draft),
+          sigRepcode: Number(r.sig_repcode),
+          sigCrm: Number(r.sig_crm),
         })),
       },
       bucket,

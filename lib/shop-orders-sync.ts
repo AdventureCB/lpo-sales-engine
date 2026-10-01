@@ -33,6 +33,7 @@ const ordersQuery = (withProducts: boolean) => `query($cursor: String, $q: Strin
   orders(first: ${PAGE}, after: $cursor, query: $q, sortKey: $sort) {
     edges { cursor node {
       id name createdAt updatedAt cancelledAt test displayFinancialStatus
+      sourceName app { name }
       customer { id firstName lastName displayName email }
       billingAddress { name }
       subtotalPriceSet { shopMoney { amount } }
@@ -140,6 +141,8 @@ function orderRow(o: any) {
     cancelled_at: o.cancelledAt ?? null,
     test: !!o.test,
     financial_status: o.displayFinancialStatus ?? null,
+    source_name: o.sourceName ?? null,
+    app_name: o.app?.name ?? null,
     customer_id: gid(cust.id),
     customer_name: name,
     customer_name_norm: normName(name ?? email),
