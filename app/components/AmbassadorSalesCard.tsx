@@ -78,7 +78,7 @@ export function AmbassadorSalesCard({ from, to, periodLabel }: { from: string; t
         </div>
       </div>
       <div style={{ fontSize: 12, color: "var(--text-3)", margin: "4px 0 8px" }}>
-        An order is an ambassador sale when it used a discount code on the roster. Collabs-era codes and today&apos;s standard codes are treated the same, so keep the roster current as new ambassadors get codes. Net revenue per order, all products.
+        An order is an ambassador sale when it used a discount code on the roster. Collabs-era codes and today&apos;s standard codes are treated the same. Standard codes come in pairs — NAME500 for the deposit and NAME500C for the remaining balance — and a roster code automatically covers its “C” twin, so list only the 500 code. Net revenue per order, all products.
       </div>
       {error && <div style={{ color: "var(--crit)", fontSize: 12.5, marginBottom: 6 }}>{error}</div>}
       {!data && !error && <div style={{ color: "var(--text-3)", fontSize: 13 }}>Loading…</div>}
