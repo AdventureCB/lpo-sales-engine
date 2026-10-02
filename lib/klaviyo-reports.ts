@@ -11,7 +11,8 @@ import { getMetricIds } from "./klaviyo";
  */
 
 const BASE = "https://a.klaviyo.com/api";
-const REVISION = "2024-10-15";
+// campaign-series-reports only exists from the 2025-01-15 revision on.
+const REVISION = "2025-07-15";
 const STATS = ["recipients", "delivered", "opens_unique", "clicks_unique", "bounced", "unsubscribes", "spam_complaints", "conversions", "conversion_value"] as const;
 
 export class KlaviyoRateLimited extends Error {
