@@ -54,6 +54,7 @@ const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[]
       { label: "💰 Ad ROI", href: "/ad-roi", adminOnly: true },
       { label: "💵 Revenue", href: "/analytics/revenue", adminOnly: true },
       { label: "✉️ Email", href: "/analytics/email", adminOnly: true },
+      { label: "🌐 Traffic", href: "/analytics/traffic", adminOnly: true },
     ],
   },
   {
