@@ -263,6 +263,22 @@ export function RevenueView() {
     return ys.length ? ys : [String(new Date().getFullYear())];
   }, [cvRows]);
   const cvByKey = useMemo(() => new Map(cvRows.map((r) => [r.month.slice(0, 7), r])), [cvRows]);
+  // Klaviyo card: months with engagement history, plus the same month a year
+  // earlier (only when that month is also inside the history) for the compare.
+  const klavAll = data?.klaviyo?.rows ?? [];
+  const klavCov = data?.klaviyo?.coverageFrom ? data.klaviyo.coverageFrom.slice(0, 7) + "-01" : null;
+  const klavRows = useMemo(() => klavAll.filter((r) => !klavCov || r.month >= klavCov), [klavAll, klavCov]);
+  const klavPrior = useMemo(() => {
+    const byM = new Map(klavAll.map((r) => [r.month.slice(0, 7), r]));
+    const m = new Map<string, KlavRow>();
+    for (const r of klavRows) {
+      const ym = r.month.slice(0, 7);
+      const prev = `${Number(ym.slice(0, 4)) - 1}${ym.slice(4)}`;
+      const p = byM.get(prev);
+      if (p && (!klavCov || p.month >= klavCov)) m.set(ym, p);
+    }
+    return m;
+  }, [klavAll, klavRows, klavCov]);
   const futureGoals = (data?.goal?.months ?? []).filter((g) => g.future && g.goal != null);
   const nextGoal = futureGoals[0] ?? null;
   const laterGoals = futureGoals.slice(1);
@@ -616,6 +632,7 @@ export function RevenueView() {
                   <span><span style={{ display: "inline-block", width: 10, height: 10, background: "var(--surface-3)", border: "1px solid var(--border)", borderRadius: 2, marginRight: 5 }} />Organic revenue (no sales person)</span>
                   <span><span style={{ display: "inline-block", width: 10, height: 10, background: KLAVIYO_COLOR, borderRadius: 2, marginRight: 5 }} />Clicked a Klaviyo email</span>
                   <span><span style={{ display: "inline-block", width: 10, height: 10, background: KLAVIYO_SOFT, borderRadius: 2, marginRight: 5 }} />Only opened one</span>
+                  {klavPrior.size > 0 && <span><span style={{ display: "inline-block", width: 14, borderTop: "2px solid var(--text-1)", verticalAlign: "middle", marginRight: 5 }} />last year, clicked <span style={{ display: "inline-block", width: 14, borderTop: "2px dashed var(--text-2)", verticalAlign: "middle", margin: "0 5px 0 8px" }} />with opens</span>}
                   <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                     within
                     <select value={kwin} onChange={(e) => setKwin(Number(e.target.value) as 1 | 3 | 5 | 7 | 14)} style={{ ...inputStyle, padding: "2px 6px", fontSize: 12 }}>
@@ -630,7 +647,7 @@ export function RevenueView() {
                 {data.klaviyo.coverageFrom && <> Email engagement history starts {fmtDate(data.klaviyo.coverageFrom)}, so earlier months show no attribution.</>}
               </div>
               <div style={{ opacity: loading ? 0.45 : 1, transition: "opacity 150ms" }}>
-                <KlaviyoBars rows={data.klaviyo.rows.filter((r) => !data.klaviyo!.coverageFrom || r.month >= data.klaviyo!.coverageFrom.slice(0, 7) + "-01")} />
+                <KlaviyoBars rows={klavRows} prior={klavPrior} />
               </div>
               <div style={{ overflowX: "auto", marginTop: 10 }}>
                 <table className="data-table" style={{ fontSize: 13, width: "100%" }}>
@@ -642,24 +659,36 @@ export function RevenueView() {
                       <th style={{ textAlign: "right", borderLeft: "1px solid var(--border)" }}>Klaviyo click</th><th style={{ textAlign: "right" }}>Orders</th>
                       <th style={{ textAlign: "right", borderLeft: "1px solid var(--border)" }}>Open only</th><th style={{ textAlign: "right" }}>Orders</th>
                       <th style={{ textAlign: "right", borderLeft: "1px solid var(--border)" }}>Klaviyo share of all</th>
+                      <th style={{ textAlign: "right", borderLeft: "1px solid var(--border)" }}>Last year click</th>
+                      <th style={{ textAlign: "right" }}>Last year share</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {[...data.klaviyo.rows].reverse().map((r) => (
-                      <tr key={r.month}>
-                        <td>{fmtBucket(r.month, "month")}</td>
-                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{usd(r.allCents)}</td>
-                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", borderLeft: "1px solid var(--border)" }}>{usd(r.organicCents)}</td>
-                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{r.organicOrders}</td>
-                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 650, color: KLAVIYO_COLOR, borderLeft: "1px solid var(--border)" }}>{usd(r.clickCents)}</td>
-                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{r.clickOrders}</td>
-                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", borderLeft: "1px solid var(--border)" }}>{usd(r.openCents)}</td>
-                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{r.openOrders}</td>
-                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", borderLeft: "1px solid var(--border)" }}>
-                          {r.allCents > 0 ? `${((r.clickCents / r.allCents) * 100).toFixed(1)}% · ${(((r.clickCents + r.openCents) / r.allCents) * 100).toFixed(1)}% w/ opens` : "—"}
-                        </td>
-                      </tr>
-                    ))}
+                    {[...klavRows].reverse().map((r) => {
+                      const p = klavPrior.get(r.month.slice(0, 7));
+                      const share = r.allCents > 0 ? (r.clickCents / r.allCents) * 100 : null;
+                      const pShare = p && p.allCents > 0 ? (p.clickCents / p.allCents) * 100 : null;
+                      return (
+                        <tr key={r.month}>
+                          <td>{fmtBucket(r.month, "month")}</td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{usd(r.allCents)}</td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", borderLeft: "1px solid var(--border)" }}>{usd(r.organicCents)}</td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{r.organicOrders}</td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 650, color: KLAVIYO_COLOR, borderLeft: "1px solid var(--border)" }}>{usd(r.clickCents)}{p && <DeltaTag x={r.clickCents} y={p.clickCents} />}</td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{r.clickOrders}</td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", borderLeft: "1px solid var(--border)" }}>{usd(r.openCents)}</td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-3)" }}>{r.openOrders}</td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", borderLeft: "1px solid var(--border)" }}>
+                            {share != null ? `${share.toFixed(1)}% · ${(((r.clickCents + r.openCents) / r.allCents) * 100).toFixed(1)}% w/ opens` : "—"}
+                          </td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-2)", borderLeft: "1px solid var(--border)" }}>{p ? usd(p.clickCents) : "—"}</td>
+                          <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-2)" }}>
+                            {pShare != null ? `${pShare.toFixed(1)}%` : "—"}
+                            {share != null && pShare != null && <span style={{ color: share >= pShare ? "var(--good)" : "var(--crit)", fontWeight: 650, marginLeft: 6 }}>{share >= pShare ? "▲" : "▼"} {Math.abs(share - pShare).toFixed(1)} pts</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -987,11 +1016,11 @@ function SourceBars({ rows, mode }: { rows: SrcRow[]; mode: "count" | "value" })
 }
 
 /** Per month: organic revenue (outline) with the Klaviyo-attributed part stacked inside (click, then open-only). */
-function KlaviyoBars({ rows }: { rows: KlavRow[] }) {
+function KlaviyoBars({ rows, prior }: { rows: KlavRow[]; prior: Map<string, KlavRow> }) {
   if (rows.length === 0) return <div style={{ color: "var(--text-3)", fontSize: 13, padding: "20px 0" }}>No months with email engagement history yet.</div>;
   const W = 900, H = 240, padL = 56, padR = 8, padT = 12, padB = 26;
   const n = rows.length;
-  const max = Math.max(1, ...rows.map((r) => r.organicCents));
+  const max = Math.max(1, ...rows.map((r) => r.organicCents), ...[...prior.values()].map((p) => p.clickCents + p.openCents));
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
   const group = innerW / n;
@@ -1023,6 +1052,18 @@ function KlaviyoBars({ rows }: { rows: KlavRow[] }) {
               <rect x={x0} y={clickTop} width={bw} height={Math.max(0, padT + innerH - clickTop)} fill={KLAVIYO_COLOR} rx={1}>
                 <title>{`${label} clicked a Klaviyo email: ${usd(r.clickCents)} · ${r.clickOrders} orders`}</title>
               </rect>
+              {(() => {
+                const p = prior.get(r.month.slice(0, 7));
+                if (!p) return null;
+                // Last year's Klaviyo credit as two ticks: click (solid) and click+opens (dashed).
+                const yClick = y(p.clickCents), yAll = y(p.clickCents + p.openCents);
+                return (
+                  <g>
+                    <line x1={x0 - 3} x2={x0 + bw + 3} y1={yAll} y2={yAll} stroke="var(--text-2)" strokeWidth={1.5} strokeDasharray="3 2"><title>{`${fmtBucket(p.month, "month")} click + opens: ${usd(p.clickCents + p.openCents)}`}</title></line>
+                    <line x1={x0 - 3} x2={x0 + bw + 3} y1={yClick} y2={yClick} stroke="var(--text-1)" strokeWidth={2}><title>{`${fmtBucket(p.month, "month")} clicked: ${usd(p.clickCents)} · ${p.clickOrders} orders`}</title></line>
+                  </g>
+                );
+              })()}
               <text x={x0 + bw / 2} y={H - 8} fontSize={10} fill="var(--text-3)" textAnchor="middle">{label}</text>
             </g>
           );
