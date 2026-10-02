@@ -267,7 +267,8 @@ export function RevenueView() {
   // earlier (only when that month is also inside the history) for the compare.
   const klavAll = data?.klaviyo?.rows ?? [];
   const klavCov = data?.klaviyo?.coverageFrom ? data.klaviyo.coverageFrom.slice(0, 7) + "-01" : null;
-  const klavRows = useMemo(() => klavAll.filter((r) => !klavCov || r.month >= klavCov), [klavAll, klavCov]);
+  // Bars = the last 13 months inside coverage; older months only feed the compare.
+  const klavRows = useMemo(() => klavAll.filter((r) => !klavCov || r.month >= klavCov).slice(-13), [klavAll, klavCov]);
   const klavPrior = useMemo(() => {
     const byM = new Map(klavAll.map((r) => [r.month.slice(0, 7), r]));
     const m = new Map<string, KlavRow>();
