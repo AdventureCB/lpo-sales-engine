@@ -99,6 +99,45 @@ export async function seriesReport(kind: "campaign" | "flow", startIso: string, 
   return { rows: [...byKey.values()].filter((r) => r.recipients > 0 || r.delivered > 0 || r.opens_unique > 0), raw: j };
 }
 
+/**
+ * Values report for ONE calendar month (campaign-series-reports is not
+ * available on this account, so campaigns are pulled a month at a time).
+ * Every row lands on the month of `startIso`.
+ */
+export async function valuesReport(kind: "campaign" | "flow", startIso: string, endIso: string, conversionMetricId: string): Promise<{ rows: MonthStat[]; raw?: any }> {
+  const path = kind === "campaign" ? "/campaign-values-reports/" : "/flow-values-reports/";
+  const body = {
+    data: {
+      type: kind === "campaign" ? "campaign-values-report" : "flow-values-report",
+      attributes: {
+        statistics: [...STATS],
+        timeframe: { start: startIso, end: endIso },
+        conversion_metric_id: conversionMetricId,
+        filter: "equals(send_channel,'email')",
+      },
+    },
+  };
+  const j = await kFetch(path, { method: "POST", body: JSON.stringify(body) });
+  const results: any[] = j?.data?.attributes?.results ?? [];
+  const month = monthKey(startIso);
+  const byId = new Map<string, MonthStat>();
+  for (const r of results) {
+    const id = String(r?.groupings?.campaign_id ?? r?.groupings?.flow_id ?? "");
+    if (!id) continue;
+    const s = r.statistics ?? {};
+    const n = (k: string) => Number(s[k] ?? 0) || 0;
+    const cur = byId.get(id) ?? {
+      month, kind, entity_id: id,
+      recipients: 0, delivered: 0, opens_unique: 0, clicks_unique: 0, bounced: 0, unsubscribes: 0, spam_complaints: 0, conversions: 0, conversion_value_cents: 0,
+    };
+    cur.recipients += n("recipients"); cur.delivered += n("delivered"); cur.opens_unique += n("opens_unique"); cur.clicks_unique += n("clicks_unique");
+    cur.bounced += n("bounced"); cur.unsubscribes += n("unsubscribes"); cur.spam_complaints += n("spam_complaints"); cur.conversions += n("conversions");
+    cur.conversion_value_cents += Math.round(n("conversion_value") * 100);
+    byId.set(id, cur);
+  }
+  return { rows: [...byId.values()].filter((r) => r.recipients > 0 || r.delivered > 0 || r.opens_unique > 0), raw: j };
+}
+
 /** Campaign id → {name, status, send_time} (email campaigns, incl. archived). */
 export async function campaignNames(): Promise<Map<string, { name: string; status: string | null; send_time: string | null }>> {
   const out = new Map<string, { name: string; status: string | null; send_time: string | null }>();
@@ -137,7 +176,8 @@ export async function conversionMetricId(): Promise<string> {
 /** Pull one (kind, window) and upsert it, attaching names. */
 export async function syncEmailStatsWindow(db: SupabaseClient, kind: "campaign" | "flow", startIso: string, endIso: string, names: Map<string, any>) {
   const metric = await conversionMetricId();
-  const { rows } = await seriesReport(kind, startIso, endIso, metric);
+  // Campaigns: one month per call (values report). Flows: series over the window.
+  const { rows } = kind === "campaign" ? await valuesReport(kind, startIso, endIso, metric) : await seriesReport(kind, startIso, endIso, metric);
   if (!rows.length) return { kind, startIso, endIso, rows: 0 };
   const payload = rows.map((r) => {
     const n = names.get(r.entity_id);
