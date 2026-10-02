@@ -15,7 +15,12 @@ interface Agg {
 interface MonthRow { month: string; all: Agg; campaigns: Agg; flows: Agg }
 interface Entity extends Agg { id: string; name: string; status: string | null; sendTime: string | null; firstMonth: string }
 interface Report { from: string; to: string; months: MonthRow[]; totals: { all: Agg; campaigns: Agg; flows: Agg }; flows: Entity[]; campaigns: Entity[] }
-interface Payload { a: Report; b: Report | null; coverageFrom: string | null; lastRefreshAt: string | null }
+interface Cohorts {
+  subscribed: number; unsubscribed: number; neverSubscribed: number; suppressed: number; over6mo: number; over12mo: number;
+  buckets: { key: string; count: number; engaged90: number }[]; syncedAt: string | null;
+}
+interface Payload { a: Report; b: Report | null; coverageFrom: string | null; lastRefreshAt: string | null; cohorts: Cohorts | null }
+const BUCKET_LABEL: Record<string, string> = { "0": "Under 1 month", "1": "1–3 months", "2": "3–6 months", "3": "6–12 months", "4": "1–2 years", "5": "Over 2 years", unknown: "No date" };
 
 const pct = (r: number | null | undefined, d = 1) => (r == null ? "—" : `${(r * 100).toFixed(d)}%`);
 const num = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString());
@@ -171,6 +176,46 @@ export function EmailAnalyticsView() {
               </table>
             </div>
           </div>
+
+          {data?.cohorts && (() => {
+            const c = data.cohorts;
+            const total = c.subscribed || 1;
+            const pct = (n: number) => `${((n / total) * 100).toFixed(1)}%`;
+            const maxN = Math.max(1, ...c.buckets.map((b) => b.count));
+            return (
+              <div className="card" style={{ marginTop: 14, padding: "14px 18px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+                  <div style={{ fontWeight: 750 }}>How long subscribers have been getting our email</div>
+                  <div style={{ fontSize: 12, color: "var(--text-3)" }}>
+                    {num(c.subscribed)} subscribed · {num(c.unsubscribed)} unsubscribed · {num(c.suppressed)} suppressed{c.syncedAt ? ` · synced ${new Date(c.syncedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}
+                  </div>
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text-3)", margin: "4px 0 10px" }}>
+                  Current email subscribers in Klaviyo, grouped by time since they consented to marketing email (profile creation date when consent has no timestamp). The engaged share is subscribers who opened or clicked an email in the last 90 days.
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginBottom: 12 }}>
+                  <div className="stat-tile"><div className="n">{pct(c.over6mo)}</div><div className="l">6 months or longer</div><div className="d">{num(c.over6mo)} subscribers</div></div>
+                  <div className="stat-tile"><div className="n">{pct(c.over12mo)}</div><div className="l">A year or longer</div><div className="d">{num(c.over12mo)} subscribers</div></div>
+                  <div className="stat-tile"><div className="n">{pct(c.subscribed - c.over6mo)}</div><div className="l">Under 6 months</div><div className="d">{num(c.subscribed - c.over6mo)} subscribers</div></div>
+                </div>
+                <table className="data-table" style={{ fontSize: 13, width: "100%" }}>
+                  <thead><tr><th>Tenure</th><th style={{ width: "40%" }}></th><th style={{ textAlign: "right" }}>Subscribers</th><th style={{ textAlign: "right" }}>Share</th><th style={{ textAlign: "right" }}>Engaged (90d)</th></tr></thead>
+                  <tbody>
+                    {c.buckets.map((b) => (
+                      <tr key={b.key}>
+                        <td style={{ whiteSpace: "nowrap" }}>{BUCKET_LABEL[b.key] ?? b.key}</td>
+                        <td><div style={{ height: 10, borderRadius: 3, background: "var(--accent)", width: `${(b.count / maxN) * 100}%`, minWidth: 2 }} /></td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 650 }}>{num(b.count)}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{pct(b.count)}</td>
+                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-2)" }}>{b.count ? `${((b.engaged90 / b.count) * 100).toFixed(0)}%` : "—"}</td>
+                      </tr>
+                    ))}
+                    {c.buckets.length === 0 && <tr><td colSpan={5} style={{ color: "var(--text-3)" }}>Profile sync hasn&apos;t run yet.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
 
           <div className="card" style={{ marginTop: 14, padding: "14px 18px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>

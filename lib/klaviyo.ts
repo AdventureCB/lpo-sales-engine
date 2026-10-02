@@ -68,6 +68,32 @@ export async function pageProfilesSmsConsent(cursorUrl: string | null): Promise<
 
 let listsCache: { id: string; name: string }[] | null = null;
 
+/**
+ * One page of profiles with email-marketing subscription state, for the
+ * email tenure cohorts. Cursor = previous page's `next` link.
+ */
+export async function pageProfilesEmail(cursorUrl: string | null): Promise<{
+  rows: { profile_id: string; email: string | null; created_at: string | null; consent: string | null; consent_at: string | null; suppressed: boolean; last_event_at: string | null }[];
+  next: string | null;
+}> {
+  const url = cursorUrl ?? `${BASE}/profiles/?additional-fields[profile]=subscriptions&fields[profile]=email,created,last_event_date,subscriptions&page[size]=100`;
+  const page = await kGet(url);
+  const rows = (page.data ?? []).map((p: any) => {
+    const em = p.attributes?.subscriptions?.email?.marketing ?? {};
+    const suppressed = Array.isArray(em.suppression) && em.suppression.length > 0;
+    return {
+      profile_id: String(p.id),
+      email: normalizeEmail(p.attributes?.email) || null,
+      created_at: p.attributes?.created ?? null,
+      consent: em.consent ?? null,
+      consent_at: em.consent_timestamp ?? null,
+      suppressed,
+      last_event_at: p.attributes?.last_event_date ?? null,
+    };
+  });
+  return { rows, next: page.links?.next ?? null };
+}
+
 /** All Klaviyo lists — the sub-event picker for list-membership metrics. */
 export async function getLists(): Promise<{ id: string; name: string }[]> {
   if (listsCache) return listsCache;

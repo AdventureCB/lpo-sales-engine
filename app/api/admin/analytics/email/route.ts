@@ -83,17 +83,20 @@ export async function GET(req: NextRequest) {
   const db = supabaseAdmin();
   try {
     const cFrom = addMonths(from, -12), cTo = addMonths(to, -12);
-    const [cur, prev, sync, cov] = await Promise.all([
+    const [cur, prev, sync, cov, cohorts] = await Promise.all([
       load(db, from, to),
       compare ? load(db, cFrom, cTo) : Promise.resolve([] as Row[]),
       db.from("crm_sync_state").select("value").eq("key", "email_stats_sync_refresh").maybeSingle(),
       db.from("email_stats_monthly").select("month").order("month", { ascending: true }).limit(1).maybeSingle(),
+      db.rpc("email_tenure_cohorts"),
     ]);
+    if (cohorts.error) throw new Error(cohorts.error.message);
     return NextResponse.json({
       a: report(cur, from, to),
       b: compare ? report(prev, cFrom, cTo) : null,
       coverageFrom: cov.data?.month ?? null,
       lastRefreshAt: (sync.data?.value as any)?.at ?? null,
+      cohorts: cohorts.data,
     });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e) }, { status: 500 });
