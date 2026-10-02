@@ -34,6 +34,7 @@ const ordersQuery = (withProducts: boolean) => `query($cursor: String, $q: Strin
     edges { cursor node {
       id name createdAt updatedAt cancelledAt test displayFinancialStatus
       sourceName app { name }
+      customAttributes { key value }
       customer { id firstName lastName displayName email }
       billingAddress { name }
       subtotalPriceSet { shopMoney { amount } }
@@ -143,6 +144,8 @@ function orderRow(o: any) {
     financial_status: o.displayFinancialStatus ?? null,
     source_name: o.sourceName ?? null,
     app_name: o.app?.name ?? null,
+    // Shopify Collabs stamps referred orders with a __ref_id note attribute.
+    collabs_ref: ((o.customAttributes ?? []).find((a: any) => a?.key === "__ref_id")?.value ?? "").toString().trim() || null,
     customer_id: gid(cust.id),
     customer_name: name,
     customer_name_norm: normName(name ?? email),

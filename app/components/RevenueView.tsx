@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AmbassadorSalesCard } from "./AmbassadorSalesCard";
 
 /**
  * Admin revenue analytics: net revenue (never shipping or tax) for any
@@ -695,6 +696,8 @@ export function RevenueView() {
               </div>
             </div>
           )}
+
+          <AmbassadorSalesCard from={from} to={to} periodLabel={periodLabel(from, to)} />
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))", gap: 14, marginTop: 14 }}>
             <div className="card" style={{ padding: "14px 18px" }}>
