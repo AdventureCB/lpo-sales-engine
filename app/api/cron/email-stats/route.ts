@@ -49,7 +49,9 @@ export async function GET(req: Request) {
       const state = ((url.searchParams.get("reset") === "1" ? null : (st?.value as any)) ?? {}) as { pending?: string[]; doneCount?: number };
       if (!state.pending) {
         const pending: string[] = [];
-        for (let k = 0; k < years; k++) pending.push(`flow|${monthStart(-12 * (k + 1) + 1)}|${monthStart(-12 * k + 1)}`);
+        // 6-month flow windows: Klaviyo rejects timeframes over 1 year, and a
+        // 12-month window that spans a leap day is 366 days.
+        for (let k = 0; k < years * 2; k++) pending.push(`flow|${monthStart(-6 * (k + 1) + 1)}|${monthStart(-6 * k + 1)}`);
         for (let m = 0; m < years * 12; m++) pending.push(`campaign|${monthStart(-m)}|${monthStart(-m + 1)}`);
         state.pending = pending;
         state.doneCount = 0;
