@@ -37,13 +37,12 @@ export async function GET(req: NextRequest) {
     ]);
     for (const r of [hist, roster, cands]) if (r.error) throw new Error(r.error.message);
     const rows = (hist.data ?? []) as any[];
-    const months = new Map<string, { month: string; orders: number; netCents: number; discountCents: number; code: number; collabs: number; unmapped: number }>();
+    const months = new Map<string, { month: string; orders: number; netCents: number; discountCents: number; code: number; collabs: number }>();
     for (const r of rows) {
       const m = String(r.month).slice(0, 7);
-      const cur = months.get(m) ?? { month: `${m}-01`, orders: 0, netCents: 0, discountCents: 0, code: 0, collabs: 0, unmapped: 0 };
+      const cur = months.get(m) ?? { month: `${m}-01`, orders: 0, netCents: 0, discountCents: 0, code: 0, collabs: 0 };
       cur.orders += Number(r.orders); cur.netCents += Number(r.net_cents); cur.discountCents += Number(r.discount_cents);
-      if (!r.ambassador_id) cur.unmapped += Number(r.net_cents);
-      else if (r.via === "code") cur.code += Number(r.net_cents);
+      if (r.via === "code") cur.code += Number(r.net_cents);
       else cur.collabs += Number(r.net_cents);
       months.set(m, cur);
     }
@@ -64,7 +63,6 @@ export async function GET(req: NextRequest) {
       ambassadors: [...byAmb.values()].sort((a, b) => b.netCents - a.netCents),
       roster: (roster.data ?? []).map((a: any) => ({ id: a.id, name: a.name, codes: a.codes ?? [], refIds: a.ref_ids ?? [], active: a.active, notes: a.notes })),
       candidates: ((cands.data ?? []) as any[]).map((c) => ({ code: c.code, orders: Number(c.orders), netCents: Number(c.net_cents), firstAt: c.first_at, lastAt: c.last_at, collabsOrders: Number(c.collabs_orders) })),
-      collabsOrders: await db.from("shop_orders").select("id", { count: "exact", head: true }).not("collabs_ref", "is", null).then((r) => r.count ?? 0),
     });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message ?? e) }, { status: 500 });

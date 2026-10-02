@@ -9,11 +9,11 @@ import { useCallback, useEffect, useState } from "react";
  * seen on orders that belong to nobody yet can be assigned with one click.
  */
 
-interface MonthRow { month: string; orders: number; netCents: number; discountCents: number; code: number; collabs: number; unmapped: number }
+interface MonthRow { month: string; orders: number; netCents: number; discountCents: number; code: number; collabs: number }
 interface AmbRow { id: string | null; name: string; orders: number; netCents: number; discountCents: number; customers: number; viaCode: number; viaCollabs: number }
 interface Roster { id: string; name: string; codes: string[]; refIds: string[]; active: boolean; notes: string | null }
 interface Cand { code: string; orders: number; netCents: number; firstAt: string; lastAt: string; collabsOrders: number }
-interface Payload { months: MonthRow[]; ambassadors: AmbRow[]; roster: Roster[]; candidates: Cand[]; collabsOrders: number }
+interface Payload { months: MonthRow[]; ambassadors: AmbRow[]; roster: Roster[]; candidates: Cand[] }
 
 const usd = (c: number | null | undefined, compact = false) => {
   if (c == null) return "—";
@@ -24,7 +24,6 @@ const usd = (c: number | null | undefined, compact = false) => {
 const monthLabel = (m: string) => new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)) - 1, 1).toLocaleDateString("en-US", { month: "short", year: "2-digit" });
 const COLOR_CODE = "var(--accent)";
 const COLOR_COLLABS = "#7aa7d9";
-const COLOR_UNMAPPED = "var(--surface-3)";
 
 export function AmbassadorSalesCard({ from, to, periodLabel }: { from: string; to: string; periodLabel: string }) {
   const [data, setData] = useState<Payload | null>(null);
@@ -74,13 +73,12 @@ export function AmbassadorSalesCard({ from, to, periodLabel }: { from: string; t
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
         <div style={{ fontWeight: 750 }}>Ambassador sales</div>
         <div style={{ fontSize: 12, color: "var(--text-3)", display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <span><span style={{ display: "inline-block", width: 10, height: 10, background: COLOR_CODE, borderRadius: 2, marginRight: 5 }} />Ambassador code</span>
-          <span><span style={{ display: "inline-block", width: 10, height: 10, background: COLOR_COLLABS, borderRadius: 2, marginRight: 5 }} />Collabs referral link</span>
-          <span><span style={{ display: "inline-block", width: 10, height: 10, background: COLOR_UNMAPPED, border: "1px solid var(--border)", borderRadius: 2, marginRight: 5 }} />Collabs, no ambassador mapped</span>
+          <span><span style={{ display: "inline-block", width: 10, height: 10, background: COLOR_CODE, borderRadius: 2, marginRight: 5 }} />Ambassador code on the order</span>
+          <span><span style={{ display: "inline-block", width: 10, height: 10, background: COLOR_COLLABS, borderRadius: 2, marginRight: 5 }} />Referral id on the roster</span>
         </div>
       </div>
       <div style={{ fontSize: 12, color: "var(--text-3)", margin: "4px 0 8px" }}>
-        An order is an ambassador sale when it used a code on the roster, or Shopify Collabs stamped it with a referral id. Net revenue per order, all products. Older sales came through Collabs; recent ones mostly through standard codes, so keep the roster current.
+        An order is an ambassador sale when it used a discount code on the roster. Collabs-era codes and today&apos;s standard codes are treated the same, so keep the roster current as new ambassadors get codes. Net revenue per order, all products.
       </div>
       {error && <div style={{ color: "var(--crit)", fontSize: 12.5, marginBottom: 6 }}>{error}</div>}
       {!data && !error && <div style={{ color: "var(--text-3)", fontSize: 13 }}>Loading…</div>}
@@ -120,7 +118,6 @@ export function AmbassadorSalesCard({ from, to, periodLabel }: { from: string; t
             <button className="btn ghost" style={{ padding: "4px 10px", fontSize: 12.5 }} onClick={() => setShowRoster((v) => !v)}>
               Roster ({data.roster.length}) {showRoster ? "▴" : "▾"}
             </button>
-            <span style={{ fontSize: 12, color: "var(--text-3)", alignSelf: "center" }}>{data.collabsOrders.toLocaleString()} orders carry a Collabs referral id</span>
           </div>
 
           {showCands && (
@@ -230,8 +227,7 @@ function Bars({ months }: { months: MonthRow[] }) {
           const x0 = padL + i * group + (group - bw) / 2;
           const segs = [
             { v: m.code, c: COLOR_CODE, l: "ambassador code" },
-            { v: m.collabs, c: COLOR_COLLABS, l: "Collabs referral" },
-            { v: m.unmapped, c: COLOR_UNMAPPED, l: "Collabs, unmapped" },
+            { v: m.collabs, c: COLOR_COLLABS, l: "referral id on roster" },
           ];
           let acc = 0;
           return (
@@ -239,7 +235,7 @@ function Bars({ months }: { months: MonthRow[] }) {
               {segs.map((s) => {
                 const y1 = y(acc + s.v), h = Math.max(0, y(acc) - y1);
                 acc += s.v;
-                return <rect key={s.l} x={x0} y={y1} width={bw} height={h} fill={s.c} stroke={s.c === COLOR_UNMAPPED ? "var(--border)" : "none"}><title>{`${monthLabel(m.month)} ${s.l}: ${usd(s.v)}`}</title></rect>;
+                return <rect key={s.l} x={x0} y={y1} width={bw} height={h} fill={s.c}><title>{`${monthLabel(m.month)} ${s.l}: ${usd(s.v)}`}</title></rect>;
               })}
               <title>{`${monthLabel(m.month)}: ${usd(m.netCents)} · ${m.orders} orders · ${usd(m.discountCents)} discounts`}</title>
               {(n <= 14 || i % 2 === 0) && <text x={x0 + bw / 2} y={H - 8} fontSize={10} fill="var(--text-3)" textAnchor="middle">{monthLabel(m.month)}</text>}
