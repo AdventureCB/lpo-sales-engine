@@ -191,7 +191,7 @@ export function EmailAnalyticsView() {
                   </div>
                 </div>
                 <div style={{ fontSize: 12, color: "var(--text-3)", margin: "4px 0 10px" }}>
-                  Current email subscribers in Klaviyo, grouped by time since they consented to marketing email (profile creation date when consent has no timestamp). The engaged share is subscribers who opened or clicked an email in the last 90 days.
+                  Current email subscribers in Klaviyo (subscribed and not suppressed), grouped by time since they consented to marketing email. Klaviyo&apos;s history starts November 2024, so tenure before that isn&apos;t visible and the over-2-years group begins filling in November 2026. The engaged share is subscribers who opened or clicked an email in the last 90 days.
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginBottom: 12 }}>
                   <div className="stat-tile"><div className="n">{pct(c.over6mo)}</div><div className="l">6 months or longer</div><div className="d">{num(c.over6mo)} subscribers</div></div>
