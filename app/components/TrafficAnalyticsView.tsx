@@ -46,7 +46,7 @@ export function TrafficAnalyticsView() {
       { key: "30", label: "Last 30 days", from: addDays(t, -29), to: t },
       { key: "90", label: "Last 90 days", from: addDays(t, -89), to: t },
       { key: "mtd", label: "Month to date", from: som, to: t },
-      { key: "6m", label: "Last 6 months", from: addDays(`${t.slice(0, 7)}-01`, -153).slice(0, 7) + "-01", to: t },
+      { key: "6m", label: "Last 6 months", from: addDays(t, -182), to: t },
       { key: "ytd", label: "Year to date", from: `${t.slice(0, 4)}-01-01`, to: t },
       { key: "365", label: "Last 12 months", from: addDays(t, -364), to: t },
     ];
