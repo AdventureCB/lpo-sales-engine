@@ -188,12 +188,21 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
   async function generate(slot: number) {
     setBusy(`gen${slot}`);
     setMsg(null);
-    const r = await fetch("/api/crm/sprint-lists/generate", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ slot, ...(isAdmin ? { repEmail: genRep } : {}) }),
-    });
-    const j = await r.json();
+    let r: Response;
+    let j: any = {};
+    try {
+      r = await fetch("/api/crm/sprint-lists/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ slot, ...(isAdmin ? { repEmail: genRep } : {}) }),
+      });
+      // A gateway timeout comes back as HTML, not JSON — never let that strand the button.
+      j = await r.json().catch(() => ({ error: r.status === 504 ? "Timed out — the list took too long to build. Try again in a minute." : `Server error ${r.status}` }));
+    } catch (e: any) {
+      setBusy(null);
+      setMsg(`⚠ ${e?.message ?? "network error"}`);
+      return;
+    }
     setBusy(null);
     if (!r.ok) {
       setMsg(`⚠ ${j.error ?? "generation failed"}`);

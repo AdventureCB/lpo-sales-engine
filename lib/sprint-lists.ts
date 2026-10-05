@@ -1041,21 +1041,16 @@ async function latestSignalByEmail(
   // same pass we track the latest HOT signal (a 1a/1b type — cart, saved build,
   // click; NOT a passive open) so the lost-to-pool gate can require fresh intent
   // before a previously-lost deal comes back.
-  const hot = new RegExp(`(${cfg.hot_1a_regex})|(${cfg.hot_1b_regex})`, "i");
-  const rows = await fetchAll((f, t) =>
-    db
-      .from("engagement_events")
-      .select("person_email, type, occurred_at")
-      .order("occurred_at", { ascending: false })
-      .range(f, t)
-  );
+  // One aggregate in Postgres (engagement_latest_signals) — paging the whole
+  // table through the API was ~1,000 requests after the Klaviyo backfills and
+  // blew Vercel's 60s limit.
+  const { data, error } = await db.rpc("engagement_latest_signals", { p_hot_regex: `(${cfg.hot_1a_regex})|(${cfg.hot_1b_regex})` });
+  if (error) throw new Error(`engagement_latest_signals: ${error.message}`);
   const latest = new Map<string, string>();
   const latestHot = new Map<string, string>();
-  for (const r of rows) {
-    const k = (r.person_email ?? "").toLowerCase();
-    if (!k) continue;
-    if (!latest.has(k)) latest.set(k, r.occurred_at); // first = latest (ordered desc)
-    if (!latestHot.has(k) && hot.test(r.type ?? "")) latestHot.set(k, r.occurred_at);
+  for (const r of (data ?? []) as { email: string; latest: string; latest_hot: string | null }[]) {
+    latest.set(r.email, r.latest);
+    if (r.latest_hot) latestHot.set(r.email, r.latest_hot);
   }
   return { latest, latestHot };
 }
