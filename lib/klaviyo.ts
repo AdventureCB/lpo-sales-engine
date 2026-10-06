@@ -397,21 +397,38 @@ export async function subscribeToList(args: {
   properties?: Record<string, unknown>;
   customSource?: string;
 }): Promise<void> {
+  const headers = {
+    Authorization: `Klaviyo-API-Key ${env("KLAVIYO_PRIVATE_KEY")}`,
+    revision: REVISION,
+    accept: "application/vnd.api+json",
+    "content-type": "application/vnd.api+json",
+  };
+  const ident: Record<string, unknown> = { email: args.email };
+  if (args.phone) ident.phone_number = args.phone;
+  if (args.firstName) ident.first_name = args.firstName;
+  if (args.lastName) ident.last_name = args.lastName;
+
+  // Custom properties aren't accepted on the subscription job — upsert the
+  // profile first (best effort; the subscription below is what matters).
+  if (args.properties && Object.keys(args.properties).length) {
+    try {
+      const r = await fetch(`${BASE}/profile-import/`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ data: { type: "profile", attributes: { ...ident, properties: args.properties } } }),
+      });
+      if (!r.ok) console.error("Klaviyo profile-import", r.status, (await r.text()).slice(0, 200));
+    } catch (e) {
+      console.error("Klaviyo profile-import", e);
+    }
+  }
+
   const subscriptions: Record<string, unknown> = { email: { marketing: { consent: "SUBSCRIBED" } } };
   if (args.smsConsent && args.phone) subscriptions.sms = { marketing: { consent: "SUBSCRIBED" } };
-  const attributes: Record<string, unknown> = { email: args.email, subscriptions };
-  if (args.phone) attributes.phone_number = args.phone;
-  if (args.firstName) attributes.first_name = args.firstName;
-  if (args.lastName) attributes.last_name = args.lastName;
-  if (args.properties && Object.keys(args.properties).length) attributes.properties = args.properties;
+  const attributes: Record<string, unknown> = { ...ident, subscriptions };
   const res = await fetch(`${BASE}/profile-subscription-bulk-create-jobs/`, {
     method: "POST",
-    headers: {
-      Authorization: `Klaviyo-API-Key ${env("KLAVIYO_PRIVATE_KEY")}`,
-      revision: REVISION,
-      accept: "application/vnd.api+json",
-      "content-type": "application/vnd.api+json",
-    },
+    headers,
     body: JSON.stringify({
       data: {
         type: "profile-subscription-bulk-create-job",
