@@ -408,14 +408,15 @@ export async function subscribeToList(args: {
   if (args.firstName) ident.first_name = args.firstName;
   if (args.lastName) ident.last_name = args.lastName;
 
-  // Custom properties aren't accepted on the subscription job — upsert the
-  // profile first (best effort; the subscription below is what matters).
-  if (args.properties && Object.keys(args.properties).length) {
+  // The subscription job only takes email / phone / consent — name and custom
+  // properties go through a profile upsert first (best effort; the
+  // subscription below is what matters).
+  if (args.firstName || args.lastName || (args.properties && Object.keys(args.properties).length)) {
     try {
       const r = await fetch(`${BASE}/profile-import/`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ data: { type: "profile", attributes: { ...ident, properties: args.properties } } }),
+        body: JSON.stringify({ data: { type: "profile", attributes: { ...ident, ...(args.properties && Object.keys(args.properties).length ? { properties: args.properties } : {}) } } }),
       });
       if (!r.ok) console.error("Klaviyo profile-import", r.status, (await r.text()).slice(0, 200));
     } catch (e) {
@@ -425,7 +426,8 @@ export async function subscribeToList(args: {
 
   const subscriptions: Record<string, unknown> = { email: { marketing: { consent: "SUBSCRIBED" } } };
   if (args.smsConsent && args.phone) subscriptions.sms = { marketing: { consent: "SUBSCRIBED" } };
-  const attributes: Record<string, unknown> = { ...ident, subscriptions };
+  const attributes: Record<string, unknown> = { email: args.email, subscriptions };
+  if (args.phone) attributes.phone_number = args.phone;
   const res = await fetch(`${BASE}/profile-subscription-bulk-create-jobs/`, {
     method: "POST",
     headers,
