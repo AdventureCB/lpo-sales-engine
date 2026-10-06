@@ -73,7 +73,7 @@ Treat anything other than `ok: true` as a failure and let the visitor retry. Reu
 2. Include the honeypot: `<input type="text" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px">`. Do not use `type="hidden"`; bots skip hidden inputs, and the point is for them to fill this one in.
 3. On submit: `preventDefault`, disable the button, build the JSON object from the fields plus `form`, `page_url`, and `submission_id`, and `fetch` it with `method: "POST"`, `headers: {"content-type": "application/json"}`, `body: JSON.stringify(payload)`.
 4. On `ok: true`, replace the form with a thank-you message (make the heading and text theme settings). On anything else, re-enable the button and show the error text or a generic message.
-5. Expose the form key as a section setting with default `demo-request`, so the same section can later serve a different form by changing one setting. Each distinct key needs an engine on the Sales Engine side; LPO sets that up.
+5. Expose the form key as a section setting with default `demo-request`, so the same section can serve a different form by changing one setting. Each distinct key is its own engine on the Sales Engine side, with its own deal title, lead source, rep pool and Klaviyo list. LPO creates new ones in Settings → Intake ("Add web form"); the key is the form name lowercased with hyphens, e.g. "Trade-In Inquiry" → `trade-in-inquiry`. Ask LPO for the exact key before wiring a second form.
 6. Do not add Klaviyo's own form embed or any Klaviyo script for this form. The Sales Engine handles the list subscription.
 
 ### Minimal submit handler
