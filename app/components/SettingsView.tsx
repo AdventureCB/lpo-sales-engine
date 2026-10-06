@@ -443,7 +443,7 @@ export function ReassignAdmin() {
 // ── Intake Engine: Zapier-replacement funnels, fully config-driven ─────────
 
 export function IntakeAdmin() {
-  const [data, setData] = useState<{ sources: any[]; reps: { name: string; pipedrive_user_id: number }[]; counts: Record<string, Record<string, number>>; stages?: { id: string; name: string; pipedriveStageId: number | null; pipeline: string }[]; dealSources?: string[] } | null>(null);
+  const [data, setData] = useState<{ sources: any[]; reps: { name: string; pipedrive_user_id: number }[]; counts: Record<string, Record<string, number>>; stages?: { id: string; name: string; pipedriveStageId: number | null; pipeline: string }[]; dealSources?: string[]; klaviyoLists?: { id: string; name: string }[] } | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
   const load = useCallback(() => {
@@ -511,6 +511,13 @@ export function IntakeAdmin() {
                 drawings becomes a note on their existing deal. When a drawing is run, the winner's deal gets a ⭐ task with the discount code and expiry.
               </div>
             )}
+            {s.adapter === "web_form" && (
+              <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 6 }}>
+                A form on the website posts to <code>/api/webhooks/web-form</code> with <code>form = {cfg.form_key ?? "?"}</code>. The message and any extra
+                fields land as the first note on the deal. Pick a <b>Klaviyo list</b> and every submitter is subscribed to it (email consent; SMS only when the
+                form sends <code>sms_consent</code>). Builder contract for the theme section: <code>docs/website-form-intake.md</code> in the repo.
+              </div>
+            )}
             {s.adapter === "booking" && (
               <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 6 }}>
                 Online bookings (book.lonepeakoverland.com). <b>Round-robin pool</b> = who the shared link rotates over; a guide must also be
@@ -526,6 +533,31 @@ export function IntakeAdmin() {
                   Typeform name
                   <input className="vmsel" style={{ width: 220, display: "block", marginTop: 3 }} defaultValue={cfg.typeform_form_name ?? ""} onBlur={(e) => e.target.value !== (cfg.typeform_form_name ?? "") && setCfg("typeform_form_name", e.target.value.trim())} />
                 </label>
+              )}
+              {s.adapter === "web_form" && (
+                <>
+                  <label style={{ fontSize: 12.5, color: "var(--text-3)" }} title="The `form` value the page sends — lets several forms share this endpoint">
+                    Form key
+                    <input className="vmsel" style={{ width: 160, display: "block", marginTop: 3 }} defaultValue={cfg.form_key ?? ""} onBlur={(e) => e.target.value.trim() !== (cfg.form_key ?? "") && setCfg("form_key", e.target.value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-"))} />
+                  </label>
+                  <label style={{ fontSize: 12.5, color: "var(--text-3)" }} title="Every submitter is subscribed to this Klaviyo list">
+                    Add to Klaviyo list
+                    <select
+                      className="vmsel"
+                      style={{ width: 240, display: "block", marginTop: 3 }}
+                      value={cfg.subscribe_list_id ?? ""}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        const name = data?.klaviyoLists?.find((l) => l.id === id)?.name;
+                        save(s.id, { config: { ...cfg, subscribe_list_id: id || undefined, subscribe_list_name: id ? name : undefined } });
+                      }}
+                    >
+                      <option value="">— don't add to Klaviyo —</option>
+                      {(data?.klaviyoLists ?? []).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                      {cfg.subscribe_list_id && !data?.klaviyoLists?.some((l) => l.id === cfg.subscribe_list_id) && <option value={cfg.subscribe_list_id}>{cfg.subscribe_list_name ?? cfg.subscribe_list_id}</option>}
+                    </select>
+                  </label>
+                </>
               )}
               {s.adapter === "klaviyo_metric" && (
                 <label style={{ fontSize: 12.5, color: "var(--text-3)" }} title="Watched Klaviyo metric (id resolves automatically)">

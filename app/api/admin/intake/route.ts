@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
+import { getLists } from "@/lib/klaviyo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +11,7 @@ export async function GET() {
   const user = await getSessionUser();
   if (!user || user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
   const db = supabaseAdmin();
-  const [{ data: sources }, { data: reps }, { data: recent }, { data: stageRows }, { data: dealSources }] = await Promise.all([
+  const [{ data: sources }, { data: reps }, { data: recent }, { data: stageRows }, { data: dealSources }, klaviyoLists] = await Promise.all([
     db.from("intake_sources").select("*").order("created_at"),
     db.from("reps").select("name, pipedrive_user_id").eq("active", true).not("pipedrive_user_id", "is", null),
     db
@@ -25,6 +26,8 @@ export async function GET() {
       .order("sort_order"),
     // Deal-source catalog for the per-engine source picker.
     db.from("deal_sources").select("name").order("sort_order").order("name"),
+    // Klaviyo lists for the web_form "subscribe to" picker (optional — the panel still renders without them).
+    getLists().catch(() => [] as { id: string; name: string }[]),
   ]);
   // 7-day action counts per source for the panel header.
   const counts: Record<string, Record<string, number>> = {};
@@ -47,6 +50,7 @@ export async function GET() {
     counts,
     stages,
     dealSources: (dealSources ?? []).map((s: any) => s.name),
+    klaviyoLists,
   });
 }
 

@@ -379,3 +379,49 @@ export async function getEventsForMetric(
   }
   return events;
 }
+
+/**
+ * Subscribe (or re-subscribe) one person to a Klaviyo list with email
+ * marketing consent — SMS consent only when the form captured it explicitly.
+ * Uses the bulk subscription job (the only write path that both creates the
+ * profile and sets consent). If the list is double opt-in Klaviyo emails a
+ * confirmation and the profile shows as pending until they click it.
+ */
+export async function subscribeToList(args: {
+  listId: string;
+  email: string;
+  phone?: string | null; // E.164
+  firstName?: string | null;
+  lastName?: string | null;
+  smsConsent?: boolean;
+  properties?: Record<string, unknown>;
+  customSource?: string;
+}): Promise<void> {
+  const subscriptions: Record<string, unknown> = { email: { marketing: { consent: "SUBSCRIBED" } } };
+  if (args.smsConsent && args.phone) subscriptions.sms = { marketing: { consent: "SUBSCRIBED" } };
+  const attributes: Record<string, unknown> = { email: args.email, subscriptions };
+  if (args.phone) attributes.phone_number = args.phone;
+  if (args.firstName) attributes.first_name = args.firstName;
+  if (args.lastName) attributes.last_name = args.lastName;
+  if (args.properties && Object.keys(args.properties).length) attributes.properties = args.properties;
+  const res = await fetch(`${BASE}/profile-subscription-bulk-create-jobs/`, {
+    method: "POST",
+    headers: {
+      Authorization: `Klaviyo-API-Key ${env("KLAVIYO_PRIVATE_KEY")}`,
+      revision: REVISION,
+      accept: "application/vnd.api+json",
+      "content-type": "application/vnd.api+json",
+    },
+    body: JSON.stringify({
+      data: {
+        type: "profile-subscription-bulk-create-job",
+        attributes: {
+          custom_source: args.customSource ?? "LPO Sales Engine",
+          profiles: { data: [{ type: "profile", attributes }] },
+        },
+        relationships: { list: { data: { type: "list", id: args.listId } } },
+      },
+    }),
+  });
+  if (!res.ok) throw new Error(`Klaviyo subscribe ${res.status}: ${(await res.text()).slice(0, 300)}`);
+}

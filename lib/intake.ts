@@ -45,6 +45,10 @@ export interface IntakeSource {
     reopen_keep_previous_owner?: boolean; // reopen → the deal's previous owner (not round-robin)
     reopen_to_default_stage?: boolean; // reopen → move into this engine's default stage
     recovery?: { window_days?: number; click_hours?: number; distinct_hours?: number; per_sweep?: number };
+    // web_form engines (website forms → POST /api/webhooks/web-form):
+    form_key?: string; // the `form` value the page sends; one engine per form
+    subscribe_list_id?: string; // Klaviyo list every submitter is subscribed to ("" = don't)
+    subscribe_list_name?: string;
   };
 }
 
