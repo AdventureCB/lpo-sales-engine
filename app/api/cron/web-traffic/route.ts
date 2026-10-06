@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isAuthorizedCron } from "@/lib/cron";
-import { syncTrafficRange } from "@/lib/web-traffic";
+import { shopifyql, syncTrafficRange } from "@/lib/web-traffic";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +25,12 @@ export async function GET(req: Request) {
     const s = new Date(e); s.setUTCDate(s.getUTCDate() - 20);
     s.setUTCDate(s.getUTCDate() - ((s.getUTCDay() + 6) % 7)); // back to Monday
     start = day(s); end = day(e);
+  }
+  // ?probe=<ShopifyQL> → raw columns + first rows (debugging column names).
+  const probe = p.get("probe");
+  if (probe) {
+    try { const r = await shopifyql(db, probe); return NextResponse.json({ columns: r.columns, rows: r.rows.slice(0, 3) }); }
+    catch (e: any) { return NextResponse.json({ error: String(e?.message ?? e) }, { status: 500 }); }
   }
   try {
     const res = await syncTrafficRange(db, start, end);
