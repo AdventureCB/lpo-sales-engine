@@ -20,7 +20,7 @@ export async function shopifyql(db: SupabaseClient, q: string): Promise<{ column
   const j = await r.json().catch(() => null);
   if (!r.ok || j?.errors) throw new Error(`shopify ${r.status}: ${JSON.stringify(j?.errors ?? j).slice(0, 400)}`);
   const d = j?.data?.shopifyqlQuery;
-  if (d?.parseErrors) throw new Error(`ShopifyQL: ${JSON.stringify(d.parseErrors).slice(0, 300)}`);
+  if (Array.isArray(d?.parseErrors) ? d.parseErrors.length : d?.parseErrors) throw new Error(`ShopifyQL: ${JSON.stringify(d.parseErrors).slice(0, 300)}`);
   const columns = (d?.tableData?.columns ?? []).map((c: any) => String(c.name));
   const rows = (d?.tableData?.rows ?? []) as string[][];
   return { columns, rows };
