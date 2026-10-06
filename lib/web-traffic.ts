@@ -27,7 +27,9 @@ export async function shopifyql(db: SupabaseClient, q: string): Promise<{ column
 }
 
 const n = (v: unknown) => Math.round(Number(v ?? 0)) || 0;
-const pick = (columns: string[], row: string[]) => Object.fromEntries(columns.map((c, i) => [c, row[i]]));
+// The Admin API returns each row as {column: value}; tolerate positional arrays too.
+const pick = (columns: string[], row: string[] | Record<string, unknown>) =>
+  Array.isArray(row) ? Object.fromEntries(columns.map((c, i) => [c, row[i]])) : row;
 
 export async function syncTrafficRange(db: SupabaseClient, start: string, end: string) {
   const now = new Date().toISOString();
