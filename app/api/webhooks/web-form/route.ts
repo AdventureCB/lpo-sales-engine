@@ -146,8 +146,7 @@ export async function POST(req: NextRequest) {
     email,
     phone,
     name,
-    link: pageUrl,
-    note: noteLines.join("\n") || null,
+    note: noteLines.join("\n") || null, // page URL is already the last line
     meta: { form: formKey, ip, fields, klaviyo, page_url: pageUrl },
   });
 
