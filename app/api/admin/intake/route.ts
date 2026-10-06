@@ -57,18 +57,59 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user || user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
-  let body: { id?: string; enabled?: boolean; label?: string; config?: Record<string, unknown> };
+  let body: { op?: string; id?: string; enabled?: boolean; label?: string; config?: Record<string, unknown> };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
+  const db = supabaseAdmin();
+
+  // Web forms are the one engine type admins add themselves: a new form on the
+  // website = a new engine with its own key, title, source, pool, stage, list.
+  if (body.op === "create_web_form") {
+    const label = (body.label ?? "").trim();
+    if (!label) return NextResponse.json({ error: "label required" }, { status: 400 });
+    const key = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "form";
+    const { data: dupe } = await db.from("intake_sources").select("id").eq("adapter", "web_form").eq("config->>form_key", key).maybeSingle();
+    if (dupe) return NextResponse.json({ error: `a web form with key "${key}" already exists` }, { status: 409 });
+    // Start from the Demo Request engine's pool/stage so new forms behave like the rest.
+    const { data: tmpl } = await db.from("intake_sources").select("config").eq("adapter", "web_form").order("created_at").limit(1).maybeSingle();
+    const base = (tmpl?.config ?? {}) as Record<string, unknown>;
+    const config = {
+      owner_pool: base.owner_pool ?? [],
+      crm_stage_id: base.crm_stage_id,
+      on_existing_open: "note",
+      on_existing_closed: "reopen_assign",
+      notify_owner: true,
+      write_pipedrive: false,
+      form_key: key,
+      source_name: label,
+      title_template: `${label} - {name}`,
+    };
+    const { data: created, error } = await db.from("intake_sources").insert({ label, adapter: "web_form", enabled: false, config }).select("id").single();
+    if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+    await db.from("deal_sources").upsert({ name: label }, { onConflict: "name", ignoreDuplicates: true });
+    return NextResponse.json({ ok: true, id: created.id, formKey: key });
+  }
+
   if (!body.id) return NextResponse.json({ error: "id required" }, { status: 400 });
+
+  if (body.op === "delete") {
+    // Only web forms are deletable, and only once disabled; intake_events cascade, deals stay.
+    const { data: s } = await db.from("intake_sources").select("adapter, enabled").eq("id", body.id).maybeSingle();
+    if (!s || s.adapter !== "web_form") return NextResponse.json({ error: "only web form engines can be deleted" }, { status: 400 });
+    if (s.enabled) return NextResponse.json({ error: "disable it first" }, { status: 400 });
+    const { error } = await db.from("intake_sources").delete().eq("id", body.id);
+    if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+    return NextResponse.json({ ok: true });
+  }
+
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (typeof body.enabled === "boolean") patch.enabled = body.enabled;
   if (typeof body.label === "string" && body.label.trim()) patch.label = body.label.trim();
   if (body.config && typeof body.config === "object") patch.config = body.config;
-  const { error } = await supabaseAdmin().from("intake_sources").update(patch).eq("id", body.id);
+  const { error } = await db.from("intake_sources").update(patch).eq("id", body.id);
   if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
   return NextResponse.json({ ok: true });
 }

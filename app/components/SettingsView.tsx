@@ -445,6 +445,7 @@ export function ReassignAdmin() {
 export function IntakeAdmin() {
   const [data, setData] = useState<{ sources: any[]; reps: { name: string; pipedrive_user_id: number }[]; counts: Record<string, Record<string, number>>; stages?: { id: string; name: string; pipedriveStageId: number | null; pipeline: string }[]; dealSources?: string[]; klaviyoLists?: { id: string; name: string }[] } | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [newForm, setNewForm] = useState("");
 
   const load = useCallback(() => {
     fetch("/api/admin/intake")
@@ -473,6 +474,25 @@ export function IntakeAdmin() {
         Deal-injection funnels (Zapier replacements). Toggle an engine on once its Zap is retired; per-engine
         round-robin pools control who receives the leads.
       </p>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+        <input className="vmsel" placeholder="New web form name (e.g. Trade-In Inquiry)" value={newForm} onChange={(e) => setNewForm(e.target.value)} style={{ flex: 1 }} />
+        <button
+          className="btn ghost"
+          style={{ padding: "5px 12px", fontSize: 13 }}
+          disabled={!newForm.trim()}
+          title="Adds a web_form engine with its own form key, title, source, pool, stage and Klaviyo list"
+          onClick={async () => {
+            const r = await fetch("/api/admin/intake", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "create_web_form", label: newForm.trim() }) });
+            const j = await r.json().catch(() => ({}));
+            setMsg(r.ok ? `✓ Added — form key "${j.formKey}". Set the pool and list, then enable.` : `⚠ ${j.error ?? "failed"}`);
+            if (r.ok) setNewForm("");
+            load();
+          }}
+        >
+          ➕ Add web form
+        </button>
+      </div>
+      {msg && <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 6 }}>{msg}</div>}
       {data.sources.map((s) => {
         const cfg = s.config ?? {};
         const pool: { pipedrive_id: number; name?: string; enabled: boolean }[] = cfg.owner_pool ?? [];
@@ -503,6 +523,16 @@ export function IntakeAdmin() {
               >
                 {s.enabled ? "Enabled" : "Disabled"}
               </button>
+              {s.adapter === "web_form" && !s.enabled && (
+                <button
+                  className="btn ghost"
+                  style={{ padding: "5px 10px", fontSize: 13, color: "var(--warn)" }}
+                  title="Remove this web form engine (deals it created are kept)"
+                  onClick={() => { if (confirm(`Delete the "${s.label}" web form engine? Deals it already created are kept.`)) save(s.id, { op: "delete" }); }}
+                >
+                  🗑
+                </button>
+              )}
             </div>
             {s.adapter === "trailhub_raffle" && (
               <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 6 }}>
