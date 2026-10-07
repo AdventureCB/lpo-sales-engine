@@ -62,7 +62,8 @@ type ClickInfo = { campaignId: string; adId: string | null };
 /** Classify a web_touch as a paid click ({channel, campaignId, adId}) or null. */
 function classifyPaid(
   t: any,
-  clickMap: Map<string, ClickInfo>
+  clickMap: Map<string, ClickInfo>,
+  adMap: Map<string, string> = new Map()
 ): { channel: string; campaignId: string | null; adId: string | null } | null {
   const src = (t.source ?? "").toLowerCase();
   const isGoogle = !!t.gclid || !!t.gbraid || !!t.wbraid || src === "google";
@@ -74,7 +75,12 @@ function classifyPaid(
     return { channel: "google", campaignId: byClick?.campaignId ?? numericCamp ?? null, adId: byClick?.adId ?? numeric(t.content) };
   }
   // Meta's URL template puts {{ad.id}} in utm_content (85% of clicks carry it).
-  if (isFacebook) return { channel: "facebook", campaignId: numericCamp, adId: numeric(t.content) };
+  // When utm_campaign is a hand-typed label ("mof", "retargeting") the ad id
+  // still resolves the campaign through the synced ad-level table.
+  if (isFacebook) {
+    const adId = numeric(t.content);
+    return { channel: "facebook", campaignId: numericCamp ?? (adId ? adMap.get(adId) ?? null : null), adId };
+  }
   return null;
 }
 
@@ -153,6 +159,20 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
     }
   }
 
+  // Facebook ad id → campaign id (for touches whose utm_campaign isn't the id).
+  const adMap = new Map<string, string>();
+  {
+    const adIds = new Set<string>();
+    for (const list of touchesByVid.values()) for (const t of list) if (t.fbclid || /^(facebook|fb|meta|instagram|ig)$/i.test(t.source ?? "")) {
+      if (t.content && /^\d{5,}$/.test(String(t.content)) && !/^\d{5,}$/.test(String(t.campaign ?? ""))) adIds.add(String(t.content));
+    }
+    const ids = [...adIds];
+    for (let i = 0; i < ids.length; i += 100) {
+      const rows = must<any[]>(await db.from("ad_ad_daily").select("ad_id, campaign_id").eq("channel", "facebook").in("ad_id", ids.slice(i, i + 100)).limit(5000));
+      for (const r of rows) if (r.campaign_id) adMap.set(String(r.ad_id), String(r.campaign_id));
+    }
+  }
+
   const clickMap = new Map<string, ClickInfo>();
   const gclidList = [...gclids];
   for (let i = 0; i < gclidList.length; i += 60) {
@@ -202,7 +222,7 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
     const isSurvey = /survey/.test(src);
     touches.sort((a, b) => String(b.at ?? "").localeCompare(String(a.at ?? ""))); // newest first
     for (const t of touches) {
-      const paid = classifyPaid(t, clickMap);
+      const paid = classifyPaid(t, clickMap, adMap);
       if (paid) return { channel: paid.channel, campaignId: paid.campaignId ?? "", adId: paid.adId, source: t.source ?? paid.channel };
     }
     // A survey deal with no click id on record is still a Meta lead — that's
@@ -223,7 +243,7 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
     for (const t of [...(blob.touches ?? []), blob.last, blob.first]) if (t && typeof t === "object") touches.push(t);
     touches.sort((a, b) => String(b.at ?? "").localeCompare(String(a.at ?? "")));
     for (const t of touches) {
-      const paid = classifyPaid(t, clickMap);
+      const paid = classifyPaid(t, clickMap, adMap);
       if (paid) return { channel: paid.channel, campaignId: paid.campaignId ?? "", adId: paid.adId, source: t.source ?? paid.channel };
     }
     return null;

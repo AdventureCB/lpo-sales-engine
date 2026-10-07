@@ -151,5 +151,14 @@ export async function POST(req: NextRequest) {
   });
 
   if (result.action === "error") return json({ ok: false, error: "could not record submission" }, 500, origin);
+
+  // The site beacon identified this browser moments ago (email typed into the
+  // form); now that the contact exists, fold its ad-click history onto it.
+  if (email) {
+    try {
+      const { mergeFromVisitorLink } = await import("@/lib/attribution");
+      await mergeFromVisitorLink(db, email);
+    } catch {}
+  }
   return json({ ok: true }, 200, origin);
 }
