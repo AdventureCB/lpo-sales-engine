@@ -46,3 +46,8 @@ update sprint_list_config set config =
     '{hot_1a_regex}', to_jsonb('(cart|checkout|builder_save|save.?build|3d.?build|abandon|booking_click|cart_click)'::text)),
     '{hot_1b_regex}', to_jsonb('(click|viewed_product|active_on_site|form|subscrib|builder|3d|order|financ|video)'::text))
 where id = true and config->>'hot_1a_regex' not like '%booking_click%';
+
+-- engagement_events.source gains "site" (web behavior signals from lib/web-signals.ts).
+alter table engagement_events drop constraint if exists engagement_events_source_check;
+alter table engagement_events add constraint engagement_events_source_check
+  check (source = any (array['klaviyo','pipedrive','shopify','quo','site']));
