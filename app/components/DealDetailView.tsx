@@ -601,6 +601,7 @@ export function DealDetailView({
       dealId={d.id}
       pdDealId={d.pipedrive_deal_id ?? null}
       hideCall={embedded}
+      onSchedule={embedded ? () => setModal("schedule") : undefined}
       contact={contact ? { id: contact.id, name: contact.name, firstName: contact.first_name, lastName: contact.last_name } : null}
       dealTitle={d.title}
       truck={d.truck_model ?? null}
@@ -3024,6 +3025,7 @@ function CommBar({
   email,
   onLogged,
   hideCall,
+  onSchedule,
   replyPrompt,
   onReplyConsumed,
 }: {
@@ -3037,6 +3039,7 @@ function CommBar({
   email: string | null;
   onLogged: () => void;
   hideCall?: boolean;
+  onSchedule?: () => void; // dialer: replaces the WhatsApp button (not in use yet) with Schedule activity
   replyPrompt?: { activityId: string; subject: string } | null;
   onReplyConsumed?: () => void;
 }) {
@@ -3384,15 +3387,21 @@ function CommBar({
         >
           💬 Text
         </button>
-        <button
-          className={`btn ${channel === "whatsapp" ? "primary" : ""}`}
-          style={btnStyle}
-          disabled={!email}
-          title={email ?? "Needs an email to find the Klaviyo profile"}
-          onClick={() => switchChannel("whatsapp")}
-        >
-          🟢 WhatsApp
-        </button>
+        {onSchedule ? (
+          <button className="btn" style={btnStyle} title="Schedule a call, task or meeting" onClick={onSchedule}>
+            📅 Schedule
+          </button>
+        ) : (
+          <button
+            className={`btn ${channel === "whatsapp" ? "primary" : ""}`}
+            style={btnStyle}
+            disabled={!email}
+            title={email ?? "Needs an email to find the Klaviyo profile"}
+            onClick={() => switchChannel("whatsapp")}
+          >
+            🟢 WhatsApp
+          </button>
+        )}
         <button
           className={`btn ${channel === "email" ? "primary" : ""}`}
           style={btnStyle}
