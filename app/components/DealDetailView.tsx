@@ -2396,10 +2396,9 @@ function WebActivitySection({ activity }: { activity: NonNullable<DealData["webA
                       {p.sections.length > 0 && <div style={{ color: "var(--text-2)" }}>Saw: {p.sections.slice(0, 8).join(" · ")}</div>}
                       {p.interactions.length > 0 && (
                         <div style={{ color: "var(--text-2)", display: "grid", gap: 2, marginTop: 2 }}>
-                          {p.interactions.slice(0, 12).map((ix, j) => (
+                          {p.interactions.map((ix, j) => (
                             <div key={j}>{IX_ICON[ix.name] ?? "•"} {ix.name === "link" || ix.name === "outbound" ? ix.detail : `${ix.name.replace("_", " ")}${ix.detail ? `: ${ix.detail}` : ""}`}</div>
                           ))}
-                          {p.interactions.length > 12 && <div style={{ color: "var(--text-3)" }}>+{p.interactions.length - 12} more</div>}
                         </div>
                       )}
                     </div>
