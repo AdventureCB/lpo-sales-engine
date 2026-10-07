@@ -198,7 +198,7 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
                   <th style={th}>Spend</th>
                   <th style={th}>Impr.</th>
                   <th style={th}>Clicks</th>
-                  {!isGoogle && <th style={th} title="Clicks our website beacon saw and resolved to this campaign (ad id, campaign id, name match or your alias). Differs from Meta's count: only landings on our site with the beacon loaded.">Site clicks</th>}
+                  {!isGoogle && <th style={th} title="Ad clicks that actually arrived on lonepeakoverland.com, as recorded by our beacon on landing, resolved to this campaign by ad id, campaign id, name match or your alias. Lower than Meta's count: abandoned loads, blocked scripts and pages without the beacon never register.">Landed</th>}
                   <th style={th}>CTR</th>
                   <th style={th}>CPC</th>
                   {isGoogle && <th style={th} title="Search impression share">Impr. share</th>}
