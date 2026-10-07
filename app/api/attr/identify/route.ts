@@ -59,6 +59,14 @@ export async function POST(req: NextRequest) {
   } catch {
     /* best-effort */
   }
+  // Their earlier anonymous site sessions become marketing signals now that
+  // we know who they are (the recurring sweep only looks back 48h).
+  try {
+    const { syncWebSignals } = await import("@/lib/web-signals");
+    await syncWebSignals(db, { visitorIds: [vid], sinceHours: 90 * 24 });
+  } catch {
+    /* best-effort */
+  }
 
   return NextResponse.json({ ok: true, linked }, { headers });
 }

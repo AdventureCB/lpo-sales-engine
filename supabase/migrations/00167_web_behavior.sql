@@ -39,3 +39,10 @@ alter table web_touches add column if not exists fbc text;
 
 -- Visitor ids by linked email — the deal page / AI inputs start from contact emails.
 create index if not exists idx_web_visitor_links_email on web_visitor_links (lower(email));
+
+-- Sprint-list signal regexes learn the site signal types (applied 10/7 via SQL; recorded here).
+update sprint_list_config set config =
+  jsonb_set(jsonb_set(config,
+    '{hot_1a_regex}', to_jsonb('(cart|checkout|builder_save|save.?build|3d.?build|abandon|booking_click|cart_click)'::text)),
+    '{hot_1b_regex}', to_jsonb('(click|viewed_product|active_on_site|form|subscrib|builder|3d|order|financ|video)'::text))
+where id = true and config->>'hot_1a_regex' not like '%booking_click%';

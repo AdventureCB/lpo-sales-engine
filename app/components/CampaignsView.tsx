@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { PLACEHOLDERS } from "@/lib/placeholders";
+import { WEB_SIGNAL_LABELS } from "@/lib/web-signal-labels";
 
 interface Step {
   id?: string; delay_hours: number; content_kind: "inline" | "macro" | "prompt"; macro_id: string | null;
@@ -10,7 +11,7 @@ interface Step {
 }
 interface Campaign {
   id?: string; name: string; channel: "email" | "sms"; mode: "macro" | "ai"; status: string; shared: boolean; owner_email?: string | null;
-  trigger: { type: "manual" | "state"; source?: string | null; min_attempts?: number | null; max_contacts?: number | null; min_days_since_created?: number | null; min_days_since_activity?: number | null; pipeline?: string | null };
+  trigger: { type: "manual" | "state"; source?: string | null; min_attempts?: number | null; max_contacts?: number | null; min_days_since_created?: number | null; min_days_since_activity?: number | null; pipeline?: string | null; web_signal?: string | null; web_within_days?: number | null; web_min_count?: number | null };
   settings: { window_start?: number; window_end?: number; exit_on_reply?: boolean; stop_on_other_rep?: boolean; reenroll_after_days?: number };
   campaign_steps?: Step[];
   stats?: { active: number; completed: number; exited: number };
@@ -116,6 +117,19 @@ export function CampaignsView() {
               <div className="field"><label>Min call attempts</label><input className="vmsel" type="number" min={0} value={c.trigger.min_attempts ?? ""} onChange={(e) => set({ trigger: { ...c.trigger, min_attempts: e.target.value === "" ? null : Number(e.target.value) } })} placeholder="any" /></div>
               <div className="field"><label>Max conversations</label><input className="vmsel" type="number" min={0} value={c.trigger.max_contacts ?? ""} onChange={(e) => set({ trigger: { ...c.trigger, max_contacts: e.target.value === "" ? null : Number(e.target.value) } })} placeholder="any" /></div>
               <div className="field"><label>Deal at least (days old)</label><input className="vmsel" type="number" min={0} value={c.trigger.min_days_since_created ?? ""} onChange={(e) => set({ trigger: { ...c.trigger, min_days_since_created: e.target.value === "" ? null : Number(e.target.value) } })} placeholder="any" /></div>
+              <div className="field">
+                <label>Website signal</label>
+                <select className="vmsel" value={c.trigger.web_signal ?? ""} onChange={(e) => set({ trigger: { ...c.trigger, web_signal: e.target.value || null } })}>
+                  <option value="">any / none required</option>
+                  {Object.entries(WEB_SIGNAL_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                </select>
+              </div>
+              {c.trigger.web_signal && (
+                <>
+                  <div className="field"><label>…within (days)</label><input className="vmsel" type="number" min={1} value={c.trigger.web_within_days ?? 7} onChange={(e) => set({ trigger: { ...c.trigger, web_within_days: Math.max(1, Number(e.target.value) || 7) } })} /></div>
+                  <div className="field"><label>…at least (visits)</label><input className="vmsel" type="number" min={1} value={c.trigger.web_min_count ?? 1} onChange={(e) => set({ trigger: { ...c.trigger, web_min_count: Math.max(1, Number(e.target.value) || 1) } })} /></div>
+                </>
+              )}
               <div className="field"><label>Quiet for (days, no activity)</label><input className="vmsel" type="number" min={0} value={c.trigger.min_days_since_activity ?? ""} onChange={(e) => set({ trigger: { ...c.trigger, min_days_since_activity: e.target.value === "" ? null : Number(e.target.value) } })} placeholder="any" /></div>
             </div>
           )}
@@ -207,7 +221,7 @@ export function CampaignsView() {
   const triggerSummary = (c: Campaign) => {
     const t = c.trigger;
     if (t.type !== "state") return "manual enrollment";
-    const bits = [t.source ? `source ${t.source}` : "any source", t.pipeline ? `pipeline ${t.pipeline}` : null, t.min_attempts != null ? `≥${t.min_attempts} attempts` : null, t.max_contacts != null ? `≤${t.max_contacts} convos` : null, t.min_days_since_created != null ? `≥${t.min_days_since_created}d old` : null, t.min_days_since_activity != null ? `quiet ${t.min_days_since_activity}d` : null].filter(Boolean);
+    const bits = [t.source ? `source ${t.source}` : "any source", t.pipeline ? `pipeline ${t.pipeline}` : null, t.min_attempts != null ? `≥${t.min_attempts} attempts` : null, t.max_contacts != null ? `≤${t.max_contacts} convos` : null, t.min_days_since_created != null ? `≥${t.min_days_since_created}d old` : null, t.min_days_since_activity != null ? `quiet ${t.min_days_since_activity}d` : null, t.web_signal ? `${(WEB_SIGNAL_LABELS as any)[t.web_signal] ?? t.web_signal} ${t.web_min_count && t.web_min_count > 1 ? `${t.web_min_count}× ` : ""}in ${t.web_within_days ?? 7}d` : null].filter(Boolean);
     return `auto: ${bits.join(" · ")}`;
   };
 

@@ -34,7 +34,14 @@ export interface CampaignTrigger {
   min_days_since_created?: number | null;
   min_days_since_activity?: number | null;
   pipeline?: string | null; // crm_pipelines.name
+  // Website behavior (source="site" engagement_events from attr.js v2):
+  // enroll only deals whose contact showed this signal recently.
+  web_signal?: import("./web-signal-labels").WebSignalKind | null;
+  web_within_days?: number | null; // default 7
+  web_min_count?: number | null; // default 1 (e.g. 2 = returned at least twice)
 }
+
+export { WEB_SIGNAL_LABELS } from "./web-signal-labels";
 export interface CampaignSettings {
   window_start?: number; // contact-local hour
   window_end?: number;
@@ -145,7 +152,7 @@ export async function evaluateStateTriggers(db: SupabaseClient): Promise<Record<
   for (const c of (camps ?? []) as Campaign[]) {
     const t = c.trigger ?? { type: "manual" };
     if (t.type !== "state") continue;
-    let q = db.from("crm_deals").select("id, source_id, deal_sources ( name ), crm_stages ( crm_pipelines ( name ) )").eq("status", "open").limit(500);
+    let q = db.from("crm_deals").select("id, source_id, deal_sources ( name ), crm_stages ( crm_pipelines ( name ) ), crm_contacts ( emails )").eq("status", "open").limit(500);
     if (t.min_attempts != null) q = q.gte("attempt_count", t.min_attempts);
     if (t.max_contacts != null) q = q.lte("contact_count", t.max_contacts);
     if (t.min_days_since_created != null) q = q.lte("created_at", iso(Date.now() - hours(24 * t.min_days_since_created)));
@@ -154,6 +161,7 @@ export async function evaluateStateTriggers(db: SupabaseClient): Promise<Record<
     let rows = (deals ?? []) as any[];
     if (t.source) rows = rows.filter((d) => String(d.deal_sources?.name ?? "").toLowerCase() === String(t.source).toLowerCase());
     if (t.pipeline) rows = rows.filter((d) => String(d.crm_stages?.crm_pipelines?.name ?? "").toLowerCase() === String(t.pipeline).toLowerCase());
+    if (t.web_signal && rows.length) rows = await filterByWebSignal(db, rows, t);
     // Skip deals already enrolled in this campaign (any status — the re-enroll window is enforced inside enrollDeals).
     const { data: seen } = await db.from("campaign_enrollments").select("deal_id").eq("campaign_id", c.id);
     const seenIds = new Set((seen ?? []).map((s: any) => s.deal_id));
@@ -162,6 +170,37 @@ export async function evaluateStateTriggers(db: SupabaseClient): Promise<Record<
     out[c.name] = { candidates: fresh.length, enrolled: res.filter((r) => r.ok).length };
   }
   return out;
+}
+
+/** Keep only deals whose contact has ≥ web_min_count site signals of the chosen kind within web_within_days. */
+async function filterByWebSignal(db: SupabaseClient, rows: any[], t: CampaignTrigger): Promise<any[]> {
+  const since = iso(Date.now() - hours(24 * (t.web_within_days ?? 7)));
+  const need = Math.max(1, t.web_min_count ?? 1);
+  const types = t.web_signal === "any_visit" ? ["active_on_site", "viewed_product", "viewed_builder", "viewed_financing"] : [t.web_signal!];
+  const emailToDeals = new Map<string, Set<string>>();
+  for (const d of rows) for (const e of ((d.crm_contacts?.emails as any[]) ?? [])) {
+    const k = String(e?.value ?? "").toLowerCase();
+    if (k) (emailToDeals.get(k) ?? emailToDeals.set(k, new Set()).get(k)!).add(d.id);
+  }
+  const emails = Array.from(emailToDeals.keys());
+  const counts = new Map<string, Set<string>>(); // deal → distinct sessions
+  for (let i = 0; i < emails.length; i += 150) {
+    const { data } = await db
+      .from("engagement_events")
+      .select("person_email, meta")
+      .eq("source", "site")
+      .in("type", types)
+      .in("person_email", emails.slice(i, i + 150))
+      .gte("occurred_at", since)
+      .limit(5000);
+    for (const ev of data ?? []) {
+      const sess = String((ev as any).meta?.session_id ?? (ev as any).occurred_at);
+      for (const dealId of emailToDeals.get(String(ev.person_email).toLowerCase()) ?? []) {
+        (counts.get(dealId) ?? counts.set(dealId, new Set()).get(dealId)!).add(sess);
+      }
+    }
+  }
+  return rows.filter((d) => (counts.get(d.id)?.size ?? 0) >= need);
 }
 
 // ── Exit / hold rules ───────────────────────────────────────────────────────

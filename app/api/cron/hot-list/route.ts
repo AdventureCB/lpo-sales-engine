@@ -366,6 +366,20 @@ export async function GET(req: Request) {
     }
   }
 
+  // ── 4b. Website behavior → signals ───────────────────────────────────────
+  // Identified visitors' site sessions (attr.js v2) become source="site"
+  // engagement_events so the matching + scoring below treat a financing-page
+  // view or a phone tap like any other marketing signal.
+  if (remaining() > 8_000) {
+    try {
+      const { syncWebSignals } = await import("@/lib/web-signals");
+      summary.webSignals = await syncWebSignals(db, { sinceHours: 48 });
+    } catch (e) {
+      console.error("web signals failed", e);
+      summary.webSignals = { error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
   // ── 5. Match unmatched signals → deals (CRM-native) ───────────────────────
   // Matching is now a single indexed Postgres statement against the CRM mirror
   // (crm_contacts email GIN → open crm_deals) — NO Pipedrive, no per-email
