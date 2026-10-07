@@ -69,7 +69,12 @@ export interface FacebookLabelResolver {
   resolve: (label: string | null | undefined) => { campaignId: string; how: "alias" | "name" } | null;
   campaigns: { id: string; name: string }[];
 }
-const tokens = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+// Labels arrive URL-encoded when the ad used {{campaign.name}} ("mof+%7c+demo+request%7c+leads").
+const tokens = (s: string) => {
+  let t = s;
+  try { t = decodeURIComponent(s.replace(/\+/g, " ")); } catch {}
+  return t.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+};
 export async function buildFacebookLabelResolver(db: SupabaseClient): Promise<FacebookLabelResolver> {
   const since = new Date(Date.now() - 365 * 86_400_000).toISOString().slice(0, 10);
   const [{ data: camps }, { data: aliases }] = await Promise.all([
