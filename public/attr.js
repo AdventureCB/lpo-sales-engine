@@ -238,16 +238,20 @@
     try {
       if (window.IntersectionObserver) {
         var timers = {};
+        var CHROME = /header|announcement|footer|drawer|cart|search|menu|nav|modal|popup|newsletter/i;
         function label(el) {
-          var h = el.querySelector("h1, h2, h3, [class*='heading'], [class*='title']");
+          // Heading text only — never Shopify's internal section ids — and
+          // skip site chrome (header, footer, cart/search drawers, menus).
+          if (CHROME.test(el.id || "") || CHROME.test(el.className || "")) return "";
+          var h = el.querySelector("h1, h2, h3");
           var txt = h ? (h.textContent || "").trim().replace(/\s+/g, " ") : "";
-          if (!txt) txt = el.getAttribute("aria-label") || el.id || "";
+          if (!txt || /^(cart|search|menu|navigation)$/i.test(txt)) return "";
           return txt.slice(0, 60);
         }
         var io = new IntersectionObserver(function (entries) {
           entries.forEach(function (en) {
             var el = en.target, k = el.__lpoKey || (el.__lpoKey = Math.random().toString(16).slice(2));
-            if (en.isIntersecting && en.intersectionRatio >= 0.5) {
+            if (en.isIntersecting && en.intersectionRatio >= 0.5 && en.boundingClientRect.height > 40 && el.offsetParent !== null) {
               if (!timers[k]) timers[k] = setTimeout(function () {
                 var l = label(el);
                 if (l && !seenSet[l] && seen.length < 40) { seenSet[l] = 1; seen.push(l); }
