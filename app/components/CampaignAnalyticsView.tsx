@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 interface Prev { spendCents: number; revenueCents: number; roas: number | null; leads: number; wonDeals: number }
 interface Row {
   campaignId: string; name: string;
-  spendCents: number; clicks: number; impressions: number;
+  spendCents: number; clicks: number; impressions: number; siteClicks?: number;
   ctr: number | null; cpcCents: number | null; cpmCents: number | null;
   imprShare: number | null; lostIsBudget: number | null; lostIsRank: number | null;
   leads: number; wonDeals: number; revenueCents: number;
@@ -19,7 +19,7 @@ interface Report { channel: string; start: string; end: string; spanDays: number
 
 interface AdRow {
   adId: string; name: string; groupId: string | null; groupName: string | null;
-  spendCents: number; clicks: number; impressions: number; ctr: number | null; cpcCents: number | null;
+  spendCents: number; clicks: number; impressions: number; ctr: number | null; cpcCents: number | null; siteClicks?: number;
   convValueCents: number; conversions: number; platformRoas: number | null;
   leads: number; wonDeals: number; revenueCents: number; roas: number | null;
   prev: { spendCents: number; roas: number | null } | null;
@@ -101,7 +101,7 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
   const td: React.CSSProperties = { textAlign: "right", padding: "7px 9px", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
   const tdSub: React.CSSProperties = { ...td, fontSize: 12.5, color: "var(--text-2)" };
   const isCols = isGoogle ? 3 : 0;
-  const colCount = 14 + isCols;
+  const colCount = 14 + isCols + (isGoogle ? 0 : 1);
   const channelName = isGoogle ? "Google" : "Meta";
 
   const pt = data?.prevTotals ?? null;
@@ -198,6 +198,7 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
                   <th style={th}>Spend</th>
                   <th style={th}>Impr.</th>
                   <th style={th}>Clicks</th>
+                  {!isGoogle && <th style={th} title="Clicks our website beacon saw and resolved to this campaign (ad id, campaign id, name match or your alias). Differs from Meta's count: only landings on our site with the beacon loaded.">Site clicks</th>}
                   <th style={th}>CTR</th>
                   <th style={th}>CPC</th>
                   {isGoogle && <th style={th} title="Search impression share">Impr. share</th>}
@@ -237,6 +238,7 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
                       <td style={td}>{usd(r.spendCents)}{compare && <Delta cur={r.spendCents} prev={r.prev?.spendCents} higherIsBetter={false} />}</td>
                       <td style={td}>{num(r.impressions)}</td>
                       <td style={td}>{num(r.clicks)}</td>
+                      {!isGoogle && <td style={{ ...td, color: "var(--text-2)" }}>{r.siteClicks != null ? num(r.siteClicks) : "—"}</td>}
                       <td style={td}>{pct(r.ctr, 2)}</td>
                       <td style={td}>{usd2(r.cpcCents)}</td>
                       {isGoogle && <td style={{ ...td, fontWeight: 600, color: r.imprShare == null ? "var(--text-3)" : r.imprShare < 0.3 ? "#e0574a" : r.imprShare > 0.7 ? "#3a9d5d" : "var(--text-1)" }}>{pct(r.imprShare)}</td>}
@@ -280,13 +282,13 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
 /** Meta clicks tagged with a typed label instead of a campaign id: how each resolves, and a picker for the ones that don't. */
 function UnresolvedClicks({ onChanged }: { onChanged: () => void }) {
   type Row = { label: string; content: string; clicks: number; visitors: number; leads: number; firstAt: string; lastAt: string; resolvedCampaignId: string | null; resolvedCampaignName: string | null; how: string | null; alias: string | null; adResolved?: boolean };
-  const [data, setData] = useState<{ days: number; rows: Row[]; campaigns: { id: string; name: string; active: boolean }[] } | null>(null);
+  const [data, setData] = useState<{ days: number; rows: Row[]; campaigns: { id: string; name: string; active: boolean }[]; surveyDefault: string | null } | null>(null);
   const [open, setOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const load = () => fetch("/api/admin/analytics/unresolved?days=180").then((r) => r.json()).then((d) => !d.error && setData(d)).catch(() => {});
   useEffect(() => { load(); }, []);
-  if (!data || data.rows.length === 0) return null;
+  if (!data) return null;
   const unresolved = data.rows.filter((r) => !r.resolvedCampaignId);
   const rows = showAll ? data.rows : unresolved;
   const td: React.CSSProperties = { padding: "6px 8px", fontSize: 13, verticalAlign: "top" };
@@ -314,6 +316,16 @@ function UnresolvedClicks({ onChanged }: { onChanged: () => void }) {
             Ads whose URL parameters carry a typed <code>utm_campaign</code> (e.g. <code>mof</code>) rather than <code>{"{{campaign.id}}"}</code>. Labels that match exactly one campaign name, or carry a real ad id,
             resolve on their own. Pick a campaign for the rest and it applies to every past and future click with that label. Fix the ads in Ads Manager so new clicks stop landing here.
           </p>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 10, padding: "8px 10px", background: "var(--surface-2)", borderRadius: 10 }}>
+            <span style={{ fontSize: 12.5, color: "var(--text-2)" }} title="Survey West / Quote Survey deals are Meta leads by definition. When the submission carries no click id, credit them to this campaign instead of “(campaign not resolved)”.">
+              Survey leads with no click id →
+            </span>
+            <select className="vmsel" style={{ maxWidth: 360 }} disabled={busy === "survey:default"} value={data.surveyDefault ?? ""} onChange={(e) => assign("survey:default", e.target.value)}>
+              <option value="">— leave unresolved —</option>
+              <optgroup label="Active campaigns">{data.campaigns.filter((c) => c.active).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</optgroup>
+              <optgroup label="Older campaigns">{data.campaigns.filter((c) => !c.active).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</optgroup>
+            </select>
+          </div>
           <label style={{ fontSize: 12.5, color: "var(--text-3)", display: "flex", gap: 6, alignItems: "center", marginBottom: 8 }}>
             <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} /> show resolved labels too
           </label>

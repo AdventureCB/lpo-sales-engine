@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
-import { campaignRevenue, attributeDeals, type CampaignRevenue } from "@/lib/campaign-roas";
+import { campaignRevenue, attributeDeals, siteClicksByCampaign, type CampaignRevenue } from "@/lib/campaign-roas";
 import { isAuthorizedCron } from "@/lib/cron";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -97,6 +97,7 @@ interface CampRow {
   roas: number | null; cplCents: number | null; cacCents: number | null;
   lastClickLeads: number; lastClickWonDeals: number; lastClickValueCents: number; // most recent paid touch, any time
   conversions: number; convValueCents: number; channelRoas: number | null; // as reported by Google / Meta
+  siteClicks?: number; // our beacon's clicks resolved to this campaign (Meta only)
 }
 
 async function periodReport(
@@ -144,8 +145,10 @@ async function periodReport(
     revByCampaign.set(cid, v); // cid "" = channel-known, campaign-unresolved
   }
 
+  const siteClicks = isGoogle ? new Map<string, number>() : await siteClicksByCampaign(db, `${startDay}T00:00:00Z`, `${endDay}T23:59:59.999Z`).catch(() => new Map<string, number>());
+
   const rate = (num: number, den: number) => (den > 0 ? num / den : null);
-  const ids = new Set<string>([...acc.keys(), ...[...revByCampaign.keys()].filter((k) => k !== "")]);
+  const ids = new Set<string>([...acc.keys(), ...[...revByCampaign.keys()].filter((k) => k !== ""), ...[...siteClicks.keys()].filter((k) => k !== "")]);
   const rows: CampRow[] = [];
   for (const id of ids) {
     const a = acc.get(id);
@@ -175,21 +178,25 @@ async function periodReport(
       conversions: a?.conversions ?? 0,
       convValueCents: a?.convValueCents ?? 0,
       channelRoas: a && spend > 0 ? a.convValueCents / spend : null,
+      siteClicks: isGoogle ? undefined : siteClicks.get(id) ?? 0,
     });
   }
   rows.sort((a, b) => b.spendCents - a.spendCents || b.revenueCents - a.revenueCents);
 
   // Channel-known but campaign-unresolved revenue → a pseudo-row so it's visible.
   const unresolved = revByCampaign.get("");
-  if (unresolved && (unresolved.leads > 0 || unresolved.wonDeals > 0 || unresolved.lastClickLeads > 0)) {
+  const unresolvedClicks = siteClicks.get("") ?? 0;
+  if ((unresolved && (unresolved.leads > 0 || unresolved.wonDeals > 0 || unresolved.lastClickLeads > 0)) || unresolvedClicks > 0) {
+    const u = unresolved ?? { leads: 0, wonDeals: 0, wonValueCents: 0, lastClickLeads: 0, lastClickWonDeals: 0, lastClickValueCents: 0 };
     rows.push({
       campaignId: "__unresolved__", name: "(campaign not resolved)",
       spendCents: 0, clicks: 0, impressions: 0, ctr: null, cpcCents: null, cpmCents: null,
       imprShare: null, lostIsBudget: null, lostIsRank: null,
-      leads: unresolved.leads, wonDeals: unresolved.wonDeals, revenueCents: unresolved.wonValueCents,
+      leads: u.leads, wonDeals: u.wonDeals, revenueCents: u.wonValueCents,
       roas: null, cplCents: null, cacCents: null,
-      lastClickLeads: unresolved.lastClickLeads, lastClickWonDeals: unresolved.lastClickWonDeals, lastClickValueCents: unresolved.lastClickValueCents,
+      lastClickLeads: u.lastClickLeads, lastClickWonDeals: u.lastClickWonDeals, lastClickValueCents: u.lastClickValueCents,
       conversions: 0, convValueCents: 0, channelRoas: null,
+      siteClicks: isGoogle ? undefined : unresolvedClicks,
     });
   }
 

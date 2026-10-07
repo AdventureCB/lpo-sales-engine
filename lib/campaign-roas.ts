@@ -69,8 +69,11 @@ export interface FacebookLabelResolver {
   resolve: (label: string | null | undefined) => { campaignId: string; how: "alias" | "name" } | null;
   /** Typed utm_content ("dirt bags") → the one ad in that campaign whose name matches. */
   resolveAd: (campaignId: string, content: string | null | undefined) => string | null;
+  /** Campaign credited to survey deals (Survey West / Quote Survey) that carry no click id — admin-set alias "survey:default". */
+  surveyDefault: string | null;
   campaigns: { id: string; name: string; active: boolean }[];
 }
+export const SURVEY_DEFAULT_LABEL = "survey:default";
 // Labels arrive URL-encoded when the ad used {{campaign.name}} ("mof+%7c+demo+request%7c+leads").
 const tokens = (s: string) => {
   let t = s;
@@ -99,6 +102,7 @@ export async function buildFacebookLabelResolver(db: SupabaseClient): Promise<Fa
   const cache = new Map<string, { campaignId: string; how: "alias" | "name" } | null>();
   return {
     campaigns,
+    surveyDefault: aliasMap.get(SURVEY_DEFAULT_LABEL) ?? null,
     resolveAd(campaignId, content) {
       const want = tokens((content ?? "").trim());
       if (!want.length) return null;
@@ -310,7 +314,7 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
     }
     // A survey deal with no click id on record is still a Meta lead — that's
     // the only way the survey is reached — just with the campaign unresolved.
-    if (isSurvey) return { channel: "facebook", campaignId: "", adId: null, source: sourceName ?? "survey" };
+    if (isSurvey) return { channel: "facebook", campaignId: labels.surveyDefault ?? "", adId: null, source: sourceName ?? "survey" };
     if (touches.length === 0) return null;
     const organic = touches.find((t) => t.source);
     return organic ? { channel: null, campaignId: null, adId: null, source: String(organic.source) } : null;
@@ -381,6 +385,45 @@ export async function campaignRevenue(
   for (const d of won) {
     if (d.attr?.channel) bump(keyOf(d.attr), { wonDeals: 1, wonValueCents: d.valueCents });
     if (d.lastClick?.channel) bump(keyOf(d.lastClick), { lastClickWonDeals: 1, lastClickValueCents: d.valueCents });
+  }
+  return out;
+}
+
+
+/**
+ * Our beacon's Meta clicks in a window, resolved to campaigns the same way
+ * leads are — so the analytics table can show "site clicks" beside Meta's own
+ * click count, and typed-label fixes are visible immediately. "" = unresolved.
+ */
+export async function siteClicksByCampaign(db: SupabaseClient, startIso: string, endIso: string): Promise<Map<string, number>> {
+  const touches: any[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db
+      .from("web_touches")
+      .select("source, medium, campaign, content, fbclid, gclid, gbraid, wbraid")
+      .gte("at", startIso).lte("at", endIso)
+      .or("fbclid.not.is.null,source.in.(facebook,fb,meta,instagram,ig,Facebook,Meta,Instagram,IG)")
+      .range(from, from + 999);
+    if (error) throw new Error(error.message);
+    touches.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+    if (from > 50_000) break;
+  }
+  const labels = await buildFacebookLabelResolver(db);
+  const adIds = new Set<string>();
+  for (const t of touches) if (t.content && /^\d{5,}$/.test(String(t.content))) adIds.add(String(t.content));
+  const adMap = new Map<string, string>();
+  if (adIds.size) {
+    const { data: rows, error } = await db.rpc("facebook_ad_campaigns", { p_ad_ids: [...adIds] });
+    if (error) throw new Error(error.message);
+    for (const r of (rows ?? []) as any[]) if (r.campaign_id) adMap.set(String(r.ad_id), String(r.campaign_id));
+  }
+  const out = new Map<string, number>();
+  for (const t of touches) {
+    const paid = classifyPaid(t, new Map(), adMap, labels);
+    if (!paid || paid.channel !== "facebook") continue;
+    const k = paid.campaignId ?? "";
+    out.set(k, (out.get(k) ?? 0) + 1);
   }
   return out;
 }

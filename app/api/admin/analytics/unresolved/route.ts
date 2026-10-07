@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
       alias: aliasMap.get(r.label)?.campaign_id ?? null,
     };
   });
-  return NextResponse.json({ days, rows: out, campaigns: labels.campaigns });
+  return NextResponse.json({ days, rows: out, campaigns: labels.campaigns, surveyDefault: labels.surveyDefault });
 }
 
 export async function POST(req: NextRequest) {
