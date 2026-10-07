@@ -58,6 +58,7 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
   // Campaign → its ads (fetched on expand; keyed by campaign id, reset on range change).
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [ads, setAds] = useState<Record<string, AdsReport | "loading" | "error">>({});
+  const [reloadTick, setReloadTick] = useState(0);
   const isGoogle = channel === "google";
 
   const rangeQs = days != null ? `days=${days}` : `start=${start}&end=${end}`;
@@ -71,7 +72,7 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
       .then((d) => (d.error ? setError(d.error) : setData(d)))
       .catch(() => setError("failed to load"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channel, days, start, end, compare]);
+  }, [channel, days, start, end, compare, reloadTick]);
 
   const toggle = (campaignId: string) => {
     setExpanded((s) => {
@@ -269,8 +270,88 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
             {isGoogle && " Impression share is blank where Google withholds it (low volume or non-Search campaigns)."}
             {` The two right-hand columns are what ${channelName} itself reports from its own conversion tracking and attribution window, so they will not match ours.`}
           </div>
+          {!isGoogle && <UnresolvedClicks onChanged={() => setReloadTick((n) => n + 1)} />}
         </>
       )}
     </>
+  );
+}
+
+/** Meta clicks tagged with a typed label instead of a campaign id: how each resolves, and a picker for the ones that don't. */
+function UnresolvedClicks({ onChanged }: { onChanged: () => void }) {
+  type Row = { label: string; content: string; clicks: number; visitors: number; leads: number; firstAt: string; lastAt: string; resolvedCampaignId: string | null; resolvedCampaignName: string | null; how: string | null; alias: string | null };
+  const [data, setData] = useState<{ days: number; rows: Row[]; campaigns: { id: string; name: string }[] } | null>(null);
+  const [open, setOpen] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const load = () => fetch("/api/admin/analytics/unresolved?days=180").then((r) => r.json()).then((d) => !d.error && setData(d)).catch(() => {});
+  useEffect(() => { load(); }, []);
+  if (!data || data.rows.length === 0) return null;
+  const unresolved = data.rows.filter((r) => !r.resolvedCampaignId);
+  const rows = showAll ? data.rows : unresolved;
+  const td: React.CSSProperties = { padding: "6px 8px", fontSize: 13, verticalAlign: "top" };
+  async function assign(label: string, campaignId: string) {
+    setBusy(label);
+    const name = data?.campaigns.find((c) => c.id === campaignId)?.name ?? null;
+    await fetch("/api/admin/analytics/unresolved", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ label, campaignId: campaignId || null, campaignName: name }) });
+    await load();
+    setBusy(null);
+    onChanged();
+  }
+  const sumClicks = unresolved.reduce((n, r) => n + r.clicks, 0), sumLeads = unresolved.reduce((n, r) => n + r.leads, 0);
+  return (
+    <div className="card" style={{ marginTop: 18 }}>
+      <div className="panel-h" style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }} onClick={() => setOpen((v) => !v)}>
+        <span style={{ fontSize: 11, color: "var(--text-3)" }}>{open ? "▾" : "▸"}</span>
+        🧩 Clicks tagged by name instead of id
+        <span style={{ fontWeight: 600, fontSize: 12.5, color: unresolved.length ? "var(--warn)" : "var(--text-2)" }}>
+          {unresolved.length ? `${unresolved.length} label${unresolved.length === 1 ? "" : "s"} unresolved · ${sumClicks.toLocaleString()} clicks · ${sumLeads} leads` : "all resolved"} · last {data.days}d
+        </span>
+      </div>
+      {open && (
+        <>
+          <p className="viewsub" style={{ margin: "4px 0 10px", fontSize: 12.5 }}>
+            Ads whose URL parameters carry a typed <code>utm_campaign</code> (e.g. <code>mof</code>) rather than <code>{"{{campaign.id}}"}</code>. Labels that match exactly one campaign name, or carry a real ad id,
+            resolve on their own. Pick a campaign for the rest and it applies to every past and future click with that label. Fix the ads in Ads Manager so new clicks stop landing here.
+          </p>
+          <label style={{ fontSize: 12.5, color: "var(--text-3)", display: "flex", gap: 6, alignItems: "center", marginBottom: 8 }}>
+            <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} /> show resolved labels too
+          </label>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <thead>
+                <tr style={{ color: "var(--text-3)", fontSize: 12, textAlign: "left" }}>
+                  <th style={td}>utm_campaign</th><th style={td}>utm_content</th><th style={{ ...td, textAlign: "right" }}>Clicks</th><th style={{ ...td, textAlign: "right" }}>Leads</th><th style={td}>Last click</th><th style={td}>Resolves to</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={`${r.label}|${r.content}`} style={{ borderTop: "1px solid var(--border-soft)" }}>
+                    <td style={{ ...td, fontFamily: "ui-monospace, monospace" }}>{r.label || <span style={{ color: "var(--text-3)" }}>(none)</span>}</td>
+                    <td style={{ ...td, fontFamily: "ui-monospace, monospace", color: "var(--text-2)" }}>{r.content || <span style={{ color: "var(--text-3)" }}>(none)</span>}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{r.clicks.toLocaleString()}</td>
+                    <td style={{ ...td, textAlign: "right", fontWeight: r.leads ? 700 : 400 }}>{r.leads}</td>
+                    <td style={{ ...td, color: "var(--text-2)", whiteSpace: "nowrap" }}>{new Date(r.lastAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</td>
+                    <td style={td}>
+                      {r.how === "ad id" ? (
+                        <span title="The utm_content is a real ad id in a synced campaign">{r.resolvedCampaignName} <span style={{ color: "var(--text-3)", fontSize: 12 }}>· via ad id</span></span>
+                      ) : r.label ? (
+                        <select className="vmsel" style={{ maxWidth: 320 }} disabled={busy === r.label} value={r.alias ?? r.resolvedCampaignId ?? ""} onChange={(e) => assign(r.label, e.target.value)}>
+                          <option value="">— unresolved —</option>
+                          {data.campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                      ) : (
+                        <span style={{ color: "var(--text-3)" }}>no label to map — fix the ad&apos;s URL parameters</span>
+                      )}
+                      {r.how === "name match" && !r.alias && <div style={{ color: "var(--text-3)", fontSize: 12 }}>auto: name match</div>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
   );
 }

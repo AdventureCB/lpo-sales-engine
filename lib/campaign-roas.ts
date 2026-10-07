@@ -59,11 +59,55 @@ const emailsOf = (contact: any): string[] =>
 
 type ClickInfo = { campaignId: string; adId: string | null };
 
+/**
+ * Hand-typed Meta utm_campaign labels → campaign ids. Order: admin alias
+ * (campaign_aliases) → unique campaign-name token match ("mof" ⊂ "MOF | Demo
+ * Request | Leads" but not "MOFU | …"; "retargeting" matches several → null,
+ * needs an alias).
+ */
+export interface FacebookLabelResolver {
+  resolve: (label: string | null | undefined) => { campaignId: string; how: "alias" | "name" } | null;
+  campaigns: { id: string; name: string }[];
+}
+const tokens = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+export async function buildFacebookLabelResolver(db: SupabaseClient): Promise<FacebookLabelResolver> {
+  const since = new Date(Date.now() - 365 * 86_400_000).toISOString().slice(0, 10);
+  const [{ data: camps }, { data: aliases }] = await Promise.all([
+    db.from("ad_campaign_daily").select("campaign_id, name").eq("channel", "facebook").gte("day", since).limit(20000),
+    db.from("campaign_aliases").select("label, campaign_id").eq("channel", "facebook"),
+  ]);
+  const byId = new Map<string, string>();
+  for (const c of camps ?? []) if (c.campaign_id && c.name && !byId.has(String(c.campaign_id))) byId.set(String(c.campaign_id), String(c.name));
+  const campaigns = [...byId].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  const tokenSets = campaigns.map((c) => ({ id: c.id, set: new Set(tokens(c.name)) }));
+  const aliasMap = new Map((aliases ?? []).map((a: any) => [String(a.label).toLowerCase(), String(a.campaign_id)]));
+  const cache = new Map<string, { campaignId: string; how: "alias" | "name" } | null>();
+  return {
+    campaigns,
+    resolve(label) {
+      const key = (label ?? "").trim().toLowerCase();
+      if (!key) return null;
+      if (cache.has(key)) return cache.get(key)!;
+      let out: { campaignId: string; how: "alias" | "name" } | null = null;
+      const alias = aliasMap.get(key);
+      if (alias) out = { campaignId: alias, how: "alias" };
+      else {
+        const want = tokens(key);
+        const hits = want.length ? tokenSets.filter((c) => want.every((w) => c.set.has(w))) : [];
+        if (hits.length === 1) out = { campaignId: hits[0].id, how: "name" };
+      }
+      cache.set(key, out);
+      return out;
+    },
+  };
+}
+
 /** Classify a web_touch as a paid click ({channel, campaignId, adId}) or null. */
 function classifyPaid(
   t: any,
   clickMap: Map<string, ClickInfo>,
-  adMap: Map<string, string> = new Map()
+  adMap: Map<string, string> = new Map(),
+  labels: FacebookLabelResolver | null = null
 ): { channel: string; campaignId: string | null; adId: string | null } | null {
   const src = (t.source ?? "").toLowerCase();
   const isGoogle = !!t.gclid || !!t.gbraid || !!t.wbraid || src === "google";
@@ -79,7 +123,9 @@ function classifyPaid(
   // still resolves the campaign through the synced ad-level table.
   if (isFacebook) {
     const adId = numeric(t.content);
-    return { channel: "facebook", campaignId: numericCamp ?? (adId ? adMap.get(adId) ?? null : null), adId };
+    const viaAd = adId ? adMap.get(adId) ?? null : null;
+    const viaLabel = !numericCamp && !viaAd ? labels?.resolve(t.campaign)?.campaignId ?? null : null;
+    return { channel: "facebook", campaignId: numericCamp ?? viaAd ?? viaLabel, adId };
   }
   return null;
 }
@@ -173,6 +219,8 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
     }
   }
 
+  const labels = await buildFacebookLabelResolver(db);
+
   const clickMap = new Map<string, ClickInfo>();
   const gclidList = [...gclids];
   for (let i = 0; i < gclidList.length; i += 60) {
@@ -222,7 +270,7 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
     const isSurvey = /survey/.test(src);
     touches.sort((a, b) => String(b.at ?? "").localeCompare(String(a.at ?? ""))); // newest first
     for (const t of touches) {
-      const paid = classifyPaid(t, clickMap, adMap);
+      const paid = classifyPaid(t, clickMap, adMap, labels);
       if (paid) return { channel: paid.channel, campaignId: paid.campaignId ?? "", adId: paid.adId, source: t.source ?? paid.channel };
     }
     // A survey deal with no click id on record is still a Meta lead — that's
@@ -243,7 +291,7 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
     for (const t of [...(blob.touches ?? []), blob.last, blob.first]) if (t && typeof t === "object") touches.push(t);
     touches.sort((a, b) => String(b.at ?? "").localeCompare(String(a.at ?? "")));
     for (const t of touches) {
-      const paid = classifyPaid(t, clickMap, adMap);
+      const paid = classifyPaid(t, clickMap, adMap, labels);
       if (paid) return { channel: paid.channel, campaignId: paid.campaignId ?? "", adId: paid.adId, source: t.source ?? paid.channel };
     }
     return null;
