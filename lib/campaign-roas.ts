@@ -78,12 +78,15 @@ const tokens = (s: string) => {
 export async function buildFacebookLabelResolver(db: SupabaseClient): Promise<FacebookLabelResolver> {
   const since = new Date(Date.now() - 365 * 86_400_000).toISOString().slice(0, 10);
   const [{ data: camps }, { data: aliases }] = await Promise.all([
-    db.from("ad_campaign_daily").select("campaign_id, name").eq("channel", "facebook").gte("day", since).limit(20000),
+    db.rpc("facebook_campaigns"), // distinct in SQL — the daily table exceeds PostgREST's 1,000-row cap
     db.from("campaign_aliases").select("label, campaign_id").eq("channel", "facebook"),
   ]);
-  const byId = new Map<string, string>();
-  for (const c of camps ?? []) if (c.campaign_id && c.name && !byId.has(String(c.campaign_id))) byId.set(String(c.campaign_id), String(c.name));
-  const campaigns = [...byId].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  // Active (seen in the last 14 days) first, then the rest by name.
+  const cutoff = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10);
+  const campaigns = ((camps ?? []) as any[])
+    .filter((c) => c.campaign_id && c.name && String(c.last_day) >= since)
+    .map((c) => ({ id: String(c.campaign_id), name: String(c.name), active: String(c.last_day) >= cutoff }))
+    .sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
   const tokenSets = campaigns.map((c) => ({ id: c.id, set: new Set(tokens(c.name)) }));
   const aliasMap = new Map((aliases ?? []).map((a: any) => [String(a.label).toLowerCase(), String(a.campaign_id)]));
   const cache = new Map<string, { campaignId: string; how: "alias" | "name" } | null>();
@@ -107,6 +110,14 @@ export async function buildFacebookLabelResolver(db: SupabaseClient): Promise<Fa
   };
 }
 
+/** Organic Meta traffic (page / bio links, Linktree) — Meta appends fbclid to these too, so they must be excluded explicitly. */
+export function isOrganicSocialTouch(t: any): boolean {
+  const med = String(t?.medium ?? "").toLowerCase();
+  const src = String(t?.source ?? "").toLowerCase();
+  const content = String(t?.content ?? "");
+  return ["social", "organic", "bio", "link_in_bio", "referral"].includes(med) || src === "linktree" || /facebook_ua|link_in_bio/i.test(content);
+}
+
 /** Classify a web_touch as a paid click ({channel, campaignId, adId}) or null. */
 function classifyPaid(
   t: any,
@@ -115,6 +126,7 @@ function classifyPaid(
   labels: FacebookLabelResolver | null = null
 ): { channel: string; campaignId: string | null; adId: string | null } | null {
   const src = (t.source ?? "").toLowerCase();
+  if (isOrganicSocialTouch(t) && !t.gclid) return null;
   const isGoogle = !!t.gclid || !!t.gbraid || !!t.wbraid || src === "google";
   const isFacebook = !!t.fbclid || src === "facebook" || src === "instagram" || src === "meta";
   const numeric = (v: unknown) => (v && /^\d{5,}$/.test(String(v)) ? String(v) : null);
@@ -218,8 +230,8 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
       if (t.content && /^\d{5,}$/.test(String(t.content)) && !/^\d{5,}$/.test(String(t.campaign ?? ""))) adIds.add(String(t.content));
     }
     const ids = [...adIds];
-    for (let i = 0; i < ids.length; i += 100) {
-      const rows = must<any[]>(await db.from("ad_ad_daily").select("ad_id, campaign_id").eq("channel", "facebook").in("ad_id", ids.slice(i, i + 100)).limit(5000));
+    if (ids.length) {
+      const rows = must<any[]>(await db.rpc("facebook_ad_campaigns", { p_ad_ids: ids }));
       for (const r of rows) if (r.campaign_id) adMap.set(String(r.ad_id), String(r.campaign_id));
     }
   }

@@ -21,10 +21,10 @@ export async function GET(req: NextRequest) {
     db.rpc("unresolved_meta_labels", { p_days: days }),
     buildFacebookLabelResolver(db),
     db.from("campaign_aliases").select("label, campaign_id, campaign_name").eq("channel", "facebook"),
-    db.from("ad_ad_daily").select("ad_id, campaign_id").eq("channel", "facebook").gte("day", new Date(Date.now() - 365 * 86_400_000).toISOString().slice(0, 10)).limit(20000),
+    db.rpc("facebook_ad_campaigns"),
   ]);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  const adMap = new Map((adRows ?? []).map((r: any) => [String(r.ad_id), String(r.campaign_id)]));
+  const adMap = new Map<string, string>(((adRows ?? []) as any[]).map((r) => [String(r.ad_id), String(r.campaign_id)]));
   const nameOf = new Map(labels.campaigns.map((c) => [c.id, c.name]));
   const aliasMap = new Map((aliases ?? []).map((a: any) => [String(a.label), a]));
   const out = ((rows ?? []) as any[]).map((r) => {

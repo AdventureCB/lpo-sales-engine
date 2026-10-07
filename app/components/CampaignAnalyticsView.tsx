@@ -280,7 +280,7 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
 /** Meta clicks tagged with a typed label instead of a campaign id: how each resolves, and a picker for the ones that don't. */
 function UnresolvedClicks({ onChanged }: { onChanged: () => void }) {
   type Row = { label: string; content: string; clicks: number; visitors: number; leads: number; firstAt: string; lastAt: string; resolvedCampaignId: string | null; resolvedCampaignName: string | null; how: string | null; alias: string | null };
-  const [data, setData] = useState<{ days: number; rows: Row[]; campaigns: { id: string; name: string }[] } | null>(null);
+  const [data, setData] = useState<{ days: number; rows: Row[]; campaigns: { id: string; name: string; active: boolean }[] } | null>(null);
   const [open, setOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -338,7 +338,12 @@ function UnresolvedClicks({ onChanged }: { onChanged: () => void }) {
                       ) : r.label ? (
                         <select className="vmsel" style={{ maxWidth: 320 }} disabled={busy === r.label} value={r.alias ?? r.resolvedCampaignId ?? ""} onChange={(e) => assign(r.label, e.target.value)}>
                           <option value="">— unresolved —</option>
-                          {data.campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          <optgroup label="Active campaigns">
+                            {data.campaigns.filter((c) => c.active).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </optgroup>
+                          <optgroup label="Older campaigns">
+                            {data.campaigns.filter((c) => !c.active).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </optgroup>
                         </select>
                       ) : (
                         <span style={{ color: "var(--text-3)" }}>no label to map — fix the ad&apos;s URL parameters</span>
