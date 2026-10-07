@@ -111,6 +111,14 @@ export async function gatherDealInputs(db: SupabaseClient, dealId: string): Prom
   const primaryPhone = usablePhones.find((p) => p.primary) ?? usablePhones[0];
   const { describePhoneLocation, locationFromPhone } = await import("./area-codes");
   const location = describePhoneLocation(locationFromPhone(primaryPhone?.e164 ?? primaryPhone?.value));
+  // Website activity (attr.js v2) — what they looked at and did on the site.
+  // Not hashed either: fresh visits should inform drafts without re-extracting.
+  let webBrief: string | null = null;
+  try {
+    const { computeWebActivity } = await import("./web-activity");
+    const emails = ((c?.emails as any[]) ?? []).map((e) => e?.value).filter(Boolean);
+    webBrief = (await computeWebActivity(db, emails, { days: 90 }))?.brief ?? null;
+  } catch {}
   const header = [
     `Deal: ${(deal as any).title}`,
     `Contact: ${c?.name ?? "—"} (region ${tzName})`,
@@ -120,6 +128,7 @@ export async function gatherDealInputs(db: SupabaseClient, dealId: string): Prom
     (deal as any).value_cents != null && `Value: $${Math.round((deal as any).value_cents / 100).toLocaleString()}`,
     (deal as any).interests?.length && `Interests on file: ${(deal as any).interests.join(", ")}`,
     `Created: ${((deal as any).created_at ?? "").slice(0, 10)}`,
+    webBrief && `Website activity:\n${webBrief}`,
   ].filter(Boolean).join("\n");
 
   // Transcripts + notes.

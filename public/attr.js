@@ -8,6 +8,12 @@
  * Stamps them into: Klaviyo profile properties (attr_*), Shopify cart
  * attributes (→ order note_attributes → our CRM), and outbound Typeform
  * links (→ hidden fields). Everything is fail-silent.
+ *
+ * v2 (10/2026): also records what the visitor DOES — page views with active
+ * dwell time, scroll depth and the sections they actually saw, plus named
+ * interactions (buttons, links, videos, accordions, tabs, forms) — batched
+ * to our app with sendBeacon so nothing blocks the page. Meta's _fbp/_fbc
+ * cookies ride along for server-side conversion matching.
  */
 (function () {
   "use strict";
@@ -15,6 +21,13 @@
               "gclid", "gbraid", "wbraid", "fbclid", "msclkid", "ttclid"];
   var STORE = "lpo_attr";
   var TTL_MS = 90 * 24 * 3600 * 1000;
+
+  function cookie(name) {
+    try {
+      var m = document.cookie.match(new RegExp("(?:^|; )" + name + "=([^;]*)"));
+      return m ? decodeURIComponent(m[1]).slice(0, 200) : null;
+    } catch (e) { return null; }
+  }
 
   function readParams() {
     try {
@@ -26,6 +39,10 @@
         if (v) { out[KEYS[i]] = v.slice(0, 200); found = true; }
       }
       if (!found) return null;
+      // Meta's browser id / click cookies (set by the Meta pixel) — the
+      // server-side match keys for Conversions API events later.
+      var fbp = cookie("_fbp"); if (fbp) out.fbp = fbp;
+      var fbc = cookie("_fbc"); if (fbc) out.fbc = fbc;
       out.lp = (location.origin + location.pathname).slice(0, 300);
       if (document.referrer && document.referrer.indexOf(location.hostname) === -1) {
         out.ref = document.referrer.slice(0, 300);
@@ -147,6 +164,181 @@
       } catch (e) {}
     }, true);
     document.addEventListener("focusout", function (ev) { fromField(ev.target); }, true);
+  })();
+
+  // ── Behavior tracking (v2) ──────────────────────────────────────────────
+  // What this browser does on the site, keyed by vid so it stitches onto the
+  // contact (retroactively too) once they identify. Batched; sent with
+  // sendBeacon on hide/unload and every 15s while there is something queued.
+  (function behavior() {
+    if (!vid || !window.navigator) return;
+    var ENDPOINT = "https://lpo-sales-engine.vercel.app/api/attr/events";
+    var MAX_PER_PAGE = 150;
+    var queue = [], sent = 0;
+    var path = location.pathname.slice(0, 300);
+    var title = (document.title || "").slice(0, 200);
+
+    // Session: 30-min idle gap starts a new one.
+    var sid = null;
+    try {
+      var raw = sessionStorage.getItem("lpo_sid");
+      var rec = raw ? JSON.parse(raw) : null;
+      if (rec && rec.id && Date.now() - rec.t < 30 * 60 * 1000) sid = rec.id;
+      if (!sid) sid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : "s-" + Date.now().toString(16) + "-" + Math.random().toString(16).slice(2, 8);
+      sessionStorage.setItem("lpo_sid", JSON.stringify({ id: sid, t: Date.now() }));
+    } catch (e) { sid = sid || "s-" + Date.now().toString(16); }
+    function touchSession() { try { sessionStorage.setItem("lpo_sid", JSON.stringify({ id: sid, t: Date.now() })); } catch (e) {} }
+
+    function push(ev) {
+      if (sent + queue.length >= MAX_PER_PAGE) return;
+      ev.at = new Date().toISOString();
+      ev.p = path;
+      queue.push(ev);
+      touchSession();
+    }
+
+    function flush() {
+      if (!queue.length) return;
+      var batch = queue.splice(0, 50);
+      sent += batch.length;
+      var body = JSON.stringify({ vid: vid, sid: sid, ua: (navigator.userAgent || "").slice(0, 200), fbp: cookie("_fbp"), fbc: cookie("_fbc"), events: batch });
+      try {
+        if (navigator.sendBeacon && navigator.sendBeacon(ENDPOINT, new Blob([body], { type: "text/plain" }))) return;
+      } catch (e) {}
+      try { fetch(ENDPOINT, { method: "POST", headers: { "Content-Type": "text/plain" }, body: body, keepalive: true }).catch(function () {}); } catch (e) {}
+    }
+
+    // Page view.
+    var extRef = document.referrer && document.referrer.indexOf(location.hostname) === -1 ? document.referrer.slice(0, 300) : null;
+    push({ t: "pv", ti: title, r: extRef });
+
+    // Active dwell: seconds while visible AND the user did something in the last 60s.
+    var active = 0, lastInput = Date.now(), tick = null;
+    function onInput() { lastInput = Date.now(); }
+    ["mousemove", "keydown", "scroll", "touchstart", "click"].forEach(function (n) { document.addEventListener(n, onInput, { passive: true, capture: true }); });
+    tick = setInterval(function () {
+      if (document.visibilityState === "visible" && Date.now() - lastInput < 60000) active++;
+    }, 1000);
+
+    // Scroll depth.
+    var maxScroll = 0;
+    function depth() {
+      try {
+        var h = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight) - window.innerHeight;
+        var pct = h > 0 ? Math.min(100, Math.round(((window.scrollY || 0) / h) * 100)) : 100;
+        if (pct > maxScroll) maxScroll = pct;
+      } catch (e) {}
+    }
+    window.addEventListener("scroll", depth, { passive: true });
+    setTimeout(depth, 1500);
+
+    // Sections seen: a section counts once it has been ≥50% visible for 2s.
+    // Label = its first heading, so "Pricing", "Specs", "Gallery" read naturally.
+    var seen = [], seenSet = {};
+    try {
+      if (window.IntersectionObserver) {
+        var timers = {};
+        function label(el) {
+          var h = el.querySelector("h1, h2, h3, [class*='heading'], [class*='title']");
+          var txt = h ? (h.textContent || "").trim().replace(/\s+/g, " ") : "";
+          if (!txt) txt = el.getAttribute("aria-label") || el.id || "";
+          return txt.slice(0, 60);
+        }
+        var io = new IntersectionObserver(function (entries) {
+          entries.forEach(function (en) {
+            var el = en.target, k = el.__lpoKey || (el.__lpoKey = Math.random().toString(16).slice(2));
+            if (en.isIntersecting && en.intersectionRatio >= 0.5) {
+              if (!timers[k]) timers[k] = setTimeout(function () {
+                var l = label(el);
+                if (l && !seenSet[l] && seen.length < 40) { seenSet[l] = 1; seen.push(l); }
+              }, 2000);
+            } else if (timers[k]) { clearTimeout(timers[k]); timers[k] = null; }
+          });
+        }, { threshold: [0.5] });
+        var secs = document.querySelectorAll("section, [id^='shopify-section'], main > div[id], article");
+        for (var i = 0; i < secs.length && i < 120; i++) io.observe(secs[i]);
+      }
+    } catch (e) {}
+
+    // Interactions.
+    function text(el) { return ((el.getAttribute && (el.getAttribute("aria-label") || el.getAttribute("title"))) || el.textContent || el.value || "").trim().replace(/\s+/g, " ").slice(0, 80); }
+    document.addEventListener("click", function (ev) {
+      try {
+        var t = ev.target; if (!t || !t.closest) return;
+        var a = t.closest("a[href]");
+        if (a) {
+          var href = a.getAttribute("href") || "";
+          if (/^tel:/i.test(href)) return push({ t: "ix", n: "tel", d: href.replace(/^tel:/i, "").slice(0, 40) });
+          if (/^mailto:/i.test(href)) return push({ t: "ix", n: "mail", d: href.replace(/^mailto:/i, "").slice(0, 80) });
+          var u; try { u = new URL(a.href, location.href); } catch (e) { return; }
+          var txt = text(a);
+          if (u.hostname !== location.hostname) return push({ t: "ix", n: "outbound", d: (u.hostname + u.pathname).slice(0, 160) + (txt ? " · " + txt : "") });
+          return push({ t: "ix", n: "link", d: (u.pathname + u.search).slice(0, 160) + (txt ? " · " + txt : "") });
+        }
+        var b = t.closest("button, [role='button'], input[type='submit'], input[type='button'], summary, [role='tab'], [aria-expanded]");
+        if (!b) return;
+        var tx = text(b);
+        if (b.matches("summary") || b.hasAttribute("aria-expanded")) {
+          var opening = b.matches("summary") ? !(b.parentElement && b.parentElement.open) : b.getAttribute("aria-expanded") !== "true";
+          if (opening && tx) return push({ t: "ix", n: "expand", d: tx });
+          return;
+        }
+        if (b.getAttribute("role") === "tab") return tx && push({ t: "ix", n: "tab", d: tx });
+        if (tx) push({ t: "ix", n: "click", d: tx });
+      } catch (e) {}
+    }, true);
+
+    // Videos: play once per element, then 50% and complete.
+    document.addEventListener("play", function (ev) {
+      try {
+        var v = ev.target; if (!v || v.tagName !== "VIDEO" || v.__lpoPlayed) return;
+        v.__lpoPlayed = 1;
+        var src = (v.currentSrc || v.src || (v.getAttribute("poster") || "")).split("/").pop().slice(0, 80) || "video";
+        push({ t: "ix", n: "video", d: src + " · play" });
+        var half = false;
+        v.addEventListener("timeupdate", function () {
+          if (!half && v.duration && v.currentTime / v.duration >= 0.5) { half = true; push({ t: "ix", n: "video", d: src + " · 50%" }); }
+        });
+        v.addEventListener("ended", function () { push({ t: "ix", n: "video", d: src + " · complete" }); });
+      } catch (e) {}
+    }, true);
+
+    // Forms: first focus in a form, and submit.
+    var formsStarted = {};
+    document.addEventListener("focusin", function (ev) {
+      try {
+        var f = ev.target && ev.target.closest ? ev.target.closest("form") : null;
+        if (!f || !f.matches("form")) return;
+        var k = f.id || f.getAttribute("name") || f.getAttribute("action") || "form";
+        if (formsStarted[k]) return; formsStarted[k] = 1;
+        push({ t: "ix", n: "form_start", d: k.slice(0, 80) });
+      } catch (e) {}
+    }, true);
+    document.addEventListener("submit", function (ev) {
+      try {
+        var f = ev.target; if (!f || !f.matches || !f.matches("form")) return;
+        push({ t: "ix", n: "form_submit", d: (f.id || f.getAttribute("name") || f.getAttribute("action") || "form").slice(0, 80) });
+        flush();
+      } catch (e) {}
+    }, true);
+
+    // Page end: active seconds, depth, sections. Sent on hide so a tab left
+    // open overnight still reports only the time they were actually there.
+    var ended = false;
+    function end() {
+      if (ended) return; ended = true;
+      depth();
+      push({ t: "pe", dur: active, sc: maxScroll, secs: seen.slice(0, 40) });
+      flush();
+      // A later return to the tab reports only the NEW time/sections.
+      active = 0; seen = []; seenSet = {};
+    }
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "hidden") end();
+      else if (ended) { ended = false; } // came back: keep counting into a fresh pageend
+    });
+    window.addEventListener("pagehide", end);
+    setInterval(flush, 15000);
   })();
 
   // Identity propagates even WITHOUT campaign params (direct/organic

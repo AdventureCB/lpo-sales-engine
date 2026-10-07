@@ -237,6 +237,14 @@ export async function GET(req: NextRequest) {
     adJourney = await computeAdJourney(db, contactEmails, deal.crm_contacts?.attribution);
   } catch {}
 
+  // Website activity (attr.js v2 behavior events for linked visitors).
+  let webActivity: unknown = null;
+  try {
+    const { computeWebActivity } = await import("@/lib/web-activity");
+    const contactEmails = ((deal.crm_contacts?.emails as any[]) ?? []).map((e) => e.value).filter(Boolean);
+    webActivity = await computeWebActivity(db, contactEmails);
+  } catch {}
+
   // AI buyer profile (if one has been built for this deal).
   const { data: aiProfile } = await db.from("deal_profiles").select("*").eq("deal_id", deal.id).maybeSingle();
 
@@ -288,6 +296,7 @@ export async function GET(req: NextRequest) {
     callStats,
     adInfo,
     adJourney,
+    webActivity,
     aiProfile: aiProfile ?? null,
     aiProfileStale,
     sources: sources ?? [],

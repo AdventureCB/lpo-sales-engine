@@ -78,6 +78,8 @@ export async function POST(req: NextRequest) {
         ttclid: STR(t.ttclid, 200),
         landing: STR(t.lp, 300),
         referrer: STR(t.ref, 300),
+        fbp: STR(t.fbp, 200),
+        fbc: STR(t.fbc, 200),
       };
     })
     .filter(Boolean) as any[];

@@ -9,6 +9,7 @@ import { combineDue, timedIso } from "@/lib/allday";
 import { TimeSelect } from "./TimeSelect";
 import { fillPlaceholders } from "@/lib/placeholders";
 import { linkifyPlain, linkifyHtml, htmlToPlain, isHtml } from "@/lib/richtext";
+import { pageLabel } from "@/lib/web-activity";
 import { openChat } from "./chatDockStore";
 import RichTextEditor, { isEmptyHtml } from "./RichTextEditor";
 import MentionInput from "./MentionInput";
@@ -22,6 +23,7 @@ interface DealData {
   timeline: { id?: string; kind: string; at: string | null; title: string; body: string | null; media?: string[] | null; audio?: string | null; actor: string | null; done: boolean; due: string | null; callId?: string | null; reviewable?: boolean; reviewed?: boolean; emailDirection?: string | null; callbackPhone?: string | null; track?: { opens: number; clicks: number; lastOpenAt: string | null } | null }[];
   callStats: { dials: number; answered: number; talkS: number; inbound: number } | null;
   adInfo?: { source: string | null; campaign: string | null; channel: string | null; leadCostCents: number | null } | null;
+  webActivity?: import("@/lib/web-activity").WebActivity | null;
   adJourney?: {
     interactions: {
       at: string | null; source: string; channel: string | null; campaign: string | null; adId: string | null; origin: string; costCents: number | null;
@@ -622,6 +624,7 @@ export function DealDetailView({
     />
   ) : null;
   const adJourneyEl = data.adJourney ? <AdJourneySection journey={data.adJourney} /> : null;
+  const webActivityEl = data.webActivity ? <WebActivitySection activity={data.webActivity} /> : null;
   const profileEl = (
     <>
       {d.status === "open" && <CloseLikelihood dealId={d.id} />}
@@ -1868,6 +1871,7 @@ export function DealDetailView({
               summary + confidence/archetypes render in the dialer chrome. */}
           {embedded && <NextActionCard profile={data.aiProfile ?? null} building={aiBuilding} />}
           {embedded && klaviyoEl}
+          {embedded && webActivityEl}
           {embedded && adJourneyEl}
           {/* Editable contact card — in the dialer (embedded) too, so name /
               phones / emails are editable mid-call (Kyle 9/15). */}
@@ -1901,6 +1905,7 @@ export function DealDetailView({
             </div>
           )}
           {!embedded && klaviyoEl}
+          {!embedded && webActivityEl}
           {!embedded && adJourneyEl}
           {!embedded && profileEl}
           {!embedded && scriptsEl}
@@ -2342,6 +2347,75 @@ function DealProfileSection({
         </div>
       )}
     </div>
+  );
+}
+
+
+const IX_ICON: Record<string, string> = { click: "👆", link: "↗", expand: "▸", tab: "▸", video: "▶", form_start: "✎", form_submit: "✅", outbound: "⇗", tel: "📞", mail: "✉" };
+
+function WebActivitySection({ activity }: { activity: NonNullable<DealData["webActivity"]> }) {
+  const [open, setOpen] = useState(false);
+  const [openSid, setOpenSid] = useState<string | null>(activity.sessions[0]?.id ?? null);
+  const shown = open ? activity.sessions : activity.sessions.slice(0, 4);
+  const dur = (s: number) => (s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)} min` : `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`);
+  const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return (
+    <>
+      <div className="panel-h" style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 8 }}>
+        🌐 Website activity
+        <span style={{ fontWeight: 600, fontSize: 12.5, color: "var(--text-2)" }}>{activity.summary}</span>
+      </div>
+      {activity.topPages.length > 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "4px 0 8px" }}>
+          {activity.topPages.slice(0, 5).map((p) => (
+            <span key={p.path} className="chip" title={p.path} style={{ fontSize: 12, background: "var(--surface-3)", color: "var(--text-2)" }}>
+              {pageLabel(p.path, p.title)} · {p.views}× · {dur(p.durationS)}
+            </span>
+          ))}
+        </div>
+      )}
+      <div style={{ display: "grid", gap: 4 }}>
+        {shown.map((s) => {
+          const isOpen = openSid === s.id;
+          return (
+            <div key={s.id} style={{ background: "var(--surface-2)", borderRadius: 10, padding: "8px 10px" }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer", fontSize: 13 }} onClick={() => setOpenSid(isOpen ? null : s.id)}>
+                <span style={{ color: "var(--text-3)", fontSize: 11 }}>{isOpen ? "▾" : "▸"}</span>
+                <b>{when(s.startedAt)}</b>
+                <span style={{ color: "var(--text-2)" }}>{dur(s.durationS)} · {s.pages.length} page{s.pages.length === 1 ? "" : "s"}</span>
+                <span style={{ marginLeft: "auto", color: "var(--text-3)", fontSize: 12 }}>{[s.source, s.device].filter(Boolean).join(" · ")}</span>
+              </div>
+              {isOpen && (
+                <div style={{ display: "grid", gap: 6, marginTop: 8, paddingLeft: 18 }}>
+                  {s.pages.map((p, i) => (
+                    <div key={i} style={{ fontSize: 12.5 }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+                        <span style={{ fontWeight: 600 }} title={p.path}>{pageLabel(p.path, p.title)}</span>
+                        <span style={{ color: "var(--text-3)" }}>{p.durationS ? dur(p.durationS) : ""}{p.scrollPct != null ? ` · ${p.scrollPct}% scrolled` : ""}</span>
+                      </div>
+                      {p.sections.length > 0 && <div style={{ color: "var(--text-2)" }}>Saw: {p.sections.slice(0, 8).join(" · ")}</div>}
+                      {p.interactions.length > 0 && (
+                        <div style={{ color: "var(--text-2)", display: "grid", gap: 2, marginTop: 2 }}>
+                          {p.interactions.slice(0, 12).map((ix, j) => (
+                            <div key={j}>{IX_ICON[ix.name] ?? "•"} {ix.name === "link" || ix.name === "outbound" ? ix.detail : `${ix.name.replace("_", " ")}${ix.detail ? `: ${ix.detail}` : ""}`}</div>
+                          ))}
+                          {p.interactions.length > 12 && <div style={{ color: "var(--text-3)" }}>+{p.interactions.length - 12} more</div>}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {activity.sessions.length > 4 && (
+        <button className="btn ghost" style={{ marginTop: 6, padding: "3px 10px", fontSize: 12.5 }} onClick={() => setOpen(!open)}>
+          {open ? "Show fewer" : `Show all ${activity.sessions.length} visits`}
+        </button>
+      )}
+    </>
   );
 }
 
