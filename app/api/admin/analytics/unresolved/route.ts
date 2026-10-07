@@ -31,7 +31,9 @@ export async function GET(req: NextRequest) {
     const viaAd = /^\d{5,}$/.test(r.content ?? "") ? adMap.get(r.content) ?? null : null;
     const viaLabel = viaAd ? null : labels.resolve(r.label);
     const campaignId = viaAd ?? viaLabel?.campaignId ?? null;
+    const adByName = campaignId && !viaAd && r.content ? labels.resolveAd(campaignId, r.content) : null;
     return {
+      adResolved: !!viaAd || !!adByName,
       label: r.label,
       content: r.content,
       clicks: Number(r.clicks),

@@ -279,7 +279,7 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
 
 /** Meta clicks tagged with a typed label instead of a campaign id: how each resolves, and a picker for the ones that don't. */
 function UnresolvedClicks({ onChanged }: { onChanged: () => void }) {
-  type Row = { label: string; content: string; clicks: number; visitors: number; leads: number; firstAt: string; lastAt: string; resolvedCampaignId: string | null; resolvedCampaignName: string | null; how: string | null; alias: string | null };
+  type Row = { label: string; content: string; clicks: number; visitors: number; leads: number; firstAt: string; lastAt: string; resolvedCampaignId: string | null; resolvedCampaignName: string | null; how: string | null; alias: string | null; adResolved?: boolean };
   const [data, setData] = useState<{ days: number; rows: Row[]; campaigns: { id: string; name: string; active: boolean }[] } | null>(null);
   const [open, setOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
@@ -348,7 +348,8 @@ function UnresolvedClicks({ onChanged }: { onChanged: () => void }) {
                       ) : (
                         <span style={{ color: "var(--text-3)" }}>no label to map — fix the ad&apos;s URL parameters</span>
                       )}
-                      {r.how === "name match" && !r.alias && <div style={{ color: "var(--text-3)", fontSize: 12 }}>auto: name match</div>}
+                      {r.how === "name match" && !r.alias && <div style={{ color: "var(--text-3)", fontSize: 12 }}>auto: name match{r.adResolved ? " · ad matched by name" : ""}</div>}
+                      {r.how === "your assignment" && r.adResolved && <div style={{ color: "var(--text-3)", fontSize: 12 }}>ad matched by name</div>}
                     </td>
                   </tr>
                 ))}

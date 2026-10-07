@@ -67,7 +67,9 @@ type ClickInfo = { campaignId: string; adId: string | null };
  */
 export interface FacebookLabelResolver {
   resolve: (label: string | null | undefined) => { campaignId: string; how: "alias" | "name" } | null;
-  campaigns: { id: string; name: string }[];
+  /** Typed utm_content ("dirt bags") → the one ad in that campaign whose name matches. */
+  resolveAd: (campaignId: string, content: string | null | undefined) => string | null;
+  campaigns: { id: string; name: string; active: boolean }[];
 }
 // Labels arrive URL-encoded when the ad used {{campaign.name}} ("mof+%7c+demo+request%7c+leads").
 const tokens = (s: string) => {
@@ -77,10 +79,15 @@ const tokens = (s: string) => {
 };
 export async function buildFacebookLabelResolver(db: SupabaseClient): Promise<FacebookLabelResolver> {
   const since = new Date(Date.now() - 365 * 86_400_000).toISOString().slice(0, 10);
-  const [{ data: camps }, { data: aliases }] = await Promise.all([
+  const [{ data: camps }, { data: aliases }, { data: ads }] = await Promise.all([
     db.rpc("facebook_campaigns"), // distinct in SQL — the daily table exceeds PostgREST's 1,000-row cap
     db.from("campaign_aliases").select("label, campaign_id").eq("channel", "facebook"),
+    db.rpc("facebook_ads"),
   ]);
+  const adsByCampaign = new Map<string, { id: string; set: Set<string> }[]>();
+  for (const a of (ads ?? []) as any[]) {
+    (adsByCampaign.get(String(a.campaign_id)) ?? adsByCampaign.set(String(a.campaign_id), []).get(String(a.campaign_id))!).push({ id: String(a.ad_id), set: new Set(tokens(String(a.name))) });
+  }
   // Active (seen in the last 14 days) first, then the rest by name.
   const cutoff = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10);
   const campaigns = ((camps ?? []) as any[])
@@ -92,6 +99,12 @@ export async function buildFacebookLabelResolver(db: SupabaseClient): Promise<Fa
   const cache = new Map<string, { campaignId: string; how: "alias" | "name" } | null>();
   return {
     campaigns,
+    resolveAd(campaignId, content) {
+      const want = tokens((content ?? "").trim());
+      if (!want.length) return null;
+      const hits = (adsByCampaign.get(campaignId) ?? []).filter((a) => want.every((w) => a.set.has(w)));
+      return hits.length === 1 ? hits[0].id : null;
+    },
     resolve(label) {
       const key = (label ?? "").trim().toLowerCase();
       if (!key) return null;
@@ -115,7 +128,9 @@ export function isOrganicSocialTouch(t: any): boolean {
   const med = String(t?.medium ?? "").toLowerCase();
   const src = String(t?.source ?? "").toLowerCase();
   const content = String(t?.content ?? "");
-  return ["social", "organic", "bio", "link_in_bio", "referral"].includes(med) || src === "linktree" || /facebook_ua|link_in_bio/i.test(content);
+  const camp = String(t?.campaign ?? "").toLowerCase();
+  return ["social", "organic", "bio", "link_in_bio", "referral"].includes(med) || src === "linktree"
+    || /facebook_ua|link_in_bio|product_card/i.test(content) || camp === "meta_catalog" || camp === "openai_catalog";
 }
 
 /** Classify a web_touch as a paid click ({channel, campaignId, adId}) or null. */
@@ -142,7 +157,10 @@ function classifyPaid(
     const adId = numeric(t.content);
     const viaAd = adId ? adMap.get(adId) ?? null : null;
     const viaLabel = !numericCamp && !viaAd ? labels?.resolve(t.campaign)?.campaignId ?? null : null;
-    return { channel: "facebook", campaignId: numericCamp ?? viaAd ?? viaLabel, adId };
+    const campaignId = numericCamp ?? viaAd ?? viaLabel;
+    // Typed ad name in utm_content → ad id within the resolved campaign.
+    const adByName = !adId && campaignId && t.content && labels ? labels.resolveAd(campaignId, t.content) : null;
+    return { channel: "facebook", campaignId, adId: adId ?? adByName };
   }
   return null;
 }
