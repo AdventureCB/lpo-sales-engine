@@ -389,6 +389,36 @@ export async function pickRoundRobin(db: SupabaseClient, reps: BookableRep[], sl
   return null;
 }
 
+/** Round-robin link, but the person already has an OPEN deal: their owner
+ *  takes the booking when they're bookable and free at that time (pool or
+ *  not). Otherwise null → normal rotation. Keeps a rep's lead from being
+ *  booked onto a teammate's calendar (Kyle 10/8). */
+export async function pickDealOwner(
+  db: SupabaseClient,
+  reps: BookableRep[],
+  who: { email: string | null; phone: string | null },
+  slot: number,
+  cfg: BookingConfig
+): Promise<BookableRep | null> {
+  const contact = await findContact(db, normEmail(who.email), normPhone(who.phone));
+  if (!contact) return null;
+  const { data: deal } = await db
+    .from("crm_deals")
+    .select("owner_pipedrive_id, owner_email")
+    .eq("contact_id", contact.id)
+    .eq("status", "open")
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!deal) return null;
+  const owner = reps.find((r) => (deal.owner_email && r.email === deal.owner_email) || (deal.owner_pipedrive_id != null && r.pipedriveUserId === deal.owner_pipedrive_id));
+  if (!owner) return null;
+  const eff = effectiveFor(cfg, owner);
+  if (!candidateSlots(eff.cfg, Date.now(), eff.blocked).includes(slot)) return null;
+  const busy = await busySlots(db, owner, [slot], cfg.slot_minutes * 60_000);
+  return busy.has(slot) ? null : owner;
+}
+
 // ── Booking creation ────────────────────────────────────────────────────────
 
 export interface BookingRequest {

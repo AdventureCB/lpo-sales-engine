@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { availableSlots, bookableReps, createBooking, isBookingKind, loadBookingConfig, loadBookingEngine, pickRoundRobin, roundRobinReps } from "@/lib/booking";
+import { availableSlots, bookableReps, createBooking, isBookingKind, loadBookingConfig, loadBookingEngine, pickDealOwner, pickRoundRobin, roundRobinReps } from "@/lib/booking";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,6 +49,8 @@ export async function POST(req: NextRequest) {
   if (!offered.includes(startAt)) {
     return NextResponse.json({ error: "That time was just taken — please pick another." }, { status: 409 });
   }
+  // Existing lead → their deal owner if free; otherwise rotate.
+  if (!rep) rep = await pickDealOwner(db, allReps, { email, phone }, startAt, cfg).catch(() => null);
   if (!rep) rep = await pickRoundRobin(db, rrReps, startAt, cfg);
   if (!rep) return NextResponse.json({ error: "No guide is free at that time — please pick another." }, { status: 409 });
 

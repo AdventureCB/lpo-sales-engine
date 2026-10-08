@@ -107,6 +107,13 @@ export interface MailAttachment {
 }
 
 /** Build a raw RFC-2822 message: text/plain, +HTML alternative, +attachments. */
+/** RFC 2047 encoded-word for non-ASCII header values (em dashes, emoji in
+ *  subjects) — raw UTF-8 in a header is what shows up as "Ã¢Â€Â" in some clients. */
+function encodeHeader(value: string): string {
+  if (/^[\x20-\x7e]*$/.test(value)) return value;
+  return `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`;
+}
+
 function buildMime(
   from: string,
   opts: {
@@ -119,7 +126,7 @@ function buildMime(
     references?: string | null;
   }
 ): string {
-  const headers = [`From: ${from}`, `To: ${opts.to}`, `Subject: ${opts.subject}`, `MIME-Version: 1.0`];
+  const headers = [`From: ${from}`, `To: ${opts.to}`, `Subject: ${encodeHeader(opts.subject)}`, `MIME-Version: 1.0`];
   // RFC-2822 threading — recipients' clients group the reply into the thread.
   if (opts.inReplyTo) headers.push(`In-Reply-To: ${opts.inReplyTo}`);
   if (opts.references) headers.push(`References: ${opts.references}`);
