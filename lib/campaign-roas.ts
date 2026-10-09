@@ -287,7 +287,11 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
     const src = (sourceName ?? "").toLowerCase();
     // Synchrony is NOT here: that Klaviyo form lives on a site page people
     // reach from Meta, Google or organically, so it follows the click rule.
-    if (/hot list|\bcai\b/.test(src)) return { channel: null, campaignId: null, adId: null, source: sourceName };
+    // CAI segment deals come from Klaviyo segment membership → email-originated,
+    // never paid. Hot List Import used to be here too, but since 10/7 site
+    // behavior (a builder session after an ad click) can make someone hot, so
+    // those deals follow the ordinary click rule below (Kyle 10/9).
+    if (/\bcai\b/.test(src)) return { channel: null, campaignId: null, adId: null, source: sourceName };
     const touches: any[] = [];
     const created = createdIso ? Date.parse(createdIso) : null;
     const cutoff = created != null ? created + 3_600_000 : null; // 1h grace for beacon/CRM clock skew

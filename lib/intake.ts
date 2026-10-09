@@ -501,5 +501,14 @@ export async function processIntake(
       occurred_at: eventTime(payload),
     });
   }
+  // Every intake path: if our site beacon already knows this email, fold the
+  // visitor's ad-click history onto the (possibly brand-new) contact so the
+  // deal page chip and campaign attribution see the click.
+  if (email) {
+    try {
+      const { mergeFromVisitorLink } = await import("./attribution");
+      await mergeFromVisitorLink(db, email);
+    } catch {}
+  }
   return log({ action: "created", dealId: crmDealId, detail });
 }
