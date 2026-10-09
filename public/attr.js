@@ -164,6 +164,30 @@
       } catch (e) {}
     }, true);
     document.addEventListener("focusout", function (ev) { fromField(ev.target); }, true);
+
+    // Klaviyo email links carry _kx=<profile token>: resolve it server-side so
+    // an email clicker is known on arrival (once per token per browser).
+    try {
+      var kx = new URLSearchParams(location.search).get("_kx");
+      if (kx) {
+        var kkey = "lpo_attr_kx";
+        if (localStorage.getItem(kkey) !== kx) {
+          localStorage.setItem(kkey, kx);
+          fetch("https://lpo-sales-engine.vercel.app/api/attr/kx", {
+            method: "POST",
+            headers: { "Content-Type": "text/plain" },
+            body: JSON.stringify({ vid: vid, kx: kx }),
+            keepalive: true,
+          }).catch(function () {});
+        }
+      }
+      // Klaviyo's own cookie names the profile once it knows the email.
+      var kla = cookie("__kla_id");
+      if (kla) {
+        var parsed = JSON.parse(atob(kla));
+        if (parsed && parsed.$email) send(String(parsed.$email).trim().toLowerCase());
+      }
+    } catch (e) {}
   })();
 
   // ── Behavior tracking (v2) ──────────────────────────────────────────────
