@@ -266,7 +266,7 @@ export function CampaignAnalyticsView({ channel, title }: { channel: "google" | 
             {isGoogle
               ? " Survey deals (Survey West, Quote Survey) can only be reached from Meta ads, so they are never Google leads."
               : " Survey deals (Survey West, Quote Survey) are Meta leads by definition — when the submission carries no click id they land in “(campaign not resolved)”."}
-            {" Saved Build, Abandoned Cart, Synchrony financing, Hot List Import and every other site-originated deal follow the click rule; CAI deals come from Klaviyo segments and are never paid leads."}
+            {" Every source follows the click rule, including Hot List Import and the CAI segment engines; a deal with no paid click in the lookback is organic."}
             {" "}<b>Won</b> and <b>Revenue</b> follow the lead&apos;s origin, so the three columns describe one cohort.
             {" "}<b>Last click</b> is the older read: deals whose most recent paid touch on record, at any time, was this campaign (hover for its won deals and revenue).
             {isGoogle && " Impression share is blank where Google withholds it (low volume or non-Search campaigns)."}

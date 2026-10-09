@@ -285,13 +285,10 @@ export async function attributeDeals(db: SupabaseClient, startIso: string, endIs
   const LOOKBACK_MS = 30 * 86_400_000;
   const resolve = (contact: any, createdIso: string | null, sourceName: string | null): DealAttribution | null => {
     const src = (sourceName ?? "").toLowerCase();
-    // Synchrony is NOT here: that Klaviyo form lives on a site page people
-    // reach from Meta, Google or organically, so it follows the click rule.
-    // CAI segment deals come from Klaviyo segment membership → email-originated,
-    // never paid. Hot List Import used to be here too, but since 10/7 site
-    // behavior (a builder session after an ad click) can make someone hot, so
-    // those deals follow the ordinary click rule below (Kyle 10/9).
-    if (/\bcai\b/.test(src)) return { channel: null, campaignId: null, adId: null, source: sourceName };
+    // Every source follows the click rule (Kyle 10/9) — Hot List Import and
+    // the CAI segment engines fire on engagement that often follows an ad
+    // click days earlier (Giovanni: Financing ad → CAI deal next day). A deal
+    // with no paid click in the lookback resolves organic below anyway.
     const touches: any[] = [];
     const created = createdIso ? Date.parse(createdIso) : null;
     const cutoff = created != null ? created + 3_600_000 : null; // 1h grace for beacon/CRM clock skew
