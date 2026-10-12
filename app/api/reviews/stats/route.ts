@@ -31,7 +31,7 @@ export async function GET(req: Request) {
 
   let q = db
     .from("call_reviews")
-    .select("id, rep, created_at, updated_at, deal_id, quo_call_id, review, excluded_from_score, bonus, crm_deals ( id, title )")
+    .select("id, rep, created_at, updated_at, deal_id, quo_call_id, review, excluded_from_score, bonus, flag, crm_deals ( id, title )")
     .gte("created_at", since)
     .order("created_at", { ascending: false })
     .limit(1000);
@@ -65,8 +65,21 @@ export async function GET(req: Request) {
     db.from("call_reviews").select("rep, created_at, excluded_from_score").gte("created_at", since).not("rep", "is", null).limit(2000),
   ]);
 
+  // Call length without opening the scorecard: call_events by quo_call_id.
+  const durations = new Map<string, number>();
+  const callIds = [...new Set((rows ?? []).map((r: any) => r.quo_call_id).filter(Boolean))] as string[];
+  for (let i = 0; i < callIds.length; i += 200) {
+    const { data: calls } = await db.from("call_events").select("quo_call_id, duration_s, answered_at, completed_at").in("quo_call_id", callIds.slice(i, i + 200));
+    for (const c of calls ?? []) {
+      const d = c.duration_s ?? (c.answered_at && c.completed_at ? Math.round((Date.parse(c.completed_at) - Date.parse(c.answered_at)) / 1000) : null);
+      if (d != null) durations.set(c.quo_call_id, d);
+    }
+  }
+
   const reviews = (rows ?? []).map((r: any) => ({
     id: r.id,
+    durationS: r.quo_call_id ? durations.get(r.quo_call_id) ?? null : null,
+    flag: r.flag ?? null,
     rep: r.rep,
     at: r.created_at,
     dealId: (r.crm_deals as any)?.id ?? r.deal_id,
@@ -93,8 +106,8 @@ export async function GET(req: Request) {
  */
 export async function POST(req: Request) {
   const user = await getSessionUser();
-  if (!user || user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
-  let body: { id?: string; excluded?: boolean; bonus?: number; principle?: string; verdict?: string; restore?: boolean };
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  let body: { id?: string; excluded?: boolean; bonus?: number; principle?: string; verdict?: string; restore?: boolean; flag?: { note?: string } | null; resolveFlag?: { resolution: "adjusted" | "dismissed"; note?: string } };
   try {
     body = await (req as any).json();
   } catch {
@@ -103,6 +116,33 @@ export async function POST(req: Request) {
   if (!body.id) return NextResponse.json({ error: "id required" }, { status: 400 });
   const db = supabaseAdmin();
   const now = new Date().toISOString();
+
+  // Flags: a rep flags their OWN review (note required) or withdraws it; an
+  // admin flags anything or resolves (adjusted = they changed something,
+  // dismissed = score stands). Resolution keeps the rep's note for the record.
+  if (body.flag !== undefined || body.resolveFlag) {
+    const { data: row } = await db.from("call_reviews").select("id, rep, flag").eq("id", body.id).maybeSingle();
+    if (!row) return NextResponse.json({ error: "not found" }, { status: 404 });
+    const own = user.repName && row.rep === user.repName;
+    if (user.role !== "admin" && !own) return NextResponse.json({ error: "not your review" }, { status: 403 });
+    let flag: any;
+    if (body.resolveFlag) {
+      if (user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
+      if (!row.flag) return NextResponse.json({ error: "not flagged" }, { status: 400 });
+      flag = { ...row.flag, status: "resolved", resolution: body.resolveFlag.resolution === "adjusted" ? "adjusted" : "dismissed", resolution_note: (body.resolveFlag.note ?? "").trim().slice(0, 500) || null, resolved_by: user.email, resolved_at: now };
+    } else if (body.flag === null) {
+      if (row.flag?.status === "resolved" && user.role !== "admin") return NextResponse.json({ error: "already resolved" }, { status: 400 });
+      flag = null;
+    } else {
+      const note = (body.flag?.note ?? "").trim().slice(0, 500);
+      if (!note) return NextResponse.json({ error: "say what's wrong with the score" }, { status: 400 });
+      flag = { by: user.email, at: now, note, status: "open" };
+    }
+    const { error } = await db.from("call_reviews").update({ flag }).eq("id", body.id);
+    if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+    return NextResponse.json({ ok: true, flag });
+  }
+  if (user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
 
   if (body.restore || (body.principle && body.verdict)) {
     const { data: row } = await db.from("call_reviews").select("id, review, history, input_hash, transcript_chars, model, updated_at").eq("id", body.id).maybeSingle();

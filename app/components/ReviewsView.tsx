@@ -26,7 +26,11 @@ interface Review {
   excluded?: boolean;
   bonus?: number; // outcome bonus: +1 deposit, +2 paid-in-full
   reReviewed?: boolean; // scored more than once — open the scorecard to compare / restore
+  durationS?: number | null;
+  flag?: { by: string; at: string; note: string; status: "open" | "resolved"; resolution?: "adjusted" | "dismissed"; resolution_note?: string | null; resolved_by?: string; resolved_at?: string } | null;
 }
+
+const fmtDur = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
 const PRINCIPLES = ["Guide positioning", "Problem articulation", "Simple plan", "Clear CTA", "Discovery"];
 const SHORT: Record<string, string> = {
@@ -255,6 +259,9 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
     : null;
   const [tick, setTick] = useState(0); // bump → refetch (after an admin override / restore)
   const [openId, setOpenId] = useState<string | null>(null); // review whose scorecard is expanded
+  const [flagId, setFlagId] = useState<string | null>(null); // review with the flag note editor open
+  const [flagNote, setFlagNote] = useState("");
+  const [flaggedOnly, setFlaggedOnly] = useState(false);
   useEffect(() => {
     fetch(`/api/reviews/stats${since ? `?since=${since}` : ""}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
@@ -377,7 +384,17 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
   if (error) return <div className="viewsub">Couldn’t load reviews: {error}</div>;
   if (!data) return <div className="viewsub">Loading…</div>;
 
-  const listRows = mine.filter((r) => inCur(r.at));
+  // Flag view ignores the period so an old flag can't hide.
+  const listRows = flaggedOnly ? mine.filter((r) => r.flag?.status === "open") : mine.filter((r) => inCur(r.at));
+  const openFlags = mine.filter((r) => r.flag?.status === "open").length;
+
+  const postFlag = async (id: string, payload: Record<string, unknown>) => {
+    const r = await fetch("/api/reviews/stats", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ...payload }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { alert(j.error ?? "failed"); return; }
+    setData((d) => (d ? { ...d, reviews: d.reviews.map((x) => (x.id === id ? { ...x, flag: j.flag ?? null } : x)) } : d));
+    setFlagId(null); setFlagNote("");
+  };
 
   const toggleExclude = async (id: string, excluded: boolean) => {
     setData((d) => (d ? { ...d, reviews: d.reviews.map((x) => (x.id === id ? { ...x, excluded } : x)) } : d));
@@ -665,17 +682,30 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
 
       {/* Reviewed calls list */}
       <div className="card" style={{ padding: "14px 16px" }}>
-        <div className="panel-h" style={{ marginTop: 0 }}>
+        <div className="panel-h" style={{ marginTop: 0, display: "flex", alignItems: "center", gap: 10 }}>
           Reviewed calls — {PERIOD_LABEL[period].toLowerCase()}{focusRep ? ` · ${focusRep}` : ""}
+          {openFlags > 0 && (
+            <button
+              className={`btn ${flaggedOnly ? "primary" : "ghost"}`}
+              style={{ marginLeft: "auto", padding: "2px 10px", fontSize: 12, color: flaggedOnly ? undefined : "#e0574a" }}
+              title={isAdmin ? "Reviews reps have flagged as mis-scored — needs your decision" : "Your open flags"}
+              onClick={() => setFlaggedOnly((v) => !v)}
+            >
+              🚩 {openFlags} open flag{openFlags === 1 ? "" : "s"}{flaggedOnly ? " · showing only these" : ""}
+            </button>
+          )}
         </div>
-        {listRows.length === 0 && <div style={{ color: "var(--text-3)", fontSize: 13.5 }}>None in this period.</div>}
+        {listRows.length === 0 && <div style={{ color: "var(--text-3)", fontSize: 13.5 }}>{flaggedOnly ? "No open flags." : "None in this period."}</div>}
         {listRows.map((r) => (
           <div key={r.id} style={{ borderTop: "1px solid var(--border-soft, #2c2f35)", padding: "10px 0", opacity: r.excluded ? 0.55 : 1 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span style={{ fontSize: 12.5, color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
                 {new Date(r.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
               </span>
+              {r.durationS != null && <span style={{ fontSize: 12, color: "var(--text-2)", fontVariantNumeric: "tabular-nums", border: "1px solid var(--border-soft)", borderRadius: 5, padding: "0 6px" }} title="Call length">⏱ {fmtDur(r.durationS)}</span>}
               {isAdmin && !focusRep && r.rep && <span style={{ fontSize: 12.5, color: "var(--text-2)" }}>{r.rep}</span>}
+              {r.flag?.status === "open" && <span style={{ fontSize: 11, fontWeight: 700, color: "#e0574a", border: "1px solid rgba(224,87,74,0.5)", borderRadius: 5, padding: "0 6px" }} title={r.flag.note}>🚩 flagged</span>}
+              {r.flag?.status === "resolved" && <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-3)", border: "1px solid var(--border-soft)", borderRadius: 5, padding: "0 6px" }} title={`${r.flag.resolution === "adjusted" ? "Adjusted" : "Score stands"}${r.flag.resolution_note ? ` — ${r.flag.resolution_note}` : ""}`}>🚩 {r.flag.resolution === "adjusted" ? "adjusted" : "reviewed"}</span>}
               {r.excluded && <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-3)", border: "1px solid var(--border-soft)", borderRadius: 5, padding: "0 6px" }}>not scored</span>}
               {r.reReviewed && <span style={{ fontSize: 11, fontWeight: 700, color: "#d99a2b", border: "1px solid rgba(217,154,43,0.5)", borderRadius: 5, padding: "0 6px" }} title="This call was scored more than once — open the scorecard to compare or restore">re-scored</span>}
               {r.dealId ? (
@@ -721,6 +751,14 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
                   {r.excluded ? "Include" : "Exclude"}
                 </button>
               )}
+              {!r.flag && (
+                <button className="btn ghost" style={{ padding: "2px 9px", fontSize: 11.5 }} title="Think this was mis-scored or shouldn't count? Flag it for admin review" onClick={() => { setFlagId(flagId === r.id ? null : r.id); setFlagNote(""); }}>
+                  🚩 Flag
+                </button>
+              )}
+              {r.flag?.status === "open" && !isAdmin && (
+                <button className="btn ghost" style={{ padding: "2px 9px", fontSize: 11.5 }} title="Withdraw your flag" onClick={() => void postFlag(r.id, { flag: null })}>Unflag</button>
+              )}
               <button
                 className="btn ghost"
                 style={{ padding: "2px 9px", fontSize: 11.5, borderColor: openId === r.id ? "var(--accent)" : undefined }}
@@ -729,6 +767,30 @@ export function ReviewsView({ isAdmin }: { isAdmin: boolean }) {
                 {openId === r.id ? "▲ Hide" : "⚖ Scorecard"}
               </button>
             </div>
+            {flagId === r.id && (
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+                <input className="vmsel" style={{ flex: 1, minWidth: 260 }} autoFocus placeholder="What's wrong with this score? (e.g. customer hung up at 0:20, wrong number, scored the wrong principle)" value={flagNote} onChange={(e) => setFlagNote(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && flagNote.trim()) void postFlag(r.id, { flag: { note: flagNote } }); if (e.key === "Escape") setFlagId(null); }} />
+                <button className="btn primary" style={{ padding: "4px 12px", fontSize: 12.5 }} disabled={!flagNote.trim()} onClick={() => void postFlag(r.id, { flag: { note: flagNote } })}>Send flag</button>
+                <button className="btn ghost" style={{ padding: "4px 10px", fontSize: 12.5 }} onClick={() => setFlagId(null)}>Cancel</button>
+              </div>
+            )}
+            {r.flag && (
+              <div style={{ marginTop: 6, padding: "8px 10px", borderRadius: 8, background: r.flag.status === "open" ? "rgba(224,87,74,0.08)" : "var(--surface-2)", fontSize: 13 }}>
+                <div><b>🚩 {r.flag.by.split("@")[0]}</b> <span style={{ color: "var(--text-3)", fontSize: 12 }}>{new Date(r.flag.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>: {r.flag.note}</div>
+                {r.flag.status === "resolved" && (
+                  <div style={{ color: "var(--text-2)", marginTop: 2 }}>
+                    {r.flag.resolution === "adjusted" ? "✅ Adjusted" : "— Score stands"} by {r.flag.resolved_by?.split("@")[0]}{r.flag.resolution_note ? `: ${r.flag.resolution_note}` : ""}
+                  </div>
+                )}
+                {r.flag.status === "open" && isAdmin && (
+                  <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
+                    <span style={{ fontSize: 12, color: "var(--text-3)" }}>Open the scorecard to override a verdict or use Exclude, then:</span>
+                    <button className="btn ghost" style={{ padding: "2px 10px", fontSize: 12 }} onClick={() => { const note = prompt("What did you change? (optional)") ?? ""; void postFlag(r.id, { resolveFlag: { resolution: "adjusted", note } }); }}>✅ Resolved — adjusted</button>
+                    <button className="btn ghost" style={{ padding: "2px 10px", fontSize: 12 }} onClick={() => { const note = prompt("Why does the score stand? (optional)") ?? ""; void postFlag(r.id, { resolveFlag: { resolution: "dismissed", note } }); }}>Score stands</button>
+                  </div>
+                )}
+              </div>
+            )}
             {r.snapshot && openId !== r.id && <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 4 }}>{r.snapshot}</div>}
             {r.thin && <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>thin transcript — high-level review only</div>}
             {openId === r.id && <ReviewDetailPanel id={r.id} isAdmin={isAdmin} onChanged={() => setTick((t) => t + 1)} />}
