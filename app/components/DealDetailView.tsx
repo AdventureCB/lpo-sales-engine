@@ -10,6 +10,7 @@ import { TimeSelect } from "./TimeSelect";
 import { fillPlaceholders } from "@/lib/placeholders";
 import { linkifyPlain, linkifyHtml, htmlToPlain, isHtml } from "@/lib/richtext";
 import { pageLabel } from "@/lib/web-activity";
+import { Keypad } from "./Keypad";
 import { openChat } from "./chatDockStore";
 import RichTextEditor, { isEmptyHtml } from "./RichTextEditor";
 import MentionInput from "./MentionInput";
@@ -3471,6 +3472,7 @@ function CommBar({
                 {muted ? "🔇 Muted" : "🎤 Mute"}
               </button>
             )}
+            {callState === "active" && <Keypad send={(d) => callRef.current?.dtmf?.(d)} />}
             {callState && (
               <button className="btn" style={{ padding: "6px 14px", fontSize: 13.5, background: "var(--crit)", color: "#fff" }} onClick={endCall}>
                 {callState === "active" ? "⏹ End" : "✕ Cancel"}

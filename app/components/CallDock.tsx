@@ -2,7 +2,8 @@
 
 import { useEffect, useReducer, useState } from "react";
 import { usePathname } from "next/navigation";
-import { getPhoneState, subscribePhone, endOutbound, toggleOutboundMute } from "./phoneClient";
+import { getPhoneState, subscribePhone, endOutbound, toggleOutboundMute, sendDtmf } from "./phoneClient";
+import { Keypad } from "./Keypad";
 
 /**
  * Global outbound-call controls, bottom-right on EVERY page (Kyle 9/16:
@@ -87,6 +88,7 @@ export function CallDock() {
           {outbound.muted ? "🔇" : "🎤"}
         </button>
       )}
+      {outbound.state === "active" && <Keypad send={sendDtmf} compact />}
       <button
         className="btn"
         style={{ padding: "6px 14px", fontSize: 13.5, background: "var(--crit)", color: "#fff" }}

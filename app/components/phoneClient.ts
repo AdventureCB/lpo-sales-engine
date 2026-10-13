@@ -770,6 +770,17 @@ export function toggleOutboundMute() {
   emit();
 }
 
+/** Send a DTMF tone on whichever call is live (outbound, else an answered inbound). */
+export function sendDtmf(digit: string) {
+  if (!/^[0-9*#]$/.test(digit)) return;
+  const call = outboundCall ?? (state.incoming?.active ? state.incoming.call : null);
+  try {
+    call?.dtmf?.(digit);
+  } catch (e) {
+    console.error("dtmf failed", e);
+  }
+}
+
 export function answerIncoming() {
   try {
     state.incoming?.call.answer();
