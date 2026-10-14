@@ -101,14 +101,17 @@ export async function GET(req: Request) {
         .update({ excluded_from_score: true, excluded_by: "auto" })
         .in("id", nowLost.map((r: any) => r.id));
     }
-    const { data: calls } = await db
+    // ?call=<quo_call_id> → re-review just that call (admin repair of an incomplete review).
+    const onlyCall = new URL(req.url).searchParams.get("call");
+    let callsQ = db
       .from("call_events")
       .select("quo_call_id, crm_deal_id, deal_id, duration_s, transcript:raw->>transcript")
-      .gte("duration_s", MIN_S)
-      .gte("started_at", new Date(Date.now() - 14 * 86_400_000).toISOString())
       .not("raw->>transcript", "is", null)
-      .order("started_at", { ascending: false })
-      .limit(40);
+      .order("started_at", { ascending: false });
+    callsQ = onlyCall
+      ? callsQ.eq("quo_call_id", onlyCall).limit(1)
+      : callsQ.gte("duration_s", MIN_S).gte("started_at", new Date(Date.now() - 14 * 86_400_000).toISOString()).limit(40);
+    const { data: calls } = await callsQ;
     const candidates = (calls ?? []).filter((c: any) => String(c.transcript ?? "").length >= 400);
     let reviewed = 0;
     let skipped = 0;
