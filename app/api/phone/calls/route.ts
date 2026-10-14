@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
   let q = db
     .from("call_events")
     .select(
-      "id, rep_id, direction, status, started_at, answered_at, duration_s, classification, disposition, deal_id, crm_deal_id, raw"
+      "id, quo_call_id, rep_id, direction, status, started_at, answered_at, duration_s, classification, disposition, deal_id, crm_deal_id, raw"
     )
     .not("started_at", "is", null)
     .order("started_at", { ascending: false })
@@ -44,18 +44,23 @@ export async function GET(req: NextRequest) {
   // The customer's number: the participant that isn't one of ours. Outbound
   // participants are [our_number, dialed] — participants[0] was wrongly shown.
   // Fall back to direction if the set can't disambiguate.
-  const peerOf = (raw: any, direction: string | null): string | null => {
-    const parts: string[] = raw?.data?.object?.participants ?? [];
+  const peerOf = (raw: any, direction: string | null, quoCallId?: string | null): string | null => {
+    if (raw?.peer) return String(raw.peer); // dialer placeholder row
+    const parts: string[] = raw?.data?.object?.participants ?? raw?.participants ?? [];
     if (Array.isArray(parts) && parts.length) {
       const other = parts.find((p) => !ours.has(last10(p)));
       if (other) return other;
       return direction === "incoming" ? parts[0] : parts[parts.length - 1];
     }
     // Quo / non-participants shape.
-    return direction === "incoming" ? (raw?.payload?.from ?? null) : (raw?.payload?.to ?? null);
+    const fromPayload = direction === "incoming" ? (raw?.payload?.from ?? null) : (raw?.payload?.to ?? null);
+    if (fromPayload) return fromPayload;
+    // Legacy placeholder rows: the number is in the id ("manual-+1509…-<ts>").
+    const m = /^manual-(\+?\d{7,15})-/.exec(quoCallId ?? "");
+    return m ? m[1] : null;
   };
 
-  const phones = [...new Set((calls ?? []).map((c) => peerOf(c.raw, c.direction)).filter(Boolean))] as string[];
+  const phones = [...new Set((calls ?? []).map((c) => peerOf(c.raw, c.direction, c.quo_call_id)).filter(Boolean))] as string[];
   const contactByPhone = new Map<string, any>();
   if (phones.length > 0) {
     const { data: resolved } = await db.rpc("contacts_by_phones", { p_phones: phones });
@@ -71,7 +76,7 @@ export async function GET(req: NextRequest) {
   }
 
   const entries = (calls ?? []).map((c) => {
-    const peer = peerOf(c.raw, c.direction);
+    const peer = peerOf(c.raw, c.direction, c.quo_call_id);
     const contact = peer ? contactByPhone.get(peer) : null;
     // Prefer the call's own linked deal; else the peer's current open/active deal.
     const dealId = c.crm_deal_id ?? contact?.crm_deal_id ?? null;
@@ -84,7 +89,7 @@ export async function GET(req: NextRequest) {
       status: c.status,
       missed,
       durationS: c.duration_s,
-      rep: c.rep_id ? repName.get(c.rep_id) ?? null : null,
+      rep: c.rep_id ? repName.get(c.rep_id) ?? null : (c.raw as any)?.line ? `${(c.raw as any).line} line` : null,
       peer,
       contactName: contact?.contact_name ?? null,
       crmDealId: dealId,

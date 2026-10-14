@@ -73,10 +73,12 @@ export async function GET(req: Request) {
       // transcripts or a prior sweep may have set one — never refetch those).
       const { data: existing } = await db
         .from("call_events")
-        .select("quo_call_id")
-        .in("quo_call_id", calls.map((c) => c.id))
-        .not("classification", "is", null);
-      const alreadyClassified = new Set((existing ?? []).map((r) => r.quo_call_id));
+        .select("quo_call_id, classification, raw")
+        .in("quo_call_id", calls.map((c) => c.id));
+      const alreadyClassified = new Set((existing ?? []).filter((r: any) => r.classification != null).map((r) => r.quo_call_id));
+      // Rows the webhook never saw have no raw → the call log can't show the
+      // number ("Unknown"). Give them participants + the line they came in on.
+      const hasRaw = new Set((existing ?? []).filter((r: any) => r.raw != null).map((r) => r.quo_call_id));
 
       const callRows = await quoPool(calls, async (c: QuoCall) => {
         let classification: string | null = null;
@@ -109,6 +111,7 @@ export async function GET(req: Request) {
               ? Math.max(0, Math.round((Date.parse(c.completedAt) - Date.parse(c.answeredAt)) / 1000))
               : c.duration,
           classification,
+          ...(hasRaw.has(c.id) ? {} : { raw: { participants: c.participants ?? [], line: line.label, source: "quo_reconcile" } }),
         };
       });
 

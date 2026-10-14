@@ -213,7 +213,7 @@ export async function POST(req: NextRequest) {
       disposition,
       deal_id: dealId ?? null,
       crm_deal_id: (await resolveCrmDeal())?.id ?? null,
-      raw: body.quality ? { client_quality: body.quality } : null,
+      raw: { ...(body.quality ? { client_quality: body.quality } : {}), peer: phone, source: "dialer_placeholder" },
     });
     if (error && !/duplicate/i.test(error.message)) {
       return NextResponse.json({ error: "db error" }, { status: 500 });
