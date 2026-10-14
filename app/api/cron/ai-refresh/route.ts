@@ -83,7 +83,7 @@ export async function GET(req: Request) {
 
   if (new URL(req.url).searchParams.get("mode") === "reviews") {
     const started = Date.now();
-    const { reviewCall } = await import("@/lib/ai-call-review");
+    const { reviewCall, isCompleteReview } = await import("@/lib/ai-call-review");
 
     // Sweep: a deal that went LOST after its call was reviewed must stop
     // scoring (Kyle 9/15). Auto-decisions only — never override an admin's
@@ -116,10 +116,11 @@ export async function GET(req: Request) {
       if (reviewed >= 3 || Date.now() - started > 40_000) break;
       const { data: existing } = await db
         .from("call_reviews")
-        .select("id")
+        .select("id, review")
         .eq("quo_call_id", c.quo_call_id)
         .maybeSingle();
-      if (existing) continue;
+      // An incomplete review (empty scorecard from a malformed model reply) is re-done like a missing one.
+      if (existing && isCompleteReview(existing.review)) continue;
       // Resolve the deal: native uuid first, else the numeric internal id.
       let dealId: string | null = c.crm_deal_id;
       let dealStatus: string | null = null;

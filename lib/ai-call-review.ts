@@ -20,6 +20,31 @@ const COMPANY =
 
 const SCORECARD_PRINCIPLES = ["Guide positioning", "Problem articulation", "Simple plan", "Clear CTA", "Discovery"];
 
+/** Model sometimes nests the real review under "review"/"summary"/"values" — surface it. */
+function unwrapReview(input: any): any {
+  let cur = input;
+  for (let i = 0; i < 3 && cur && typeof cur === "object"; i++) {
+    const sc = cur.scorecard;
+    if (Array.isArray(sc) && sc.length) return cur;
+    const inner = ["review", "summary", "values", "result"].map((k) => cur[k]).find((v) => v && typeof v === "object" && !Array.isArray(v));
+    if (!inner) break;
+    cur = inner;
+  }
+  return cur ?? input;
+}
+
+/** A review counts as complete when all five principles carry a valid verdict and there's a snapshot. */
+export function isCompleteReview(review: any): boolean {
+  const sc = Array.isArray(review?.scorecard) ? review.scorecard : [];
+  if (sc.length !== 5) return false;
+  const seen = new Set<string>();
+  for (const s of sc) {
+    if (!s || !["hit", "partial", "missed"].includes(String(s.verdict))) return false;
+    seen.add(String(s.principle));
+  }
+  return seen.size === 5 && typeof review?.snapshot === "string" && review.snapshot.trim().length > 0;
+}
+
 // LPO-specific recognition cues so the model scores against OUR prospecting
 // script, not generic StoryBrand (Kyle 9/15: it was missing plans/CTAs that
 // don't look like a textbook close).
@@ -219,13 +244,15 @@ export async function reviewCall(
   // a profile refresh minutes after the call used to silently re-score the
   // review the next time someone opened it (Kyle 9/23). Only an explicit
   // force (admin) or a changed transcript produces a new review.
-  if (existing && !opts.force && String(existing.input_hash ?? "").split(":")[0] === transcriptHash) {
+  const existingComplete = existing ? isCompleteReview(existing.review) : false;
+  if (existing && !opts.force && existingComplete && String(existing.input_hash ?? "").split(":")[0] === transcriptHash) {
     return { ok: true, review: existing.review, cached: true, reviewedAt: existing.updated_at };
   }
 
   if (!(await budgetOk(db, cfg.monthly_budget_cents))) return { ok: false, reason: "monthly AI budget reached" };
-  const inputs = await gatherDealInputs(db, opts.dealId);
-  if (!inputs) return { ok: false, reason: "deal not found" };
+  const inputsMaybe = await gatherDealInputs(db, opts.dealId);
+  if (!inputsMaybe) return { ok: false, reason: "deal not found" };
+  const inputs = inputsMaybe; // narrowed const — the inner model-call function closes over it
 
   // ── Deal outcome — resolved BEFORE the model call so it can inform the CTA /
   // plan verdicts, and reused after it for score eligibility + the bonus ──────
@@ -282,7 +309,18 @@ export async function reviewCall(
 
   const tier = cfg.models.review ?? "sonnet";
   const corrText = correctionsBlock(profile);
-  const call = await callClaudeTool({
+  // The model occasionally returns a malformed tool call — everything empty,
+  // or the real content nested under an extra "review"/"summary" key (7 of
+  // ~330 reviews in Sept–Oct). Unwrap, validate, retry once with more room.
+  let call = await runReviewModel(1200);
+  if (!isCompleteReview(call.input)) call = await runReviewModel(2000);
+  if (!isCompleteReview(call.input)) {
+    console.error("call review incomplete after retry", { dealId: opts.dealId, keys: Object.keys(call.input ?? {}) });
+    return { ok: false, reason: "the reviewer returned an incomplete scorecard — try again" };
+  }
+
+  async function runReviewModel(maxTokens: number) {
+  const c = await callClaudeTool({
     tier,
     systemCached: [
       COMPANY,
@@ -304,9 +342,11 @@ export async function reviewCall(
       `\n# TRANSCRIPT\n${transcriptWindow}`,
     ].join("\n"),
     tool: REVIEW_TOOL,
-    maxTokens: 1200,
+    maxTokens,
   });
-  await logAiUsage(db, { dealId: opts.dealId, task: "call_review", tier, call });
+  await logAiUsage(db, { dealId: opts.dealId, task: "call_review", tier, call: c });
+  return { ...c, input: unwrapReview(c.input) };
+  }
 
   // Normalize list fields at write time (model sometimes returns a string
   // where the schema says array — a cached bad shape once crashed the UI).
