@@ -352,7 +352,7 @@ export async function POST(req: NextRequest) {
   const db = supabaseAdmin();
   const { data: deal } = await db
     .from("crm_deals")
-    .select("id, pipedrive_deal_id, contact_id")
+    .select("id, pipedrive_deal_id, contact_id, title")
     .eq("id", body.id)
     .maybeSingle();
   if (!deal) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -837,6 +837,29 @@ export async function POST(req: NextRequest) {
         repPipedriveId: user.pipedriveUserId,
         event: "lost",
       });
+      // A competitor purchase is about the PERSON, not this deal: close the
+      // contact's other open deals too, whoever owns them, so a duplicate
+      // under another rep doesn't resurface on a sprint list weeks later
+      // (Kyle 10/15: Meghan — Jesse closed one deal, Jackson still had the other).
+      if (deal.contact_id && /^competitor purchase/i.test(body.lostReason ?? "")) {
+        const { data: sibs } = await db.from("crm_deals").select("id, title, owner_pipedrive_id").eq("contact_id", deal.contact_id).eq("status", "open").neq("id", deal.id);
+        for (const sib of sibs ?? []) {
+          const now = new Date().toISOString();
+          await db.from("crm_deals").update({ status: "lost", lost_at: now, lost_reason: `${body.lostReason!.trim()} (closed with "${deal.title}")`, updated_at: now }).eq("id", sib.id);
+          // The system line on the sibling @mentions its owner (bell notification) when it's someone else's deal.
+          let mentions: string[] = [];
+          if (sib.owner_pipedrive_id != null && sib.owner_pipedrive_id !== user.pipedriveUserId) {
+            const { data: r } = await db.from("reps").select("email").eq("pipedrive_user_id", sib.owner_pipedrive_id).maybeSingle();
+            if (r?.email) mentions = [r.email];
+          }
+          await db.from("crm_activities").insert({
+            deal_id: sib.id, type: mentions.length ? "note" : "system",
+            subject: `Marked lost — ${body.lostReason!.trim()} (same person as "${deal.title}")`,
+            body: mentions.length ? `@${mentions[0].split("@")[0]} ${user.email.split("@")[0]} marked "${deal.title}" lost as a competitor purchase — same person, so this deal was closed with it.` : null,
+            actor: user.email, occurred_at: now, meta: mentions.length ? { mentions } : {},
+          });
+        }
+      }
     }
   }
 
