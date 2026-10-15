@@ -36,6 +36,7 @@ type ItemRow = {
   dealStatus?: string;
   calledAt: string | null;
   removedAt: string | null;
+  reassignedTo?: string | null; // deal now owned by a teammate — not dialable from this list
   addedManually: boolean;
   disposition: string | null;
   attempts30?: number; // outbound dials in the last 30 days
@@ -507,7 +508,7 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
                 <tbody>
                   {items.map((it, i) => (
                     <Fragment key={it.dealId}>
-                    <tr style={{ borderTop: "1px solid var(--border)", opacity: it.removedAt ? 0.45 : 1, background: selected.has(it.dealId) ? "var(--surface-3, var(--surface-2))" : expandedDeal === it.dealId ? "var(--surface-2)" : undefined }}>
+                    <tr style={{ borderTop: "1px solid var(--border)", opacity: it.removedAt || it.reassignedTo ? 0.45 : 1, background: selected.has(it.dealId) ? "var(--surface-3, var(--surface-2))" : expandedDeal === it.dealId ? "var(--surface-2)" : undefined }}>
                       <td style={{ padding: "5px 8px" }}>
                         <input
                           type="checkbox"
@@ -531,6 +532,9 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
                       <td style={{ padding: "5px 8px", color: "var(--text-2)", whiteSpace: "nowrap" }}>{it.pipelineName ?? "—"}</td>
                       <td style={{ padding: "5px 8px", color: "var(--text-2)", whiteSpace: "nowrap" }}>
                         {it.stageName ?? "—"}
+                        {it.reassignedTo && (
+                          <span style={{ marginLeft: 6, fontSize: 11, color: "var(--text-3)" }} title="Reassigned after this list was built — the dialer skips it">→ {it.reassignedTo}</span>
+                        )}
                         {it.dealStatus && it.dealStatus !== "open" && (
                           <span style={{ marginLeft: 6, fontSize: 11, color: it.dealStatus === "lost" ? "var(--crit)" : "var(--good)" }}>
                             ({it.dealStatus})

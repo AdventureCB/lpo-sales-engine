@@ -38,11 +38,25 @@ export async function runHotlistRecovery(
   });
   if (error) throw new Error(error.message);
 
+  // People who already own a V2 camper are never cold-called by the safety
+  // net (Kyle 10/15) — V1 owners stay, they may upgrade. Matched on the
+  // camper-owner roster's email (and phone, when the profile has one).
+  const emails = (candidates ?? []).map((c: any) => String(c.person_email).toLowerCase());
+  const v2Owners = new Set<string>();
+  const v2Phones = new Set<string>();
+  if (emails.length) {
+    const { data: owners } = await db.from("camper_owners").select("email, phone").in("version", ["v2", "both"]).in("email", emails);
+    for (const o of owners ?? []) if (o.email) v2Owners.add(String(o.email).toLowerCase());
+    const { data: ownersAll } = await db.from("camper_owners").select("phone").in("version", ["v2", "both"]).not("phone", "is", null).limit(5000);
+    for (const o of ownersAll ?? []) { const d = String(o.phone).replace(/\D/g, "").slice(-10); if (d.length === 10) v2Phones.add(d); }
+  }
+
   const week = isoWeek(new Date());
   let created = 0,
     reopened = 0,
     skipped = 0,
-    errors = 0;
+    errors = 0,
+    ownsV2 = 0;
   for (const c of (candidates ?? []) as Array<{
     person_email: string;
     latest_at: string;
@@ -54,7 +68,10 @@ export async function runHotlistRecovery(
     if (opts?.deadline && Date.now() > opts.deadline) break;
     // Enrich like the metric engines do — real name + phone from the Klaviyo
     // profile, not an email-local-part placeholder contact.
+    if (v2Owners.has(String(c.person_email).toLowerCase())) { ownsV2++; continue; }
     const profile = await getProfileByEmail(c.person_email).catch(() => null);
+    const profDigits = String(profile?.phoneNumber ?? "").replace(/\D/g, "").slice(-10);
+    if (profDigits.length === 10 && v2Phones.has(profDigits)) { ownsV2++; continue; }
     const r = await processIntake(db, source, {
       email: c.person_email,
       name: [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") || null,
@@ -74,7 +91,7 @@ export async function runHotlistRecovery(
     else if (r.action === "error") errors++;
     else skipped++;
   }
-  return { candidates: candidates?.length ?? 0, created, reopened, skipped, errors };
+  return { candidates: candidates?.length ?? 0, created, reopened, skipped, errors, ownsV2 };
 }
 
 /** ISO-week key (YYYY-Www) for weekly idempotency of recovery attempts. */

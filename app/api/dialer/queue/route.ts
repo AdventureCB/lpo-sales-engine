@@ -40,18 +40,23 @@ export async function GET(req: NextRequest) {
     const { data: items, error } = await db
       .from("crm_sprint_items")
       .select(
-        "position, called_at, flag, crm_deals ( id, title, status, pipedrive_deal_id, crm_stages ( name ), crm_contacts ( name, phones, dnc ) )"
+        "position, called_at, flag, added_manually, crm_deals ( id, title, status, pipedrive_deal_id, owner_pipedrive_id, crm_stages ( name ), crm_contacts ( name, phones, dnc ) )"
       )
       .eq("sprint_id", sprintId)
       .is("called_at", null)
       .is("removed_at", null)
       .order("position");
     if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+    // The list owner's Pipedrive id — a deal reassigned to a teammate after
+    // generation (pool claim, manual reassign) must not be dialed from here.
+    const { data: ownerRep } = await db.from("reps").select("pipedrive_user_id").eq("email", sprint.owner).maybeSingle();
+    const ownerPd = ownerRep?.pipedrive_user_id ?? null;
     let skippedNoPhone = 0;
     const leads = (items ?? [])
       .map((it: any) => {
         const d = it.crm_deals;
         if (d?.status && d.status !== "open") return null; // lost/won since generation
+        if (!it.added_manually && ownerPd != null && d?.owner_pipedrive_id != null && d.owner_pipedrive_id !== ownerPd) return null; // now someone else's deal
         if (d?.crm_contacts?.dnc) return null; // Do-Not-Contact is absolute
         const phones = (d?.crm_contacts?.phones ?? []).filter((p: any) => !p.bad);
         const phone =

@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
     const { data: items } = await db
       .from("crm_sprint_items")
       .select(
-        "deal_id, position, tier, tier_label, source, tz_bucket, flag, called_at, removed_at, added_manually, disposition, crm_deals ( id, title, status, pipedrive_deal_id, value_cents, crm_stages ( name, crm_pipelines ( name ) ), crm_contacts ( name, phones ) )"
+        "deal_id, position, tier, tier_label, source, tz_bucket, flag, called_at, removed_at, added_manually, disposition, crm_deals ( id, title, status, pipedrive_deal_id, value_cents, owner_pipedrive_id, crm_stages ( name, crm_pipelines ( name ) ), crm_contacts ( name, phones ) )"
       )
       .eq("sprint_id", sprintId)
       .order("position");
@@ -61,8 +61,20 @@ export async function GET(req: NextRequest) {
       for (const a of acts ?? []) bump(att30, a.deal_id);
     }
 
+    // Deals reassigned to a teammate after generation show as "reassigned" and
+    // the dialer skips them (Kyle 10/15: Jesse's deal on Jackson's list).
+    const { data: ownerRep } = await db.from("reps").select("pipedrive_user_id").eq("email", sprint.owner).maybeSingle();
+    const ownerPd = ownerRep?.pipedrive_user_id ?? null;
+    const otherOwnerIds = [...new Set((items ?? []).map((it: any) => it.crm_deals?.owner_pipedrive_id).filter((x: any) => x != null && x !== ownerPd))] as number[];
+    const otherNames = new Map<number, string>();
+    if (otherOwnerIds.length) {
+      const { data: rs } = await db.from("reps").select("pipedrive_user_id, name").in("pipedrive_user_id", otherOwnerIds);
+      for (const r of rs ?? []) otherNames.set(r.pipedrive_user_id, r.name);
+    }
+
     const rows = (items ?? []).map((it: any) => {
       const d = it.crm_deals;
+      const ownedBy = ownerPd != null && d?.owner_pipedrive_id != null && d.owner_pipedrive_id !== ownerPd ? otherNames.get(d.owner_pipedrive_id) ?? "another rep" : null;
       const phones = d?.crm_contacts?.phones ?? [];
       const phone = phones.find((p: any) => p.primary && p.e164)?.e164 ?? phones.find((p: any) => p.e164)?.e164 ?? null;
       return {
@@ -76,6 +88,7 @@ export async function GET(req: NextRequest) {
         stageName: d?.crm_stages?.name ?? "—",
         pipelineName: d?.crm_stages?.crm_pipelines?.name ?? "—",
         dealStatus: d?.status ?? "open",
+        reassignedTo: !it.added_manually ? ownedBy : null,
         valueCents: d?.value_cents ?? null,
         tier: it.tier,
         tierLabel: it.tier_label,
