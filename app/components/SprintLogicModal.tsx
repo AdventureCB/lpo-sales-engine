@@ -74,11 +74,11 @@ export function SprintLogicModal() {
               marketing-signal ranking and 3-day exclusive checkout as List 3, limited to the list&apos;s timezones. Schedule any activity on one and it becomes <B>yours</B>.
             </P>
 
-            <H>List 3 — Afternoon sweep · 1 PM PT (automatic)</H>
-            <P><B>1 · Carryover:</B> everything from today&apos;s Lists 1–2 you haven&apos;t dialed yet, original tier order kept. Each deal is re-checked — anything won/lost or moved to the Confirmation Pipeline since morning is dropped.</P>
-            <P><B>2 · Stale (60–90d):</B> your open deals whose last <B>customer</B> engagement — an answered call or inbound reply — was 60–90 days ago. Your own outbound emails deliberately don&apos;t count; this measures when the <B>buyer</B> last engaged.</P>
+            <H>List 3 — Bonus list · 1 PM PT (automatic)</H>
+            <P>Lists 1 and 2 stay your working lists all day — nothing carries over. List 3 is extra ground to cover once they&apos;re worked, capped at the same size.</P>
+            <P><B>1 · Never attempted:</B> your own open deals that have <B>never had an outbound call</B>, freshest marketing signal first, then newest. Anything already on today&apos;s Lists 1–2 is left there.</P>
             <P>
-              <B>3 · Reprospect pool:</B> fills remaining slots from the shared pool of unassigned open deals, ranked by most recent marketing signal. A pool deal on your list is <B>checked out to you for 3 days</B> — no other rep sees it.
+              <B>2 · Reprospect pool:</B> fills the remaining slots from the shared pool of unassigned open deals, ranked by most recent marketing signal. A pool deal on your list is <B>checked out to you for 3 days</B> — no other rep sees it, and it comes back on your next List 3 until you dial it or the hold expires, within the cap.
               Schedule any activity and it becomes <B>yours</B>; do nothing and it releases back after 3 days.
             </P>
 

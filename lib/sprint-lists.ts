@@ -5,9 +5,10 @@ import { isAllDayIso } from "./allday";
  * Sprint Lists — daily auto-generated call lists on the sprint rail.
  *
  * Lists 1 & 2 (morning, one-click): a rep's OWN open deals, TZ-partitioned and
- * ranked down a 6-rung ladder. List 3 (auto 1pm): same-day undialed carryover
- * from lists 1&2 + the rep's 60-90d stale deals + the shared Cainen
- * reprospecting pool (exclusive 3-day checkout).
+ * ranked down a 6-rung ladder; they stay the day's working lists. List 3
+ * (auto 1pm) is a BONUS list (Kyle 10/15): the rep's never-attempted own
+ * deals (signal-ranked, not already on 1/2) + the shared reprospecting pool
+ * (exclusive 3-day checkout), hard-capped.
  *
  * Everything reads the CRM mirror only — zero Pipedrive calls.
  */
@@ -139,7 +140,7 @@ export type ListItem = {
   tzBucket: TzBucket | null;
   tier: number; // 1..6
   tierLabel: string; // '1a','1b','2'..'6'
-  source: "ladder" | "carryover" | "stale" | "reprospect";
+  source: "ladder" | "carryover" | "stale" | "reprospect" | "untouched";
   recencyAt: string | null; // ISO, for within-tier ordering (desc)
   flag?: string | null; // rep-facing note (e.g. buy-signal override)
 };
@@ -600,7 +601,14 @@ async function computeList3(
   args: { repEmail: string; repPipedriveId: number; forDate: string },
   cfg: SprintListConfig
 ): Promise<ListItem[]> {
-  const w = cfg.windows;
+  // REDESIGN (Kyle 10/15): Lists 1 & 2 stay the day's working lists — no
+  // carryover. List 3 is a BONUS list: the rep's own open deals that have
+  // NEVER been attempted (no outbound call, ever), freshest marketing signal
+  // first, excluding anything already on today's Lists 1/2; the generate
+  // step then fills the remaining slots from the reprospecting pool, and the
+  // cap is hard. (Before: carryover + stale + pool, with a rep's active pool
+  // holds re-included ABOVE the cap — Jesse 10/15: 100 pool items, 0
+  // carryover.)
   const seen = new Set<string>();
   const seenContacts = new Set<string>();
   const called = await calledTodaySets(db, args.repEmail, args.forDate);
@@ -608,92 +616,49 @@ async function computeList3(
   const touched = (phone: string | null) => !!phone && calledPhones.has(phone.replace(/\D/g, "").slice(-10));
   const out: ListItem[] = [];
 
-  // 1) Carryover: today's undialed items from this rep's lists 1 & 2.
+  // Everything on today's Lists 1/2 (dialed or not) stays there.
   const { data: dailies } = await db
     .from("crm_sprints")
-    .select("id, slot, crm_sprint_items ( deal_id, called_at, removed_at, tier, tier_label, tz_bucket )")
+    .select("crm_sprint_items ( deal_id )")
     .eq("owner", args.repEmail)
     .eq("kind", "daily")
     .eq("for_date", args.forDate)
     .in("slot", [1, 2]);
-  const carryDealIds: { deal_id: string; tier: number; tier_label: string; tz_bucket: string }[] = [];
-  for (const s of dailies ?? []) {
-    for (const it of (s as any).crm_sprint_items ?? []) {
-      if (it.called_at || it.removed_at) continue;
-      carryDealIds.push({ deal_id: it.deal_id, tier: it.tier, tier_label: it.tier_label, tz_bucket: it.tz_bucket });
-    }
-  }
-  if (carryDealIds.length) {
-    const byId = await loadDealsById(
-      db,
-      carryDealIds.map((c) => c.deal_id)
-    );
-    const carry: ListItem[] = [];
-    for (const c of carryDealIds) {
-      const d = byId.get(c.deal_id);
-      if (!d || d.crm_contacts?.dnc) continue;
-      const phone = primaryPhone(d.crm_contacts?.phones ?? []);
-      if (!phone || seen.has(d.id)) continue;
-      // The PERSON was already dialed today via another deal → no repeat.
-      if (d.contact_id && (seenContacts.has(d.contact_id) || called.contactIds.has(d.contact_id))) continue;
-      if (touched(phone)) continue; // actually called today (any surface)
-      seen.add(d.id);
-      if (d.contact_id) seenContacts.add(d.contact_id);
-      carry.push({
-        crmDealId: d.id,
-        contactId: d.contact_id ?? null,
-        pipedriveDealId: d.pipedrive_deal_id,
-        title: d.title,
-        personName: d.crm_contacts?.name ?? null,
-        phone,
-        tzBucket: (c.tz_bucket as TzBucket) ?? tzBucket(d.crm_contacts?.tz_offset ?? null),
-        tier: c.tier ?? 6,
-        tierLabel: c.tier_label ?? "carry",
-        source: "carryover",
-        recencyAt: d.last_activity_at,
-      });
-    }
-    // Preserve the ladder order the deals had on lists 1 & 2.
-    carry.sort((a, b) => {
-      const ar = TIER_RANK[a.tierLabel] ?? 9;
-      const br = TIER_RANK[b.tierLabel] ?? 9;
-      if (ar !== br) return ar - br;
-      return (b.recencyAt ?? "").localeCompare(a.recencyAt ?? "");
-    });
-    out.push(...carry);
-  }
+  const onLists12 = new Set<string>();
+  for (const sp of dailies ?? []) for (const it of (sp as any).crm_sprint_items ?? []) onLists12.add(it.deal_id);
 
-  // 2) Stale: rep's open deals whose last CUSTOMER engagement (answered call
-  // OR inbound email reply) was 60-90d ago. Per Kyle's refinement — rep
-  // outbound emails keep last_activity_at fresh, so they don't count here.
+  // Never-attempted own deals (attempt_count is trigger-maintained from
+  // call_events + logged calls — the same definition as the CRM filters).
   const confIds3 = await confirmationStageIds(db);
   const repDeals = (await fetchAll((f, t) =>
     notSnoozed(
       notConfirmation(
         db
           .from("crm_deals")
-          .select("id, pipedrive_deal_id, title, contact_id, crm_contacts ( name, phones, tz_offset, dnc )")
+          .select("id, pipedrive_deal_id, title, contact_id, created_at, last_activity_at, crm_contacts ( name, emails, phones, tz_offset, dnc )")
           .eq("status", "open")
-          .eq("owner_pipedrive_id", args.repPipedriveId),
+          .eq("owner_pipedrive_id", args.repPipedriveId)
+          .eq("attempt_count", 0),
         confIds3
       ),
       laDate(new Date())
     ).range(f, t)
   )).filter((d: any) => !d.crm_contacts?.dnc) as any[];
-  const { engAt, attempts7d } = await customerEngagementRecency(db, repDeals, w.stale_max_days);
-  const staleMaxT = daysAgoIso(w.stale_max_days);
-  const staleMinT = daysAgoIso(w.stale_min_days);
-  const cooldownCap = w.cooldown_attempts_7d;
-  const staleDeals = repDeals
-    .filter((d) => {
-      // Same rest rule as the ladder: a deal dialed ≥N times this week sits out.
-      if (cooldownCap > 0 && (attempts7d.get(d.id) ?? 0) >= cooldownCap) return false;
-      const at = engAt.get(d.id);
-      return at != null && at >= staleMaxT && at < staleMinT;
-    })
-    .sort((a, b) => (engAt.get(b.id) ?? "").localeCompare(engAt.get(a.id) ?? ""));
-  for (const d of staleDeals) {
-    if (seen.has(d.id) || called.dealIds.has(d.id)) continue;
+
+  // Rank: latest marketing signal (any kind), then newest deal.
+  const { latest } = await latestSignalByEmail(db, cfg);
+  const sigAt = (d: any): string | null => {
+    let best: string | null = null;
+    for (const e of d.crm_contacts?.emails ?? []) {
+      const at = latest.get(String(e?.value ?? "").toLowerCase());
+      if (at && (!best || at > best)) best = at;
+    }
+    return best;
+  };
+  repDeals.sort((a, b) => (sigAt(b) ?? "").localeCompare(sigAt(a) ?? "") || String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
+
+  for (const d of repDeals) {
+    if (seen.has(d.id) || onLists12.has(d.id) || called.dealIds.has(d.id)) continue;
     if (d.contact_id && (seenContacts.has(d.contact_id) || called.contactIds.has(d.contact_id))) continue;
     const phone = primaryPhone(d.crm_contacts?.phones ?? []);
     if (!phone || touched(phone)) continue;
@@ -707,15 +672,14 @@ async function computeList3(
       personName: d.crm_contacts?.name ?? null,
       phone,
       tzBucket: tzBucket(d.crm_contacts?.tz_offset ?? null),
-      tier: 7,
-      tierLabel: "stale",
-      source: "stale",
-      recencyAt: engAt.get(d.id) ?? null,
+      tier: 6,
+      tierLabel: "untouched",
+      source: "untouched",
+      recencyAt: sigAt(d) ?? d.created_at ?? null,
     });
+    if (cfg.cap && out.length >= cfg.cap) break;
   }
-
-  // 3) Reprospecting pool — handled by claimReprospect (needs to write locks),
-  // so computeList3 returns carryover+stale; the generate step appends pool.
+  // Reprospecting pool fills the rest — claimReprospect (writes locks) in the generate step.
   return out;
 }
 
@@ -976,10 +940,13 @@ async function claimReprospect(
   const byId = new Map(pool.map((d) => [d.id, d]));
   const items: ListItem[] = [];
 
-  // 1) Re-include this rep's active holds (prior commitments, ignore cap) —
-  // unless they've already hammered the number this week.
+  // 1) Re-include this rep's active holds (prior commitments) — within the
+  // cap (10/15: re-including them ABOVE it crowded List 3 to 100 pool items)
+  // and unless they've already hammered the number this week.
   const poolContacts = new Set<string>();
+  const holdCap = Math.max(remaining, 0);
   for (const id of mine) {
+    if (items.length >= holdCap) break;
     const d = byId.get(id);
     if (!d || hammered.has(id) || excluded(d) || !primaryPhone(d.crm_contacts?.phones ?? [])) continue;
     if (d.contact_id && poolContacts.has(d.contact_id)) continue;
@@ -1060,7 +1027,7 @@ async function latestSignalByEmail(
 const SLOT_META: Record<number, { label: string }> = {
   1: { label: "East + Central" },
   2: { label: "West" },
-  3: { label: "Follow-up + Reprospect" },
+  3: { label: "Untouched + Reprospect" },
 };
 
 /** True once both daily Lists 1 & 2 exist for a rep on a date. */
@@ -1119,16 +1086,21 @@ export async function generateAndSave(
     const remaining = cfg.cap ? cfg.cap - items.length : Infinity;
     const called = await calledTodaySets(db, args.repEmail, args.forDate);
     const calledPhones = await repCalledTodayPhones(db, args.repEmail, args.forDate);
-    const pool = await claimReprospect(db, args, cfg, remaining, {
-      exclude: {
-        dealIds: new Set([...items.map((i) => i.crmDealId), ...called.dealIds]),
-        contactIds: new Set([...(items.map((i) => i.contactId).filter(Boolean) as string[]), ...called.contactIds]),
-        phones: calledPhones,
-      },
-    });
+    // Deals on today's Lists 1/2 stay there — never re-served as pool.
+    const { data: dailies } = await db.from("crm_sprints").select("crm_sprint_items ( deal_id )").eq("owner", args.repEmail).eq("kind", "daily").eq("for_date", args.forDate).in("slot", [1, 2]);
+    const onLists12 = ((dailies ?? []) as any[]).flatMap((sp) => (sp.crm_sprint_items ?? []).map((it: any) => it.deal_id as string));
+    const pool = remaining > 0
+      ? await claimReprospect(db, args, cfg, remaining, {
+          exclude: {
+            dealIds: new Set([...items.map((i) => i.crmDealId), ...called.dealIds, ...onLists12]),
+            contactIds: new Set([...(items.map((i) => i.contactId).filter(Boolean) as string[]), ...called.contactIds]),
+            phones: calledPhones,
+          },
+        })
+      : [];
     items = [...items, ...pool];
   }
-  if (cfg.cap && args.slot === 3) items = capList3(items, cfg.cap);
+  if (cfg.cap && args.slot === 3) items = items.slice(0, cfg.cap); // hard cap — untouched first, then pool
 
   const name = `List ${args.slot} — ${SLOT_META[args.slot].label} (${args.forDate})`;
 
@@ -1190,11 +1162,3 @@ export async function generateAndSave(
 }
 
 /** Cap list 3 without dropping active reprospect holds (prior commitments). */
-function capList3(items: ListItem[], cap: number): ListItem[] {
-  if (items.length <= cap) return items;
-  const held = items.filter((i) => i.source === "reprospect");
-  const rest = items.filter((i) => i.source !== "reprospect");
-  const kept = rest.slice(0, Math.max(cap - held.length, 0));
-  // Preserve original ordering: carryover/stale first, then held reprospect.
-  return [...kept, ...held];
-}

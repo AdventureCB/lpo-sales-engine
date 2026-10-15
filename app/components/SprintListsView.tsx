@@ -54,6 +54,7 @@ const TIER_BADGE: Record<string, { label: string; color: string }> = {
   stale: { label: "🕸 Stale 60–90d", color: "#8a7c6a" },
   reprospect: { label: "♻ Reprospect", color: "#c05a9a" },
   carry: { label: "↩ Carryover", color: "#6a9ab8" },
+  untouched: { label: "🎯 Never attempted", color: "#3a9d8f" },
   manual: { label: "＋ Manual", color: "#6a8a6a" },
 };
 
@@ -325,7 +326,7 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
       </div>
       <p className="viewsub">
         Daily one-click call lists that plug straight into the dialer. Lists 1 &amp; 2 are your morning calls
-        by timezone; List 3 (auto at 1&nbsp;PM) is follow-ups + the reprospecting pool.
+        by timezone and stay open all day; List 3 (auto at 1&nbsp;PM) is a bonus list: your never-attempted deals + the reprospecting pool.
       </p>
 
       {/* Generate */}
@@ -346,7 +347,7 @@ export function SprintListsView({ isAdmin, userEmail }: { isAdmin: boolean; user
         </button>
         {isAdmin && (
           <button className="btn ghost" disabled={busy === "gen3"} onClick={() => generate(3)} title="Normally auto-generates at 1 PM">
-            {busy === "gen3" ? "…" : "List 3 · Follow-up + Reprospect"}
+            {busy === "gen3" ? "…" : "List 3 · Untouched + Reprospect"}
           </button>
         )}
       </div>
