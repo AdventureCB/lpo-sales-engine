@@ -48,12 +48,28 @@ export function truckFromOrder(items: { sku?: string | null; title?: string | nu
     const m = n.match(label);
     return m ? m[1].trim() : null;
   };
+  // Mid-2025 "Confirmation Checklist" — tab-separated fields on one line each:
+  // "Truck Year\t2021\t\nTruck Make\tJeep\t\nTruck Model\tGladiator Hard Top\t\nBed Length\t5'\t"
+  const cell = (label: string) => grab(new RegExp(`^${label}\\s*\\t+\\s*([^\\t\\n]{1,40}?)\\s*(?:\\t|$)`, "m"));
+  const cMake = cell("Truck Make"), cModel = cell("Truck Model");
+  if (cMake && cModel) {
+    const cYear = cell("Truck Year"), cBed = cell("Bed Length");
+    return `${cYear ? `${cYear} ` : ""}${cMake} ${cModel}${cBed ? ` · ${cBed} bed` : ""}`;
+  }
+  // Short hand-typed notes: "Vehicle: 2022 Jeep Gladiator 5' Bed"
+  const vehicle = grab(/^Vehicle:\s*([^\n]{3,60})$/m);
+  if (vehicle) {
+    const t = vehicle.replace(/\bbed\b/i, "").replace(/\s+/g, " ").trim();
+    const bed = t.match(/(\d{1,2}'\d{0,2}(?:\.\d)?\"?|\d\.\d)\s*$/);
+    const body = bed ? t.slice(0, bed.index).trim() : t;
+    return `${body}${bed ? ` · ${bed[1]} bed` : ""}`;
+  }
   // 2024 "Order Confirmation Checklist": "Truck:\t2018 Toyota Tacoma 5' TALL"
   const checklist = grab(/^Truck:\s*\t?\s*([^\n]{3,60})$/m);
   if (checklist) {
     const tall = /\bTALL\b/i.test(checklist);
     const t = checklist.replace(/\bTALL\b/i, "").replace(/\s+/g, " ").trim();
-    const bed = t.match(/(\d{1,2}'\d{0,2}\"?)\s*$/);
+    const bed = t.match(/(\d{1,2}'\d{0,2}(?:\.\d)?\"?|\d\.\d)\s*$/); // 5' · 6'5 · 6'7.5 · 5.5
     const body = bed ? t.slice(0, bed.index).trim() : t;
     return `${body}${bed ? ` · ${bed[1]} bed` : ""}${tall ? " (Tall)" : ""}`;
   }
