@@ -458,6 +458,69 @@ function ensureRemoteAudio(): void {
   }
 }
 
+// ── Inbound media probe + one-shot repair ────────────────────────────────────
+// One-way audio (customer hears the rep, rep hears silence — Jesse 10/16: a
+// third of his answered inbound calls ended inside 20s) while the <audio>
+// element is demonstrably playing a stream means no RTP is ARRIVING. Three
+// seconds after a call goes active we read the receiver stats; if zero
+// packets have landed we re-attach the stream and force a hold/unhold
+// re-INVITE (fresh ICE/media negotiation), then re-check. Everything is
+// logged as ring-diag so the pattern is visible per rep.
+async function rxStats(call: any): Promise<{ packets: number; bytes: number; level: number | null; pair: string | null; trackMuted: boolean | null } | null> {
+  try {
+    const pc: RTCPeerConnection | undefined = call?.peer?.instance;
+    if (!pc) return null;
+    const report = await pc.getStats();
+    let packets = 0, bytes = 0, level: number | null = null, pair: string | null = null;
+    const cands = new Map<string, any>();
+    report.forEach((r: any) => { if (r.type === "local-candidate" || r.type === "remote-candidate") cands.set(r.id, r); });
+    report.forEach((r: any) => {
+      if (r.type === "inbound-rtp" && (r.kind === "audio" || r.mediaType === "audio")) {
+        packets += r.packetsReceived ?? 0; bytes += r.bytesReceived ?? 0;
+        if (typeof r.audioLevel === "number") level = r.audioLevel;
+      }
+      if (r.type === "candidate-pair" && (r.nominated || r.selected) && r.state === "succeeded") {
+        const l = cands.get(r.localCandidateId), rm = cands.get(r.remoteCandidateId);
+        pair = `${l?.candidateType ?? "?"}/${l?.protocol ?? "?"}→${rm?.candidateType ?? "?"}`;
+      }
+    });
+    const track = (call?.remoteStream as MediaStream | undefined)?.getAudioTracks?.()[0];
+    return { packets, bytes, level, pair, trackMuted: track ? track.muted : null };
+  } catch {
+    return null;
+  }
+}
+const probed = new WeakSet<object>();
+function probeInboundMedia(call: any, dir: "in" | "out") {
+  if (!call || probed.has(call)) return;
+  probed.add(call);
+  const live = () => call.state === "active";
+  setTimeout(async () => {
+    if (!live()) return;
+    const a = await rxStats(call);
+    ringDiag(`rxstats-${dir}`, { t: 3, ...(a ?? { none: true }) });
+    if (!a || a.packets > 0) return;
+    // Nothing arriving: re-attach the stream, then renegotiate once.
+    try {
+      const el = document.getElementById("telnyx-audio") as HTMLAudioElement | null;
+      if (el && call.remoteStream && el.srcObject !== call.remoteStream) { el.srcObject = call.remoteStream; void el.play().catch(() => {}); }
+    } catch {}
+    try {
+      await call.hold();
+      await new Promise((r) => setTimeout(r, 400));
+      await call.unhold();
+      ringDiag(`rxfix-${dir}`, { did: "hold/unhold" });
+    } catch (e) {
+      ringDiag(`rxfix-${dir}`, { err: String(e).slice(0, 80) });
+    }
+    setTimeout(async () => {
+      if (!live()) return;
+      const b = await rxStats(call);
+      ringDiag(`rxstats-${dir}`, { t: 9, ...(b ?? { none: true }) });
+    }, 5000);
+  }, 3000);
+}
+
 const emit = () => subs.forEach((f) => f());
 
 export function subscribePhone(cb: () => void): () => void {
@@ -661,6 +724,7 @@ export async function ensurePhone(): Promise<any> {
           clearRingBroadcast();
           stopTitleFlash();
           ensureRemoteAudio();
+          probeInboundMedia(call, "in");
         } else if (s === "hangup" || s === "destroy") {
           state.incoming = null;
           // An inbound leg dying must NOT reset the phase while an outbound
@@ -682,6 +746,7 @@ export async function ensurePhone(): Promise<any> {
         if (state.outbound) state.outbound = { ...state.outbound, state: "active", startedAt: state.outbound.startedAt ?? Date.now() };
         outboundCall = call;
         ensureRemoteAudio();
+        probeInboundMedia(call, "out");
       } else if (s === "hangup" || s === "destroy") {
         state.callPhase = "none";
         outboundLive = false;
