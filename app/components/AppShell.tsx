@@ -57,6 +57,7 @@ const SECTIONS: { header: string | null; collapsible?: boolean; items: NavItem[]
       { label: "✉️ Email", href: "/analytics/email", adminOnly: true },
       { label: "🌐 Traffic", href: "/analytics/traffic", adminOnly: true },
       { label: "🧭 Journeys", href: "/analytics/journeys", adminOnly: true },
+      { label: "👤 Reps", href: "/analytics/reps", adminOnly: true },
     ],
   },
   {
