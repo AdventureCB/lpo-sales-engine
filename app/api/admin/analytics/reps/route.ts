@@ -27,8 +27,12 @@ const hours = (h: number) => h * 3_600_000;
 
 export async function GET(req: NextRequest) {
   const user = await getSessionUser();
-  if (!user || user.role !== "admin") return NextResponse.json({ error: "admin only" }, { status: 403 });
-  const days = Math.min(365, Math.max(7, Number(new URL(req.url).searchParams.get("days")) || 30));
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const params = new URL(req.url).searchParams;
+  // ?rep=<email> → one rep's dashboard (admins any rep; a rep only their own).
+  const onlyRep = (params.get("rep") ?? "").trim().toLowerCase() || null;
+  if (user.role !== "admin" && (!onlyRep || onlyRep !== user.email.toLowerCase())) return NextResponse.json({ error: "admin only" }, { status: 403 });
+  const days = Math.min(365, Math.max(7, Number(params.get("days")) || 30));
   const now = Date.now();
   const windowStart = new Date(now - hours(24 * days)).toISOString();
   const db = supabaseAdmin();
@@ -44,8 +48,10 @@ export async function GET(req: NextRequest) {
     }
     return { data: all, error: null };
   };
+  let repsQ = db.from("reps").select("email, name, pipedrive_user_id").eq("active", true).not("pipedrive_user_id", "is", null);
+  if (onlyRep) repsQ = repsQ.ilike("email", onlyRep);
   const [{ data: reps }, { data: touchesRaw, error: tErr }, { data: stageRows }, { data: pendingRows }, { data: checkouts }] = await Promise.all([
-    db.from("reps").select("email, name, pipedrive_user_id").eq("active", true).not("pipedrive_user_id", "is", null),
+    repsQ,
     fetchTouches(),
     db.from("crm_stages").select("id, name"),
     db.from("crm_activities").select("deal_id").is("done_at", null).gt("due_at", new Date(now).toISOString()).not("deal_id", "is", null).limit(20000),
@@ -153,6 +159,12 @@ export async function GET(req: NextRequest) {
 
   // Sales reps only: anyone with no touches in the window and a trivial book
   // (CS / admin logins that exist in reps for other reasons) is left off.
-  const shown = out.filter((r: any) => r.throughput.touches > 0 || r.book.open >= 10);
-  return NextResponse.json({ days, generatedAt: new Date(now).toISOString(), reps: shown.sort((a: any, b: any) => b.book.open - a.book.open) });
+  const shown = onlyRep ? out : out.filter((r: any) => r.throughput.touches > 0 || r.book.open >= 10);
+  // Single-rep dashboard: add the 12-week activity series.
+  let weekly: any[] | undefined;
+  if (onlyRep && shown.length) {
+    const { data } = await db.rpc("rep_weekly_touches", { p_rep_email: onlyRep, p_since: new Date(now - hours(24 * 7 * 12)).toISOString() });
+    weekly = (data ?? []).map((w: any) => ({ week: w.week, touches: Number(w.touches), deals: Number(w.deals), dials: Number(w.dials), conversations: Number(w.conversations), emails: Number(w.emails), texts: Number(w.texts) }));
+  }
+  return NextResponse.json({ days, generatedAt: new Date(now).toISOString(), reps: shown.sort((a: any, b: any) => b.book.open - a.book.open), weekly });
 }

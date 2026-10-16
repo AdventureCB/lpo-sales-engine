@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 interface Cohort { month: string; worked: number; confirmed: number; presumed: number; maturing: boolean }
 interface Rep {
@@ -82,7 +83,10 @@ export function RepsAnalyticsView() {
                   return (
                     <>
                       <tr key={r.email} style={{ cursor: "pointer", background: open === r.email ? "var(--surface-2)" : undefined }} onClick={() => setOpen(open === r.email ? null : r.email)}>
-                        <td style={{ ...td, ...left, fontWeight: 700 }}>{open === r.email ? "▾" : "▸"} {r.name}</td>
+                        <td style={{ ...td, ...left, fontWeight: 700 }}>
+                          {open === r.email ? "▾" : "▸"} {r.name}
+                          <Link href={`/analytics/reps/${encodeURIComponent(r.email)}`} onClick={(e) => e.stopPropagation()} className="btn ghost" style={{ marginLeft: 8, padding: "1px 8px", fontSize: 11.5 }} title="Open this rep's dashboard">Dashboard →</Link>
+                        </td>
                         <td style={td}>{c.workedMatured.toLocaleString()}</td>
                         <td style={td}>{c.confirmedMatured}</td>
                         <td style={td}>{c.presumedMatured}</td>
