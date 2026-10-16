@@ -215,6 +215,7 @@ type Facts = {
   hot1bAt: string | null;
   nextPendingDueAt: string | null; // earliest pending (undone) activity due
   scheduledNext7: boolean;
+  financingAt: string | null; // Synchrony financing application started (intake engine event) within the hot window
   marketingAt: string | null; // most recent marketing signal <= window
   hasAnyCall: boolean;
   lastConversationAt: string | null;
@@ -256,7 +257,7 @@ async function enrich(
   const in7dIso = new Date(Date.now() + w.scheduled_ahead_days * 86_400_000).toISOString();
   const nowIso = new Date().toISOString();
 
-  const [engagement, calls, pending] = await Promise.all([
+  const [engagement, calls, pending, financing] = await Promise.all([
     // Marketing signals come from engagement_events (the hot-list cron sweeps
     // this broadly — 12k+ contacts), NOT klaviyo_events (only ~16 contacts,
     // synced lazily on page-view). Buy-intent (checkout/builder_save) is
@@ -288,6 +289,16 @@ async function enrich(
         .gte("due_at", daysAgoIso(90))
         .range(f, t)
     ),
+    // Financing applications: the Synchrony Financing intake engine fires when
+    // someone joins the Synchrony Applicants list — a buy signal strong enough
+    // to surface a deal even when a future activity is already planned (Kyle 10/16).
+    (async () => {
+      const { data: src } = await db.from("intake_sources").select("id").ilike("label", "%synchrony%");
+      const ids = (src ?? []).map((r: any) => r.id);
+      if (!ids.length) return [] as { deal_id: string; created_at: string }[];
+      const { data } = await db.from("intake_events").select("deal_id, created_at").in("source_id", ids).not("deal_id", "is", null).gte("created_at", daysAgoIso(w.hot_days)).limit(2000);
+      return (data ?? []) as { deal_id: string; created_at: string }[];
+    })(),
   ]);
 
   const facts = new Map<string, Facts>();
@@ -299,12 +310,18 @@ async function enrich(
         hot1bAt: null,
         nextPendingDueAt: null,
         scheduledNext7: false,
+        financingAt: null,
         marketingAt: null,
         hasAnyCall: false,
         lastConversationAt: null,
         attempts7d: 0,
       })
       .get(id)!;
+
+  for (const fe of financing) {
+    const fct = get(fe.deal_id);
+    if (!fct.financingAt || fe.created_at > fct.financingAt) fct.financingAt = fe.created_at;
+  }
 
   const hotCutoff = daysAgoIso(w.hot_days);
   const mktgCutoff = daysAgoIso(w.marketing_signal_days);
@@ -397,12 +414,19 @@ function classify(
   const due = f.nextPendingDueAt;
   const dueLa = due ? (isAllDayIso(due) ? due.slice(0, 10) : laDate(new Date(due))) : null;
   if (dueLa && dueLa > todayLa) {
-    if (f.hot1aAt && !f.scheduledNext7) {
+    // Kyle 10/16: ANY future activity hides the deal unless a 1a buy signal
+    // or a financing application landed — those two always surface, flagged.
+    if (f.financingAt && (!f.hot1aAt || f.financingAt > f.hot1aAt)) {
+      return { tier: 1, tierLabel: "1a", recencyAt: f.financingAt, flag: `💳 Financing application — callback scheduled ${dueLa}` };
+    }
+    if (f.hot1aAt) {
       return { tier: 1, tierLabel: "1a", recencyAt: f.hot1aAt, flag: `🔥 New buy signal — callback scheduled ${dueLa}` };
     }
     return null;
   }
 
+  // A financing application is buy intent in its own right: tier 1a.
+  if (f.financingAt && (!f.hot1aAt || f.financingAt > f.hot1aAt)) return { tier: 1, tierLabel: "1a", recencyAt: f.financingAt, flag: "💳 Financing application" };
   if (f.hot1aAt) return { tier: 1, tierLabel: "1a", recencyAt: f.hot1aAt };
   if (f.hot1bAt) return { tier: 1, tierLabel: "1b", recencyAt: f.hot1bAt };
   // A scheduled activity due today (or overdue) surfaces at tier 2 — flagged
@@ -514,6 +538,7 @@ function blankFacts(): Facts {
     hot1bAt: null,
     nextPendingDueAt: null,
     scheduledNext7: false,
+    financingAt: null,
     marketingAt: null,
     hasAnyCall: false,
     lastConversationAt: null,

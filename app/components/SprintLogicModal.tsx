@@ -83,7 +83,7 @@ export function SprintLogicModal() {
             </P>
 
             <H>Why a deal you expect might NOT show</H>
-            <P><B>Future plan:</B> a deal with a future-dated scheduled activity is hidden — you already have a plan; it resurfaces at tier 2 on its due date. Exception: a fresh buy signal (1a) with nothing scheduled in the next 7 days still surfaces, flagged 🔥.</P>
+            <P><B>Future plan:</B> a deal with any future-dated scheduled activity is hidden — you already have a plan; it resurfaces at tier 2 on its due date. Two exceptions always surface, flagged: a fresh buy signal (1a) 🔥, or a <B>financing application</B> 💳 (they joined the Synchrony applicants list).</P>
             <P><B>Call cooldown:</B> for every tier except 1a, a deal with <B>3 call attempts in the current week</B> rests for a week — no spam-calling someone who isn&apos;t picking up. A fresh buy signal overrides the rest.</P>
             <P><B>Snoozed:</B> a deal snoozed from its Actions card (&quot;exclude from sprint lists until…&quot;) stays off every list until that date.</P>
 
