@@ -34,7 +34,8 @@ export async function GET(req: NextRequest) {
   // Filtering by timezone constrains the PARENT list, which needs an inner
   // join on the embedded contact (a plain embed leaves deals unfiltered).
   const tz = p.get("tz"); // west | central | east
-  const contactEmbed = tz
+  const phoneF = p.get("phone"); // has | none — usable phone on the contact (generated column)
+  const contactEmbed = tz || phoneF
     ? "crm_contacts!inner ( name, phones, emails, tz_offset, attribution )"
     : "crm_contacts ( name, phones, emails, tz_offset, attribution )";
 
@@ -73,6 +74,8 @@ export async function GET(req: NextRequest) {
   if (p.get("valueMax")) q = q.lte("value_cents", Math.round(Number(p.get("valueMax")) * 100));
   // Contact state + attempt/contact counts — same definitions as the Ad ROI
   // lead-contact funnel (attempt = outbound dial, contact = real conversation).
+  if (phoneF === "none") q = q.eq("crm_contacts.has_usable_phone", false);
+  else if (phoneF === "has") q = q.eq("crm_contacts.has_usable_phone", true);
   const contact = p.get("contact"); // contacted | attempted | untouched
   if (contact === "contacted") q = q.gt("contact_count", 0);
   else if (contact === "attempted") q = q.gt("attempt_count", 0).eq("contact_count", 0);
