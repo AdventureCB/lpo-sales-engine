@@ -18,14 +18,17 @@ const BUCKET_COLOR: Record<string, string> = { "0-7": "#3a9d5d", "8-14": "#7fb06
 
 export function RepsAnalyticsView() {
   const [days, setDays] = useState(30);
-  const [data, setData] = useState<{ days: number; reps: Rep[] } | null>(null);
+  const [data, setData] = useState<{ days: number; reps: Rep[]; computedAt?: string } | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
 
-  useEffect(() => {
-    setData(null); setErr(null);
-    fetch(`/api/admin/analytics/reps?days=${days}`).then((r) => r.json()).then((d) => (d.error ? setErr(d.error) : setData(d))).catch(() => setErr("failed to load"));
-  }, [days]);
+  const load = (fresh = false) => {
+    if (fresh) setRefreshing(true); else setData(null);
+    setErr(null);
+    fetch(`/api/admin/analytics/reps?days=${days}${fresh ? "&fresh=1" : ""}`).then((r) => r.json()).then((d) => (d.error ? setErr(d.error) : setData(d))).catch(() => setErr("failed to load")).finally(() => setRefreshing(false));
+  };
+  useEffect(() => { load(); }, [days]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const th: React.CSSProperties = { padding: "6px 8px", fontSize: 12, color: "var(--text-3)", textAlign: "right", whiteSpace: "nowrap", verticalAlign: "bottom" };
   const td: React.CSSProperties = { padding: "7px 8px", fontSize: 13, textAlign: "right", borderTop: "1px solid var(--border-soft)", fontVariantNumeric: "tabular-nums" };
@@ -41,6 +44,12 @@ export function RepsAnalyticsView() {
       <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "10px 0 14px" }}>
         <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>Activity window</span>
         {[7, 14, 30, 90].map((d) => <button key={d} className={`btn ${days === d ? "primary" : "ghost"}`} style={{ padding: "5px 12px", fontSize: 13 }} onClick={() => setDays(d)}>{d}d</button>)}
+        {data?.computedAt && (
+          <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-3)", display: "inline-flex", gap: 8, alignItems: "center" }}>
+            updated {new Date(data.computedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · refreshes hourly
+            <button className="btn ghost" style={{ padding: "2px 9px", fontSize: 12 }} disabled={refreshing} onClick={() => load(true)}>{refreshing ? "Recomputing…" : "↻ Recompute now"}</button>
+          </span>
+        )}
       </div>
       {err && <div style={{ color: "var(--bad)" }}>{err}</div>}
       {!data && !err && <div className="viewsub">Computing…</div>}

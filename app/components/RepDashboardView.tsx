@@ -58,7 +58,7 @@ function Caption({ children }: { children: React.ReactNode }) {
 
 export function RepDashboardView({ rep, backHref }: { rep: string; backHref?: string }) {
   const [days, setDays] = useState(30);
-  const [data, setData] = useState<{ reps: Rep[]; weekly?: Week[] } | null>(null);
+  const [data, setData] = useState<{ reps: Rep[]; weekly?: Week[]; computedAt?: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [hover, setHover] = useState<{ x: number; y: number; text: string } | null>(null);
 
@@ -100,6 +100,7 @@ export function RepDashboardView({ rep, backHref }: { rep: string; backHref?: st
         <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6, alignItems: "center" }}>
           <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>Window</span>
           {[7, 14, 30, 90].map((d) => <button key={d} className={`btn ${days === d ? "primary" : "ghost"}`} style={{ padding: "4px 10px", fontSize: 12.5 }} onClick={() => setDays(d)}>{d}d</button>)}
+          {data.computedAt && <span style={{ fontSize: 11.5, color: "var(--text-3)", marginLeft: 6 }}>updated {new Date(data.computedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>}
         </span>
       </div>
 
