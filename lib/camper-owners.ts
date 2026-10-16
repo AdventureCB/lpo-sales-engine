@@ -44,6 +44,15 @@ export function truckFromOrder(items: { sku?: string | null; title?: string | nu
     const m = n.match(label);
     return m ? m[1].trim() : null;
   };
+  // 2024 "Order Confirmation Checklist": "Truck:\t2018 Toyota Tacoma 5' TALL"
+  const checklist = grab(/^Truck:\s*\t?\s*([^\n]{3,60})$/m);
+  if (checklist) {
+    const tall = /\bTALL\b/i.test(checklist);
+    const t = checklist.replace(/\bTALL\b/i, "").replace(/\s+/g, " ").trim();
+    const bed = t.match(/(\d{1,2}'\d{0,2}\"?)\s*$/);
+    const body = bed ? t.slice(0, bed.index).trim() : t;
+    return `${body}${bed ? ` · ${bed[1]} bed` : ""}${tall ? " (Tall)" : ""}`;
+  }
   // V1 form: "Truck Make\t\nToyota\nTruck Model- Toyota\t\nTacoma\nModel Year- Tacoma\t\n2016-2023\n…Bed Length…\t\n6'"
   const make = grab(/(?:Truck|Vehicle) Make\s*\t?\s*\n\s*([A-Za-z][A-Za-z -]{1,30})\s*\n/);
   const model = grab(/Truck Model[^\n]*\t?\s*\n\s*([^\n]{1,40})\n/);
