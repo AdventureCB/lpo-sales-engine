@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
   const lngPad = radius / (69 * Math.max(Math.cos((origin[0] * Math.PI) / 180), 0.01));
   let query = supabaseAdmin()
     .from("camper_owners")
-    .select("id, name, email, phone, city, state, zip, lat, lng, version, camper_order_name, camper_order_at, order_line_items, contact_id, willing_to_demo, willing_at, shopify_customer_id")
+    .select("id, name, email, phone, city, state, zip, lat, lng, version, camper_order_name, camper_order_at, order_line_items, contact_id, willing_to_demo, willing_at, shopify_customer_id, truck")
     .not("lat", "is", null)
     .eq("eligible", true) // fulfilled, not cancelled/refunded camper order only (Kyle 9/23)
     .gte("lat", origin[0] - latPad)
@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
   const owners = (data ?? [])
     .map((o: any) => ({ ...o, miles: Math.round(milesBetween(origin, [o.lat, o.lng])) }))
     .filter((o: any) => o.miles <= radius)
-    .filter((o: any) => !q || `${o.name} ${o.city} ${o.email}`.toLowerCase().includes(q))
+    .filter((o: any) => !q || `${o.name} ${o.city} ${o.email} ${o.truck ?? ""}`.toLowerCase().includes(q))
     .sort((a: any, b: any) => a.miles - b.miles)
     .slice(0, 200)
     .map((o: any) => ({
@@ -56,6 +56,7 @@ export async function GET(req: NextRequest) {
       zip: o.zip,
       miles: o.miles,
       version: o.version,
+      truck: o.truck ?? null,
       willing: o.willing_to_demo,
       willingAt: o.willing_at,
       orderName: o.camper_order_name,

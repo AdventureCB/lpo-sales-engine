@@ -20,6 +20,7 @@ interface Owner {
   zip: string | null;
   miles: number;
   version: "v1" | "v2" | "both";
+  truck?: string | null;
   willing: boolean;
   orderName: string | null;
   orderAt: string | null;
@@ -200,6 +201,7 @@ function OwnerCard({
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <b style={{ fontSize: 15 }}>{owner.name}</b>
         <span style={{ fontSize: 11.5, fontWeight: 700, color: "#fff", background: badge.color, borderRadius: 5, padding: "1px 7px" }}>{badge.label}</span>
+        {owner.truck && <span style={{ fontSize: 12.5, color: "var(--text-2)", border: "1px solid var(--border-soft)", borderRadius: 5, padding: "1px 7px" }} title="Truck the camper is on (from the order)">🛻 {owner.truck}</span>}
         {willing && <span style={{ fontSize: 12, color: "var(--good, #3aa76d)", fontWeight: 700 }}>⭐ Willing</span>}
         <span style={{ fontSize: 13, color: "var(--text-2)" }}>
           {owner.city}{owner.state ? `, ${owner.state}` : ""} · <b>{owner.miles} mi</b>

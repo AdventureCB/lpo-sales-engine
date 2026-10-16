@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isAuthorizedCron } from "@/lib/cron";
 import { shopifyAdminToken, shopifyAdminConfigured, SHOP_DOMAIN } from "@/lib/shopify-admin";
-import { classifyOrder, orderCamperEligibility, zipCoords, zip5, type CamperVersion } from "@/lib/camper-owners";
+import { classifyOrder, orderCamperEligibility, zipCoords, zip5, type CamperVersion, truckFromOrder } from "@/lib/camper-owners";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,11 +16,11 @@ const DEADLINE_MS = 45_000;
 const ORDERS_QUERY = `query($cursor: String, $q: String) {
   orders(first: ${PAGE}, after: $cursor, query: $q, sortKey: CREATED_AT) {
     edges { cursor node {
-      name createdAt cancelledAt displayFinancialStatus displayFulfillmentStatus
+      name createdAt cancelledAt displayFinancialStatus displayFulfillmentStatus note
       customer { id firstName lastName email phone }
       billingAddress { city provinceCode zip }
       shippingAddress { city provinceCode zip }
-      lineItems(first: 25) { edges { node { sku title quantity currentQuantity unfulfilledQuantity } } }
+      lineItems(first: 25) { edges { node { sku title variantTitle quantity currentQuantity unfulfilledQuantity } } }
     } }
     pageInfo { hasNextPage endCursor }
   }
@@ -187,7 +187,8 @@ async function upsertOwner(db: any, o: any, version: CamperVersion, items: any[]
     Object.assign(row, {
       camper_order_name: o.name ?? null,
       camper_order_at: orderAt,
-      order_line_items: items.map((it) => ({ sku: it.sku, title: it.title, qty: it.quantity })),
+      order_line_items: items.map((it) => ({ sku: it.sku, title: it.title, qty: it.quantity, variant: it.variantTitle ?? undefined })),
+      truck: truckFromOrder(items, o.note),
     });
   }
   if (keepAddress) {

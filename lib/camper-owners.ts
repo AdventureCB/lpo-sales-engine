@@ -23,6 +23,47 @@ const V2_OLD_SKUS = new Set([
 
 export type CamperVersion = "v1" | "v2";
 
+/**
+ * The truck under the camper, as a short human label ("Ford F150 2021+ · 6'5
+ * bed"). V2 orders carry it in the camper line's variant title; V1 and older
+ * V2 orders only have the build-form dump in the order note.
+ */
+export function truckFromOrder(items: { sku?: string | null; title?: string | null; variantTitle?: string | null }[], note: string | null | undefined): string | null {
+  const camper = items.find((it) => camperLineVersion({ sku: it.sku ?? null, title: it.title ?? null, quantity: 1 }) != null);
+  const vt = (camper?.variantTitle ?? "").trim();
+  if (vt && vt.includes("/")) {
+    // "Ford / F150 2021+ 6'5" → "Ford F150 2021+ · 6'5 bed"
+    const [make, rest = ""] = vt.split("/").map((x) => x.trim());
+    const bed = rest.match(/(\d{1,2}'\d{0,2}\"?|\d(?:\.\d)?'?)\s*$/);
+    const body = bed ? rest.slice(0, bed.index).trim() : rest;
+    return [make, body].filter(Boolean).join(" ") + (bed ? ` · ${bed[1]} bed` : "");
+  }
+  const n = (note ?? "").replace(/\r/g, "");
+  if (!n) return null;
+  const grab = (label: RegExp): string | null => {
+    const m = n.match(label);
+    return m ? m[1].trim() : null;
+  };
+  // V1 form: "Truck Make\t\nToyota\nTruck Model- Toyota\t\nTacoma\nModel Year- Tacoma\t\n2016-2023\n…Bed Length…\t\n6'"
+  const make = grab(/(?:Truck|Vehicle) Make\s*\t?\s*\n\s*([A-Za-z][A-Za-z -]{1,30})\s*\n/);
+  const model = grab(/Truck Model[^\n]*\t?\s*\n\s*([^\n]{1,40})\n/);
+  const year = grab(/Model Year[^\n]*\t?\s*\n\s*([^\n]{1,30})\n/);
+  const bed = grab(/Bed Length[^\n]*\t?\s*\n\s*([^\n]{1,12})\n/);
+  if (make && model) return `${make} ${model}${year ? ` ${year}` : ""}${bed ? ` · ${bed.trim()} bed` : ""}`;
+  // V2 confirmation form: "Vehicle Make\t\nFord\nFord\t\nF150, 2021-2026, 5'6"
+  if (make) {
+    // The make's own question line ("Ford\t\nF150, 2021-2026, 5'6") — tab required, so the bare make line doesn't match.
+    const line = grab(new RegExp(`\\n${make}\\t\\s*\\n\\s*([^\\n\\t]{2,60})\\n`));
+    if (line && line.toLowerCase() !== make.toLowerCase()) {
+      const parts = line.split(",").map((x) => x.trim());
+      const bedPart = parts.length > 2 ? parts.pop() : null;
+      return `${make} ${parts.join(" ")}${bedPart ? ` · ${bedPart} bed` : ""}`;
+    }
+    return make;
+  }
+  return null;
+}
+
 export interface OrderLineItem {
   sku: string | null;
   title: string | null;
