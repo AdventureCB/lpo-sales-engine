@@ -31,10 +31,14 @@ export type CamperVersion = "v1" | "v2";
 export function truckFromOrder(items: { sku?: string | null; title?: string | null; variantTitle?: string | null }[], note: string | null | undefined): string | null {
   const camper = items.find((it) => camperLineVersion({ sku: it.sku ?? null, title: it.title ?? null, quantity: 1 }) != null);
   const vt = (camper?.variantTitle ?? "").trim();
-  if (vt && vt.includes("/")) {
-    // "Ford / F150 2021+ 6'5" → "Ford F150 2021+ · 6'5 bed"
-    const [make, rest = ""] = vt.split("/").map((x) => x.trim());
-    const bed = rest.match(/(\d{1,2}'\d{0,2}\"?|\d(?:\.\d)?'?)\s*$/);
+  if (vt && / \/ /.test(vt)) {
+    // "Ford / F150 2021+ 6'5" → "Ford F150 2021+ · 6'5 bed". The separator is
+    // " / " with spaces — "Chevrolet/GMC / Silverado / Sierra 2500 2020+ 6'7.5"
+    // keeps its own slashes.
+    const idx = vt.indexOf(" / ");
+    const make = vt.slice(0, idx).trim();
+    const rest = vt.slice(idx + 3).trim();
+    const bed = rest.match(/(\d{1,2}'\d{0,2}(?:\.\d)?\"?)\s*$/);
     const body = bed ? rest.slice(0, bed.index).trim() : rest;
     return [make, body].filter(Boolean).join(" ") + (bed ? ` · ${bed[1]} bed` : "");
   }
@@ -54,8 +58,11 @@ export function truckFromOrder(items: { sku?: string | null; title?: string | nu
     return `${body}${bed ? ` · ${bed[1]} bed` : ""}${tall ? " (Tall)" : ""}`;
   }
   // V1 form: "Truck Make\t\nToyota\nTruck Model- Toyota\t\nTacoma\nModel Year- Tacoma\t\n2016-2023\n…Bed Length…\t\n6'"
-  const make = grab(/(?:Truck|Vehicle) Make\s*\t?\s*\n\s*([A-Za-z][A-Za-z -]{1,30})\s*\n/);
-  const model = grab(/Truck Model[^\n]*\t?\s*\n\s*([^\n]{1,40})\n/);
+  // The "Truck Model- <Make>" label carries the make too, which survives
+  // hand-edited notes where the "Truck Make" line got clipped (#5060: "uck Make").
+  const modelLine = n.match(/Truck Model-\s*([A-Za-z][A-Za-z/ -]{1,20}?)\s*\t?\s*\n\s*([^\n\t]{1,40})\n/);
+  const make = modelLine ? modelLine[1].trim() : grab(/(?:Truck|Vehicle) Make\s*\t?\s*\n\s*([A-Za-z][A-Za-z -]{1,30})\s*\n/);
+  const model = modelLine ? modelLine[2].trim() : grab(/Truck Model[^\n]*\t?\s*\n\s*([^\n]{1,40})\n/);
   const year = grab(/Model Year[^\n]*\t?\s*\n\s*([^\n]{1,30})\n/);
   const bed = grab(/Bed Length[^\n]*\t?\s*\n\s*([^\n]{1,12})\n/);
   if (make && model) return `${make} ${model}${year ? ` ${year}` : ""}${bed ? ` · ${bed.trim()} bed` : ""}`;
