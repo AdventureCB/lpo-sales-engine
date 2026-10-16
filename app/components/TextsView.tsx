@@ -11,6 +11,8 @@ interface Thread {
   lastDirection: string | null;
   awaitingReply: boolean;
   unread: boolean;
+  done: boolean;
+  doneAt: string | null;
   count: number;
   contactName: string | null;
   crmDealId: string | null;
@@ -36,6 +38,14 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
   const [newNum, setNewNum] = useState("");
   const [showNew, setShowNew] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
+  const [tab, setTab] = useState<"todo" | "done" | "all">(() => { try { return (sessionStorage.getItem("textsTab") as any) || "todo"; } catch { return "todo"; } });
+  const [oldestFirst, setOldestFirst] = useState(false);
+  const pickTab = (t: "todo" | "done" | "all") => { setTab(t); try { sessionStorage.setItem("textsTab", t); } catch {} };
+
+  const setDone = async (t: Thread, done: boolean) => {
+    setThreads((prev) => prev?.map((x) => (x.phone === t.phone ? { ...x, done, doneAt: done ? new Date().toISOString() : null, unread: done ? false : x.unread } : x)) ?? prev);
+    await fetch("/api/texts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ phone: t.phone, done, lastAt: t.lastAt }) });
+  };
   // Admin: narrow to one rep's lines (remembered per browser).
   const roster = useRoster();
   const [repSel, setRepSel] = useState<string>(() => { try { return sessionStorage.getItem("textsRep") ?? ""; } catch { return ""; } });
@@ -80,13 +90,18 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
   };
 
   const q = search.trim().toLowerCase();
-  const shownThreads = (threads ?? []).filter(
-    (t) =>
-      !q ||
-      t.phone.includes(q) ||
-      (t.contactName ?? "").toLowerCase().includes(q) ||
-      (t.lastBody ?? "").toLowerCase().includes(q)
-  );
+  const all = threads ?? [];
+  const todoCount = all.filter((t) => !t.done).length;
+  const shownThreads = all
+    .filter((t) => (tab === "todo" ? !t.done : tab === "done" ? t.done : true))
+    .filter(
+      (t) =>
+        !q ||
+        t.phone.includes(q) ||
+        (t.contactName ?? "").toLowerCase().includes(q) ||
+        (t.lastBody ?? "").toLowerCase().includes(q)
+    )
+    .sort((a, b) => (oldestFirst ? a.lastAt.localeCompare(b.lastAt) : b.lastAt.localeCompare(a.lastAt)));
 
   return (
     <>
@@ -119,6 +134,14 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
             ＋
           </button>
         </div>
+        <div style={{ padding: "6px 10px", display: "flex", gap: 6, alignItems: "center", borderBottom: "1px solid var(--border-soft)" }}>
+          {([["todo", `To do${todoCount ? ` · ${todoCount}` : ""}`], ["done", "Done"], ["all", "All"]] as const).map(([k, l]) => (
+            <button key={k} className={`btn ${tab === k ? "primary" : "ghost"}`} style={{ padding: "3px 10px", fontSize: 12.5 }} onClick={() => pickTab(k)}>{l}</button>
+          ))}
+          <button className="btn ghost" style={{ marginLeft: "auto", padding: "3px 10px", fontSize: 12.5 }} title="Flip the order" onClick={() => setOldestFirst((v) => !v)}>
+            {oldestFirst ? "Oldest first ↑" : "Newest first ↓"}
+          </button>
+        </div>
         {showNew && (
           <div style={{ padding: 10, display: "flex", gap: 6, borderBottom: "1px solid var(--border-soft)" }}>
             <input
@@ -144,17 +167,26 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
           {threads === null && <div className="viewsub" style={{ padding: 12 }}>Loading…</div>}
           {threads !== null && shownThreads.length === 0 && (
             <div className="viewsub" style={{ padding: 12, marginBottom: 0 }}>
-              No conversations on your line yet — new inbound texts appear here automatically.
+              {tab === "todo" ? "All caught up — nothing left to do." : tab === "done" ? "Nothing marked done yet." : "No conversations on your line yet — new inbound texts appear here automatically."}
             </div>
           )}
           {shownThreads.map((t) => (
             <div
               key={t.phone}
               onClick={() => openThread(t)}
-              style={{ padding: "10px 12px", borderBottom: "1px solid var(--border-soft)", cursor: "pointer" }}
+              style={{ padding: "10px 12px", borderBottom: "1px solid var(--border-soft)", cursor: "pointer", display: "flex", gap: 10, alignItems: "flex-start", opacity: t.done && tab !== "done" ? 0.6 : 1 }}
             >
+              <input
+                type="checkbox"
+                checked={t.done}
+                title={t.done ? `Done ${t.doneAt ? fmtWhen(t.doneAt) : ""} — untick to bring it back` : "Mark this conversation done (a new text from them brings it back)"}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => void setDone(t, e.target.checked)}
+                style={{ marginTop: 4, width: 16, height: 16, cursor: "pointer" }}
+              />
+              <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-                <b style={{ fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <b style={{ fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: t.done ? "line-through" : undefined, color: t.done ? "var(--text-2)" : undefined }}>
                   {t.unread && <span style={{ color: "var(--accent)" }}>● </span>}
                   {t.contactName ?? t.phone}
                 </b>
@@ -168,6 +200,7 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
                 {t.dealTitle && (
                   <span style={{ color: "var(--text-3)", fontSize: 12, whiteSpace: "nowrap" }}>📋 {t.dealTitle.slice(0, 26)}</span>
                 )}
+              </div>
               </div>
             </div>
           ))}
