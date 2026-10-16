@@ -33,9 +33,20 @@ export async function GET(req: NextRequest) {
   const windowStart = new Date(now - hours(24 * days)).toISOString();
   const db = supabaseAdmin();
 
+  // The touches RPC returns ~7k rows; PostgREST caps one read at 1,000, so page it.
+  const fetchTouches = async () => {
+    const all: any[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await db.rpc("rep_deal_touches", { p_window_start: windowStart }).range(from, from + 999);
+      if (error) return { data: null, error };
+      all.push(...(data ?? []));
+      if (!data || data.length < 1000) break;
+    }
+    return { data: all, error: null };
+  };
   const [{ data: reps }, { data: touchesRaw, error: tErr }, { data: stageRows }, { data: pendingRows }, { data: checkouts }] = await Promise.all([
     db.from("reps").select("email, name, pipedrive_user_id").eq("active", true).not("pipedrive_user_id", "is", null),
-    db.rpc("rep_deal_touches", { p_window_start: windowStart }),
+    fetchTouches(),
     db.from("crm_stages").select("id, name"),
     db.from("crm_activities").select("deal_id").is("done_at", null).gt("due_at", new Date(now).toISOString()).not("deal_id", "is", null).limit(20000),
     db.from("crm_reprospect_checkouts").select("deal_id, rep_email, checked_out_at, expires_at, released_at").gte("checked_out_at", windowStart),
@@ -140,5 +151,8 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  return NextResponse.json({ days, generatedAt: new Date(now).toISOString(), reps: out.sort((a: any, b: any) => b.book.open - a.book.open) });
+  // Sales reps only: anyone with no touches in the window and a trivial book
+  // (CS / admin logins that exist in reps for other reasons) is left off.
+  const shown = out.filter((r: any) => r.throughput.touches > 0 || r.book.open >= 10);
+  return NextResponse.json({ days, generatedAt: new Date(now).toISOString(), reps: shown.sort((a: any, b: any) => b.book.open - a.book.open) });
 }
