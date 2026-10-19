@@ -57,11 +57,10 @@ export async function GET(req: NextRequest) {
 
   const all = sprints ?? [];
   const dailyToday = all.filter((s: any) => s.kind === "daily" && s.for_date === today);
-  const hasList3 = dailyToday.some((s: any) => s.slot === 3);
   // Once List 3 is generated, Lists 1 & 2 drop from the dialer to avoid a
   // data mismatch — List 3 already carries their undialed leads forward.
   const visibleDaily = dailyToday
-    .filter((s: any) => !(hasList3 && (s.slot === 1 || s.slot === 2)))
+    // Lists 1 & 2 stay the day's working lists (10/15 redesign — no carryover into 3), so all three show.
     .sort((a: any, b: any) => (a.slot ?? 9) - (b.slot ?? 9));
   const manual = all.filter((s: any) => s.kind !== "daily");
 
