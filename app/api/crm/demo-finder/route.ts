@@ -17,7 +17,30 @@ export async function GET(req: NextRequest) {
   const willingOnly = p.get("willing") === "1";
   const q = (p.get("q") ?? "").trim().toLowerCase();
 
-  if (!zip) return NextResponse.json({ error: "a valid US zip is required" }, { status: 400 });
+  const SELECT = "id, name, email, phone, city, state, zip, lat, lng, version, camper_order_name, camper_order_at, order_line_items, contact_id, willing_to_demo, willing_at, shopify_customer_id, truck";
+  const shape = (o: any, origin: [number, number] | null) => ({
+    id: o.id, name: o.name, email: o.email, phone: o.phone, city: o.city, state: o.state, zip: o.zip,
+    miles: origin && o.lat != null ? Math.round(milesBetween(origin, [o.lat, o.lng])) : null,
+    version: o.version, truck: o.truck ?? null, willing: o.willing_to_demo, willingAt: o.willing_at,
+    orderName: o.camper_order_name, orderAt: o.camper_order_at, items: o.order_line_items ?? [], contactId: o.contact_id,
+    shopifyUrl: o.shopify_customer_id ? `https://admin.shopify.com/store/lone-peak-overland/customers/${String(o.shopify_customer_id).replace(/\D/g, "")}` : null,
+  });
+
+  // Name search without a zip (Kyle 10/20): "who is this owner?" — name,
+  // email, city or truck, anywhere in the country. Pure lookup; no distance.
+  if (!zip && q) {
+    const like = `%${q.replace(/[%_]/g, "")}%`;
+    let lookup = supabaseAdmin().from("camper_owners").select(SELECT).eq("eligible", true)
+      .or(`name.ilike.${like},email.ilike.${like},city.ilike.${like},truck.ilike.${like}`)
+      .order("camper_order_at", { ascending: false }).limit(100);
+    if (version === "v1" || version === "v2") lookup = lookup.in("version", version === "v1" ? ["v1", "both"] : ["v2", "both"]);
+    if (willingOnly) lookup = lookup.eq("willing_to_demo", true);
+    const { data, error } = await lookup;
+    if (error) return NextResponse.json({ error: "db error" }, { status: 500 });
+    return NextResponse.json({ origin: null, radius: null, count: data?.length ?? 0, owners: (data ?? []).map((o: any) => shape(o, null)) });
+  }
+
+  if (!zip) return NextResponse.json({ error: "enter a zip, or a name to look someone up" }, { status: 400 });
   const origin = zipCoords(zip);
   if (!origin) return NextResponse.json({ error: `unknown zip ${zip}` }, { status: 400 });
 
@@ -26,7 +49,7 @@ export async function GET(req: NextRequest) {
   const lngPad = radius / (69 * Math.max(Math.cos((origin[0] * Math.PI) / 180), 0.01));
   let query = supabaseAdmin()
     .from("camper_owners")
-    .select("id, name, email, phone, city, state, zip, lat, lng, version, camper_order_name, camper_order_at, order_line_items, contact_id, willing_to_demo, willing_at, shopify_customer_id, truck")
+    .select(SELECT)
     .not("lat", "is", null)
     .eq("eligible", true) // fulfilled, not cancelled/refunded camper order only (Kyle 9/23)
     .gte("lat", origin[0] - latPad)
@@ -46,27 +69,7 @@ export async function GET(req: NextRequest) {
     .filter((o: any) => !q || `${o.name} ${o.city} ${o.email} ${o.truck ?? ""}`.toLowerCase().includes(q))
     .sort((a: any, b: any) => a.miles - b.miles)
     .slice(0, 200)
-    .map((o: any) => ({
-      id: o.id,
-      name: o.name,
-      email: o.email,
-      phone: o.phone,
-      city: o.city,
-      state: o.state,
-      zip: o.zip,
-      miles: o.miles,
-      version: o.version,
-      truck: o.truck ?? null,
-      willing: o.willing_to_demo,
-      willingAt: o.willing_at,
-      orderName: o.camper_order_name,
-      orderAt: o.camper_order_at,
-      items: o.order_line_items ?? [],
-      contactId: o.contact_id,
-      shopifyUrl: o.shopify_customer_id
-        ? `https://admin.shopify.com/store/lone-peak-overland/customers/${String(o.shopify_customer_id).replace(/\D/g, "")}`
-        : null,
-    }));
+    .map((o: any) => shape(o, origin));
 
   return NextResponse.json({ origin: { zip, lat: origin[0], lng: origin[1] }, radius, count: owners.length, owners });
 }

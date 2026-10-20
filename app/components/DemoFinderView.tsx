@@ -18,7 +18,7 @@ interface Owner {
   city: string | null;
   state: string | null;
   zip: string | null;
-  miles: number;
+  miles: number | null;
   version: "v1" | "v2" | "both";
   truck?: string | null;
   willing: boolean;
@@ -45,6 +45,7 @@ const VERSION_BADGE: Record<string, { label: string; color: string }> = {
 
 export function DemoFinderView() {
   const [zip, setZip] = useState("");
+  const [name, setName] = useState(""); // name / email / city / truck lookup — works with or without a zip
   const [radius, setRadius] = useState(150);
   const [version, setVersion] = useState<"all" | "v1" | "v2">("all");
   const [willingOnly, setWillingOnly] = useState(false);
@@ -54,13 +55,16 @@ export function DemoFinderView() {
   const [err, setErr] = useState<string | null>(null);
 
   const search = async () => {
-    if (!/\d{5}/.test(zip)) {
-      setErr("Enter a 5-digit zip");
+    const hasZip = /\d{5}/.test(zip);
+    if (!hasZip && !name.trim()) {
+      setErr("Enter a zip to find owners nearby, or a name to look someone up");
       return;
     }
     setLoading(true);
     setErr(null);
-    const qs = new URLSearchParams({ zip, radius: String(radius) });
+    const qs = new URLSearchParams({ radius: String(radius) });
+    if (hasZip) qs.set("zip", zip);
+    if (name.trim()) qs.set("q", name.trim());
     if (version !== "all") qs.set("version", version);
     if (willingOnly) qs.set("willing", "1");
     const r = await fetch(`/api/crm/demo-finder?${qs}`).catch(() => null);
@@ -85,6 +89,14 @@ export function DemoFinderView() {
       </p>
 
       <div className="card" style={{ padding: "14px 16px", marginBottom: 16, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          className="vmsel"
+          style={{ width: 220 }}
+          placeholder="Name, email, city or truck…"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && void search()}
+        />
         <input
           className="vmsel"
           style={{ width: 130 }}
@@ -113,7 +125,7 @@ export function DemoFinderView() {
 
       {err && <div className="viewsub" style={{ color: "var(--crit)" }}>{err}</div>}
       {owners && (
-        <div className="viewsub">{owners.length} owner{owners.length === 1 ? "" : "s"} within {radius} miles</div>
+        <div className="viewsub">{owners.length} owner{owners.length === 1 ? "" : "s"}{origin ? ` within ${radius} miles` : name.trim() ? ` matching “${name.trim()}”` : ""}</div>
       )}
 
       <div style={{ display: "grid", gap: 10 }}>
@@ -126,7 +138,7 @@ export function DemoFinderView() {
               setOwners((prev) =>
                 (prev ?? [])
                   .map((x) => (x.id === o.id ? { ...x, city, state, zip, miles: m ?? x.miles } : x))
-                  .sort((a, b) => a.miles - b.miles)
+                  .sort((a, b) => (a.miles ?? 1e9) - (b.miles ?? 1e9))
               )
             }
           />
@@ -204,7 +216,7 @@ function OwnerCard({
         {owner.truck && <span style={{ fontSize: 12.5, color: "var(--text-2)", border: "1px solid var(--border-soft)", borderRadius: 5, padding: "1px 7px" }} title="Truck the camper is on (from the order)">🛻 {owner.truck}</span>}
         {willing && <span style={{ fontSize: 12, color: "var(--good, #3aa76d)", fontWeight: 700 }}>⭐ Willing</span>}
         <span style={{ fontSize: 13, color: "var(--text-2)" }}>
-          {owner.city}{owner.state ? `, ${owner.state}` : ""} · <b>{owner.miles} mi</b>
+          {owner.city}{owner.state ? `, ${owner.state}` : ""}{owner.miles != null && <> · <b>{owner.miles} mi</b></>}
         </span>
         <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6, flexWrap: "wrap" }}>
           {owner.phone && <button className="btn ghost" style={{ padding: "4px 10px", fontSize: 13 }} onClick={call}>📞 Call</button>}
