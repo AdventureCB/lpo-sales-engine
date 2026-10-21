@@ -601,32 +601,89 @@ const PHONE_TAB_ID = Math.random().toString(36).slice(2);
 const OWNER_KEY = "lpo:phone-owner";
 let ownerHeartbeat: ReturnType<typeof setInterval> | null = null;
 let ownerWatch: ReturnType<typeof setInterval> | null = null;
-function phoneOwnedElsewhere(): boolean {
+function ownerRecord(): { id: string; at: number; url?: string } | null {
   try {
-    const rec = JSON.parse(localStorage.getItem(OWNER_KEY) ?? "null");
-    return Boolean(rec && rec.id !== PHONE_TAB_ID && Date.now() - rec.at < 10_000);
+    return JSON.parse(localStorage.getItem(OWNER_KEY) ?? "null");
   } catch {
-    return false;
+    return null;
   }
+}
+function phoneOwnedElsewhere(): boolean {
+  const rec = ownerRecord();
+  return Boolean(rec && rec.id !== PHONE_TAB_ID && Date.now() - rec.at < 10_000);
 }
 function claimPhoneOwner() {
   try {
-    localStorage.setItem(OWNER_KEY, JSON.stringify({ id: PHONE_TAB_ID, at: Date.now() }));
+    localStorage.setItem(OWNER_KEY, JSON.stringify({ id: PHONE_TAB_ID, at: Date.now(), url: location.pathname }));
   } catch {}
 }
-if (typeof window !== "undefined") {
-  window.addEventListener("beforeunload", () => {
-    try {
-      const rec = JSON.parse(localStorage.getItem(OWNER_KEY) ?? "null");
-      if (rec?.id === PHONE_TAB_ID) localStorage.removeItem(OWNER_KEY);
-    } catch {}
+function releasePhoneOwner() {
+  try {
+    const rec = ownerRecord();
+    if (rec?.id === PHONE_TAB_ID) localStorage.removeItem(OWNER_KEY);
+  } catch {}
+}
+// Liveness: a stale heartbeat (a window that reloaded without firing
+// beforeunload — WKWebView does this — or a tab that was frozen) looks exactly
+// like a live owner for up to 10s. Ask the owner directly: if nothing answers
+// on the channel within 700ms, the lock is dead and we take it (Jackson 10/21:
+// "phone is open in another window" with no other window open).
+const ownerBus: BroadcastChannel | null = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("lpo-phone-owner") : null;
+ownerBus?.addEventListener("message", (ev) => {
+  const m = ev.data;
+  if (m?.type === "ping" && ownerRecord()?.id === PHONE_TAB_ID) ownerBus.postMessage({ type: "pong", id: PHONE_TAB_ID, url: location.pathname, nonce: m.nonce });
+});
+function ownerIsAlive(): Promise<{ alive: boolean; url?: string }> {
+  return new Promise((resolve) => {
+    if (!ownerBus) return resolve({ alive: true });
+    const nonce = Math.random().toString(36).slice(2);
+    const onMsg = (ev: MessageEvent) => {
+      if (ev.data?.type === "pong" && ev.data.nonce === nonce) {
+        ownerBus.removeEventListener("message", onMsg);
+        clearTimeout(t);
+        resolve({ alive: true, url: ev.data.url });
+      }
+    };
+    const t = setTimeout(() => {
+      ownerBus.removeEventListener("message", onMsg);
+      resolve({ alive: false });
+    }, 700);
+    ownerBus.addEventListener("message", onMsg);
+    ownerBus.postMessage({ type: "ping", nonce });
   });
+}
+/** Force this window to own the phone (rep confirmed no other window is in use). */
+export async function takeOverPhone(): Promise<void> {
+  try {
+    localStorage.removeItem(OWNER_KEY);
+  } catch {}
+  if (ownerWatch) {
+    clearInterval(ownerWatch);
+    ownerWatch = null;
+  }
+  ringDiag("owner-takeover", { url: location.pathname });
+  await ensurePhone();
+}
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", releasePhoneOwner);
+  window.addEventListener("pagehide", releasePhoneOwner);
 }
 // Reconnect backoff: 5s doubling to 60s; reset on a successful registration.
 let reconnectFails = 0;
 
 export async function ensurePhone(): Promise<any> {
   if (isAuxWindow()) throw new Error("Phone lives in your main window — dial from there");
+  if (phoneOwnedElsewhere()) {
+    // Confirm the lock is held by a LIVE window before refusing.
+    const rec = ownerRecord();
+    const live = await ownerIsAlive();
+    ringDiag("owner-conflict", { alive: live.alive, ownerUrl: live.url ?? rec?.url ?? null, ageMs: rec ? Date.now() - rec.at : null, here: location.pathname });
+    if (!live.alive) {
+      try {
+        localStorage.removeItem(OWNER_KEY);
+      } catch {}
+    }
+  }
   if (phoneOwnedElsewhere()) {
     state.conn = "phone active in another window";
     emit();

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ensurePhone, getPhoneState, newOutboundCall, setOutboundHandler, subscribePhone, hangupOutbound } from "./phoneClient";
+import { ensurePhone, getPhoneState, newOutboundCall, setOutboundHandler, subscribePhone, hangupOutbound, takeOverPhone } from "./phoneClient";
 import type { VmDrop } from "./VmPanel";
 import { DealDetailView, prefetchDeal, fmtWhen, BAND_COLOR, humanize, type AiProfile, type DialerDeal } from "./DealDetailView";
 import { timedIso } from "@/lib/allday";
@@ -1641,6 +1641,9 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
               {inCall && dialMethod === "browser" && browserCallState && (
                 <div style={{ fontSize: 13.5, color: browserCallState.startsWith("error") ? "var(--crit)" : "var(--text-2)", marginTop: 8 }}>
                   {browserCallState === "connecting" && "🌐 Connecting…"}
+                  {browserCallState.includes("another window") && (
+                    <button className="btn ghost" style={{ marginLeft: 8, padding: "1px 8px", fontSize: 11.5 }} onClick={() => void takeOverPhone().catch(() => {})}>Use phone here</button>
+                  )}
                   {browserCallState === "ringing" && "🌐 Ringing — in-browser call via Telnyx"}
                   {browserCallState === "active" && (
                     <>
@@ -2124,6 +2127,11 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
               title="Inbound calls ring here only while this shows ready"
             >
               {telnyxConn === "ready" ? "🟢 ready — inbound rings here" : `⚪ ${telnyxConn}`}
+              {telnyxConn === "phone active in another window" && (
+                <button className="btn ghost" style={{ marginLeft: 8, padding: "1px 8px", fontSize: 11.5 }} title="No other window open? Take the phone here." onClick={() => void takeOverPhone().catch(() => {})}>
+                  Use phone here
+                </button>
+              )}
             </span>
           )}
         </span>
