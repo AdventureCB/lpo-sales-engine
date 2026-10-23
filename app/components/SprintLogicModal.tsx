@@ -73,6 +73,7 @@ export function SprintLogicModal() {
               <B>Pool fill:</B> when your own deals don&apos;t fill the 60 slots (new rep, thin book), <B>unassigned pool deals</B> fill the rest — same
               marketing-signal ranking and 3-day exclusive checkout as List 3, limited to the list&apos;s timezones. Schedule any activity on one and it becomes <B>yours</B>.
             </P>
+            <P><B>Over the cap on purpose:</B> Lists 1 and 2 always include every <B>new deal</B>, every activity <B>due today or overdue up to a week</B>, and every fresh <B>🔥 1a buy signal</B>, even when that pushes the list past its size. The other tiers fill whatever room is left.</P>
 
             <H>List 3 — Bonus list · 1 PM PT (automatic)</H>
             <P>Lists 1 and 2 stay your working lists all day — nothing carries over. List 3 is extra ground to cover once they&apos;re worked, capped at the same size.</P>

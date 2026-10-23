@@ -528,7 +528,23 @@ async function computeLadder(
     return true;
   });
 
-  const capped = cfg.cap ? deduped.slice(0, cfg.cap) : deduped;
+  // Cap with exemptions (Kyle 10/23): every NEW deal (tier 3), every activity
+  // due today or overdue ≤7 days (tier 2), and every fresh 1a signal makes the
+  // list even past the cap; the remaining tiers fill whatever room is left.
+  // Ladder order is preserved.
+  const recentDueCutoff = daysAgoIso(7);
+  const mustInclude = (it: (typeof deduped)[number]) =>
+    it.tierLabel === "1a" || it.tierLabel === "3" || (it.tierLabel === "2" && (it.recencyAt ?? "") >= recentDueCutoff);
+  let capped = deduped;
+  if (cfg.cap) {
+    const required = deduped.filter(mustInclude).length;
+    let room = Math.max(cfg.cap - required, 0);
+    capped = deduped.filter((it) => {
+      if (mustInclude(it)) return true;
+      if (room > 0) { room--; return true; }
+      return false;
+    });
+  }
   return capped.map(({ _sub, ...it }) => it);
 }
 
