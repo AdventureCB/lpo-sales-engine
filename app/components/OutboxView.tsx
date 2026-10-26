@@ -24,7 +24,10 @@ const pctOf = (n: number, d: number) => (d > 0 ? `${Math.round((100 * n) / d)}%`
 export function OutboxView() {
   const [data, setData] = useState<{ isAdmin: boolean; me: string; scope: string; reps: { email: string; name: string }[]; items: Item[]; summary?: Summary[] } | null>(null);
   const [view, setView] = useState<"pending" | "scheduled" | "sent">("pending");
-  const [scope, setScope] = useState("mine");
+  // Admins open on the whole team's queue (remembered per browser); reps always see their own.
+  const [scope, setScopeState] = useState<string>(() => { try { return localStorage.getItem("outboxScope") ?? "team"; } catch { return "team"; } });
+  const setScope = (v: string) => { setScopeState(v); try { localStorage.setItem("outboxScope", v); } catch {} };
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, { subject: string; body: string }>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -90,7 +93,7 @@ export function OutboxView() {
         )}
         {(item.status === "draft" || item.status === "approved" || item.status === "failed") && (
           <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
-            {item.status !== "approved" && <button className="btn primary" style={{ padding: "6px 14px" }} disabled={busy === item.id} onClick={() => act(item, "approve")}>✓ Approve{changed ? " with edits" : ""}</button>}
+            {item.status !== "approved" && <button className="btn primary" style={{ padding: "6px 14px" }} disabled={busy === item.id} onClick={() => act(item, "approve")}>✓ Approve{changed ? " with edits" : ""}{data?.me && item.owner !== data.me ? ` for ${item.owner.split("@")[0]}` : ""}</button>}
             <button className="btn" style={{ padding: "6px 14px" }} disabled={busy === item.id} onClick={() => act(item, "approve", { sendNow: true })}>Send now</button>
             {item.status !== "approved" && <button className="btn ghost" style={{ padding: "6px 12px" }} disabled={busy === item.id} onClick={() => act(item, "skip")} title="Don't send this step; continue with the next one">Skip step</button>}
             <button className="btn ghost" style={{ padding: "6px 12px" }} disabled={busy === item.id} onClick={() => act(item, "reject")} title="Don't send; the campaign pauses on this step">Reject</button>
@@ -162,6 +165,23 @@ export function OutboxView() {
               <button key={k} className={`btn ${view === k ? "primary" : "ghost"}`} style={{ padding: "5px 12px", fontSize: 13 }} onClick={() => setView(k)}>{l}</button>
             ))}
           </div>
+          {view === "pending" && data.isAdmin && pending.length > 1 && (
+            <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
+              <button className="btn ghost" style={{ padding: "5px 12px", fontSize: 13 }} disabled={bulkBusy} onClick={async () => {
+                if (!confirm(`Approve all ${pending.length} drafts as written? Each sends at its scheduled time from the deal owner's account.`)) return;
+                setBulkBusy(true);
+                let ok = 0;
+                for (const it of pending) {
+                  const r = await fetch("/api/campaigns/outbox", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: it.id, action: "approve", ...(drafts[it.id] ? { subject: drafts[it.id].subject, body: drafts[it.id].body } : {}) }) }).catch(() => null);
+                  if (r?.ok) ok++;
+                }
+                setBulkBusy(false);
+                setMsg(`Approved ${ok} of ${pending.length} ✓`);
+                load();
+              }}>{bulkBusy ? "Approving…" : `✓ Approve all ${pending.length}`}</button>
+              <span style={{ fontSize: 12, color: "var(--text-3)" }}>Approving on a rep&apos;s behalf sends from their account; your name is recorded as the approver.</span>
+            </div>
+          )}
           {view === "pending" && (pending.length === 0 ? <div className="viewsub" style={{ marginTop: 0 }}>Nothing waiting. 🎉 Written (macro) campaigns skip approval and go straight to Scheduled.</div> : pending.map((i) => card(i, true)))}
           {view === "scheduled" && (approved.length === 0 ? <div className="viewsub" style={{ marginTop: 0 }}>Nothing scheduled.</div> : approved.map((i) => card(i, false)))}
           {view === "sent" && (recent.length === 0 ? <div className="viewsub" style={{ marginTop: 0 }}>Nothing sent in the last 14 days.</div> : recent.map((i) => card(i, false)))}
