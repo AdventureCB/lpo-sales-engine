@@ -11,7 +11,7 @@ interface Step {
 }
 interface Campaign {
   id?: string; name: string; channel: "email" | "sms"; mode: "macro" | "ai"; status: string; shared: boolean; owner_email?: string | null;
-  trigger: { type: "manual" | "state"; source?: string | null; min_attempts?: number | null; max_contacts?: number | null; min_contacts?: number | null; min_days_since_created?: number | null; min_days_since_activity?: number | null; pipeline?: string | null; web_signal?: string | null; web_within_days?: number | null; web_min_count?: number | null; assignment?: "any" | "assigned" | "unassigned" | null; no_campaign_days?: number | null; no_campaign_channel?: "sms" | "email" | null; no_manual_days?: number | null; no_manual_channel?: "sms" | "email" | "any" | null };
+  trigger: { type: "manual" | "state"; source?: string | null; min_attempts?: number | null; max_contacts?: number | null; min_contacts?: number | null; has_phone?: "yes" | "no" | null; min_days_since_created?: number | null; min_days_since_activity?: number | null; pipeline?: string | null; web_signal?: string | null; web_within_days?: number | null; web_min_count?: number | null; assignment?: "any" | "assigned" | "unassigned" | null; no_campaign_days?: number | null; no_campaign_channel?: "sms" | "email" | null; no_manual_days?: number | null; no_manual_channel?: "sms" | "email" | "any" | null };
   settings: { window_start?: number; window_end?: number; exit_on_reply?: boolean; stop_on_other_rep?: boolean; reenroll_after_days?: number; reentry_max?: number; reentry_days?: number };
   campaign_steps?: Step[];
   stats?: { active: number; completed: number; exited: number };
@@ -130,6 +130,16 @@ export function CampaignsView() {
                   <div className="field"><label>…within (days)</label><input className="vmsel" type="number" min={1} value={c.trigger.web_within_days ?? 7} onChange={(e) => set({ trigger: { ...c.trigger, web_within_days: Math.max(1, Number(e.target.value) || 7) } })} /></div>
                   <div className="field"><label>…at least (visits)</label><input className="vmsel" type="number" min={1} value={c.trigger.web_min_count ?? 1} onChange={(e) => set({ trigger: { ...c.trigger, web_min_count: Math.max(1, Number(e.target.value) || 1) } })} /></div>
                 </>
+              )}
+              {c.channel === "email" && (
+                <div className="field">
+                  <label>Has a phone number</label>
+                  <select className="vmsel" value={c.trigger.has_phone ?? "any"} onChange={(e) => set({ trigger: { ...c.trigger, has_phone: e.target.value === "any" ? null : (e.target.value as any) } })}>
+                    <option value="any">Either</option>
+                    <option value="yes">Yes</option>
+                    <option value="no">No (email-only leads)</option>
+                  </select>
+                </div>
               )}
               <div className="field">
                 <label>Assigned to a rep</label>
@@ -258,7 +268,7 @@ export function CampaignsView() {
   const triggerSummary = (c: Campaign) => {
     const t = c.trigger;
     if (t.type !== "state") return "manual enrollment";
-    const bits = [t.source ? `source ${t.source}` : "any source", t.pipeline ? `pipeline ${t.pipeline}` : null, t.min_attempts != null ? `≥${t.min_attempts} attempts` : null, t.min_contacts != null ? `≥${t.min_contacts} convos` : null, t.max_contacts != null ? `≤${t.max_contacts} convos` : null, t.min_days_since_created != null ? `≥${t.min_days_since_created}d old` : null, t.min_days_since_activity != null ? `quiet ${t.min_days_since_activity}d` : null, t.assignment === "assigned" ? "assigned to a rep" : t.assignment === "unassigned" ? "unassigned pool" : null, t.no_manual_days ? `no rep ${({ sms: "text", email: "email", any: "text/email" } as any)[t.no_manual_channel ?? "any"]} in ${t.no_manual_days}d` : null, t.no_campaign_days ? `no campaign ${(t.no_campaign_channel ?? "sms") === "sms" ? "text" : "email"} in ${t.no_campaign_days}d` : null, t.web_signal ? `${(WEB_SIGNAL_LABELS as any)[t.web_signal] ?? t.web_signal} ${t.web_min_count && t.web_min_count > 1 ? `${t.web_min_count}× ` : ""}in ${t.web_within_days ?? 7}d` : null].filter(Boolean);
+    const bits = [t.source ? `source ${t.source}` : "any source", t.pipeline ? `pipeline ${t.pipeline}` : null, t.min_attempts != null ? `≥${t.min_attempts} attempts` : null, t.min_contacts != null ? `≥${t.min_contacts} convos` : null, t.has_phone === "yes" ? "has phone" : t.has_phone === "no" ? "no phone" : null, t.max_contacts != null ? `≤${t.max_contacts} convos` : null, t.min_days_since_created != null ? `≥${t.min_days_since_created}d old` : null, t.min_days_since_activity != null ? `quiet ${t.min_days_since_activity}d` : null, t.assignment === "assigned" ? "assigned to a rep" : t.assignment === "unassigned" ? "unassigned pool" : null, t.no_manual_days ? `no rep ${({ sms: "text", email: "email", any: "text/email" } as any)[t.no_manual_channel ?? "any"]} in ${t.no_manual_days}d` : null, t.no_campaign_days ? `no campaign ${(t.no_campaign_channel ?? "sms") === "sms" ? "text" : "email"} in ${t.no_campaign_days}d` : null, t.web_signal ? `${(WEB_SIGNAL_LABELS as any)[t.web_signal] ?? t.web_signal} ${t.web_min_count && t.web_min_count > 1 ? `${t.web_min_count}× ` : ""}in ${t.web_within_days ?? 7}d` : null].filter(Boolean);
     return `auto: ${bits.join(" · ")}`;
   };
 

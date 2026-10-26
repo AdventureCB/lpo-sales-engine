@@ -32,6 +32,7 @@ export interface CampaignTrigger {
   min_attempts?: number | null;
   max_contacts?: number | null; // e.g. 0 = never had a conversation
   min_contacts?: number | null; // e.g. 1 = has had at least one conversation
+  has_phone?: "yes" | "no" | null; // usable phone on the contact (null = either) — e.g. email-only leads
   min_days_since_created?: number | null;
   min_days_since_activity?: number | null;
   pipeline?: string | null; // crm_pipelines.name
@@ -250,6 +251,9 @@ export async function stateTriggerCandidates(db: SupabaseClient, c: Pick<Campaig
     if (!ct || ct.dnc) return false;
     if (c.channel === "email" && ct.email_unsub) return false;
     if (c.channel === "sms" && (ct.sms_consent === "opted_out" || ct.sms_consent === "declined")) return false;
+    if (t.has_phone === "yes" || t.has_phone === "no") {
+      if ((t.has_phone === "yes") !== !!contactAddress(ct, "sms")) return false;
+    }
     return !!contactAddress(ct, c.channel);
   });
   const reMax = Math.max(1, c.settings.reentry_max ?? 1);
