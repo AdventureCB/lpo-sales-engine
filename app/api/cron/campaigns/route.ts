@@ -11,8 +11,11 @@ export const maxDuration = 120;
 export async function GET(req: Request) {
   if (!isAuthorizedCron(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const db = supabaseAdmin();
-  const triggers = await evaluateStateTriggers(db).catch((e) => ({ error: e instanceof Error ? e.message : "triggers failed" }));
-  const advanced = await advanceEnrollments(db).catch((e) => ({ error: e instanceof Error ? e.message : "advance failed" }));
+  const t0 = Date.now();
+  // Send first (due messages must never wait on enrollment work), then enroll
+  // and draft inside a time budget — the rest carries to the next 15-min pass.
   const sent = await sendDue(db).catch((e) => ({ error: e instanceof Error ? e.message : "send failed" }));
+  const triggers = await evaluateStateTriggers(db, { deadline: t0 + 60_000, perCampaign: 25 }).catch((e) => ({ error: e instanceof Error ? e.message : "triggers failed" }));
+  const advanced = await advanceEnrollments(db, { deadline: t0 + 105_000 }).catch((e) => ({ error: e instanceof Error ? e.message : "advance failed" }));
   return NextResponse.json({ ok: true, triggers, advanced, sent });
 }

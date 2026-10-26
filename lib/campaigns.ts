@@ -266,13 +266,16 @@ export async function stateTriggerCandidates(db: SupabaseClient, c: Pick<Campaig
 }
 
 /** State triggers: campaigns that auto-enroll deals matching a condition (evaluated every cron pass). */
-export async function evaluateStateTriggers(db: SupabaseClient): Promise<Record<string, { candidates: number; enrolled: number }>> {
+export async function evaluateStateTriggers(db: SupabaseClient, opts: { deadline?: number; perCampaign?: number } = {}): Promise<Record<string, { candidates: number; enrolled: number }>> {
+  // Random order each pass, so one slow campaign can't keep starving the others.
   const { data: camps } = await db.from("campaigns").select("*").eq("status", "active");
+  const order = [...((camps ?? []) as Campaign[])].sort(() => Math.random() - 0.5);
   const out: Record<string, { candidates: number; enrolled: number }> = {};
-  for (const c of (camps ?? []) as Campaign[]) {
+  for (const c of order) {
+    if (opts.deadline && Date.now() > opts.deadline) break;
     const t = c.trigger ?? { type: "manual" };
     if (t.type !== "state") continue;
-    const fresh = await stateTriggerCandidates(db, c, 100);
+    const fresh = await stateTriggerCandidates(db, c, opts.perCampaign ?? 25);
     const res = fresh.length ? await enrollDeals(db, c, fresh, "campaign-trigger") : [];
     out[c.name] = { candidates: fresh.length, enrolled: res.filter((r) => r.ok).length };
   }
@@ -397,15 +400,17 @@ export function intoWindow(atMs: number, tzOffset: number | null, win: { start: 
 
 // ── Advance: draft the next step into the Outbox ─────────────────────────────
 
-export async function advanceEnrollments(db: SupabaseClient): Promise<{ checked: number; drafted: number; exited: number; held: number }> {
+export async function advanceEnrollments(db: SupabaseClient, opts: { deadline?: number } = {}): Promise<{ checked: number; drafted: number; exited: number; held: number }> {
   const out = { checked: 0, drafted: 0, exited: 0, held: 0 };
   const { data: enrs } = await db
     .from("campaign_enrollments")
     .select("*, campaigns ( * ), crm_deals ( id, status, owner_email, owner_pipedrive_id, title, truck_model, crm_contacts ( id, name, first_name, last_name, emails, phones, tz_offset, dnc, sms_consent, email_unsub ) )")
     .eq("status", "active")
     .lte("next_step_at", iso(Date.now() + hours(DRAFT_AHEAD_H)))
+    .order("next_step_at")
     .limit(200);
   for (const e of (enrs ?? []) as any[]) {
+    if (opts.deadline && Date.now() > opts.deadline) break; // AI drafting is slow — the rest wait for the next pass
     out.checked++;
     const camp = e.campaigns as Campaign;
     const deal = e.crm_deals;
