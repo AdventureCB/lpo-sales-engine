@@ -4,6 +4,7 @@ import { RefreshButton } from "./RefreshButton";
 import { NewWindowButton } from "./NewWindowButton";
 import { NavGroup } from "./NavGroup";
 import { NotificationBell } from "./NotificationBell";
+import { OutboxNavBadge } from "./OutboxNavBadge";
 import { ThemeToggle } from "./ThemeToggle";
 import { ChatDock } from "./ChatDock";
 import { InboundTextWatcher } from "./InboundTextWatcher";
@@ -115,8 +116,14 @@ export function AppShell({
               <div className="navsec" key={section.header ?? "main"}>
                 {section.header && <h5>{section.header}</h5>}
                 {items.map((t) => (
-                  <Link key={t.href} href={t.href} className={active === t.href ? "active" : ""}>
+                  <Link
+                    key={t.href}
+                    href={t.href}
+                    className={active === t.href ? "active" : ""}
+                    style={t.href === "/outbox" ? { display: "flex", alignItems: "center", gap: 6 } : undefined}
+                  >
                     {t.label}
+                    {t.href === "/outbox" && <OutboxNavBadge />}
                   </Link>
                 ))}
               </div>

@@ -66,7 +66,7 @@ export function NotificationBell() {
         setItems(d.items ?? []);
         setCounts(d.counts ?? {});
         if (Array.isArray(d.reps)) setReps(d.reps);
-        publishNotifs(d.items ?? []); // feeds the Texts nav badge — no extra poll
+        publishNotifs(d.items ?? [], d.outboxPending); // feeds the Texts + Outbox nav badges — no extra poll
       })
       .catch(() => {});
   }, []);

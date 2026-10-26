@@ -300,8 +300,15 @@ export async function GET(req: NextRequest) {
   const counts: Record<NotifGroup, number> = { deals: 0, notes: 0, comms: 0, tasks: 0 };
   for (const i of items) counts[i.group]++;
 
+  // Campaign drafts waiting for approval — the rep's own; admins (who can
+  // approve for anyone) see the team total. Shown on the Outbox nav item.
+  let pendQ = db.from("campaign_sends").select("id", { count: "exact", head: true }).eq("status", "draft");
+  if (!isAdmin) pendQ = pendQ.eq("owner_email", user.email);
+  const outboxPending = (await pendQ).count ?? 0;
+
   return NextResponse.json({
     badge,
+    outboxPending,
     overdueCount: items.filter((i) => i.kind === "overdue").length,
     counts,
     scope: scopeUsed,

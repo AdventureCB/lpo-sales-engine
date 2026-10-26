@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { getNotifs, publishNotifs } from "./notifStore";
 
 interface Item {
   id: string; enrollmentId: string; campaignId: string; campaign: string; mode: string; step: number;
@@ -37,7 +38,12 @@ export function OutboxView() {
   const load = useCallback(() => {
     fetch(`/api/campaigns/outbox?scope=${encodeURIComponent(scope)}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((d) => { setData(d); setErr(null); })
+      .then((d) => {
+        setData(d); setErr(null);
+        // Keep the Outbox nav pill current as drafts are approved here, ahead
+        // of the bell's next poll (reps see their own; admins the team total).
+        if (!d.isAdmin || d.scope === "team") publishNotifs(getNotifs(), (d.items ?? []).filter((i: Item) => i.status === "draft").length);
+      })
       .catch((e) => setErr(String(e)));
   }, [scope]);
   useEffect(() => { load(); }, [load]);
