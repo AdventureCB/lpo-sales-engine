@@ -46,6 +46,10 @@ export interface CampaignTrigger {
   // message on this channel (from any campaign) within the last N days.
   no_campaign_days?: number | null;
   no_campaign_channel?: "sms" | "email" | null; // default sms
+  // Same idea for a rep's OWN messages: skip anyone a rep texted/emailed by
+  // hand within N days (campaign sends excluded).
+  no_manual_days?: number | null;
+  no_manual_channel?: "sms" | "email" | "any" | null; // default any
 }
 
 export { WEB_SIGNAL_LABELS } from "./web-signal-labels";
@@ -210,6 +214,29 @@ export async function evaluateStateTriggers(db: SupabaseClient): Promise<Record<
       const { data: dc } = await db.from("crm_deals").select("id, contact_id").in("id", rows.map((d) => d.id).slice(0, 2000));
       const contactOf = new Map((dc ?? []).map((x: any) => [x.id, x.contact_id]));
       rows = rows.filter((d) => !recentDeals.has(d.id) && !recentContacts.has(contactOf.get(d.id)));
+    }
+    if (t.no_manual_days != null && t.no_manual_days > 0 && rows.length) {
+      const ch = t.no_manual_channel ?? "any";
+      const types = ch === "any" ? ["sms", "email"] : [ch];
+      const since = iso(Date.now() - hours(24 * t.no_manual_days));
+      const ids = rows.map((d) => d.id).slice(0, 2000);
+      const { data: dc } = await db.from("crm_deals").select("id, contact_id").in("id", ids);
+      const contactOf = new Map((dc ?? []).map((x: any) => [x.id, x.contact_id as string | null]));
+      const contactIds = [...new Set([...contactOf.values()].filter(Boolean))] as string[];
+      const touchedDeals = new Set<string>(), touchedContacts = new Set<string>();
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data: acts } = await db.from("crm_activities").select("deal_id, contact_id, meta").in("deal_id", ids.slice(i, i + 200)).in("type", types).like("actor", "%@%").gte("occurred_at", since).limit(5000);
+        for (const a of acts ?? []) {
+          if ((a as any).meta?.campaign_send_id || ["inbound", "internal"].includes((a as any).meta?.direction)) continue;
+          if (a.deal_id) touchedDeals.add(a.deal_id);
+          if (a.contact_id) touchedContacts.add(a.contact_id);
+        }
+      }
+      for (let i = 0; i < contactIds.length; i += 200) {
+        const { data: acts } = await db.from("crm_activities").select("contact_id, meta").in("contact_id", contactIds.slice(i, i + 200)).in("type", types).like("actor", "%@%").gte("occurred_at", since).limit(5000);
+        for (const a of acts ?? []) if (!(a as any).meta?.campaign_send_id && !["inbound", "internal"].includes((a as any).meta?.direction) && a.contact_id) touchedContacts.add(a.contact_id);
+      }
+      rows = rows.filter((d) => !touchedDeals.has(d.id) && !touchedContacts.has(contactOf.get(d.id) ?? ""));
     }
     // Skip deals CURRENTLY active in this campaign; the re-entry gate is enforced in enrollDeals.
     const { data: activeRows } = await db.from("campaign_enrollments").select("deal_id").eq("campaign_id", c.id).eq("status", "active");
