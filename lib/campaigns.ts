@@ -413,9 +413,23 @@ export async function advanceEnrollments(db: SupabaseClient, opts: { deadline?: 
     .eq("status", "active")
     .lte("next_step_at", iso(Date.now() + hours(DRAFT_AHEAD_H)))
     .order("next_step_at")
-    .limit(200);
+    .limit(1000);
+  // Enrollments whose current step is already drafted/queued have nothing to
+  // do until that send goes out — skip them up front (one query) instead of
+  // running the reply/manual-send checks on each. 267 such rows from one big
+  // campaign filled the 200-row window every pass and starved the others
+  // (Re-engage sat undrafted, 10/26).
+  const pendingEnr = new Set<string>();
+  {
+    const ids = ((enrs ?? []) as any[]).map((e) => e.id);
+    for (let i = 0; i < ids.length; i += 300) {
+      const { data: pend } = await db.from("campaign_sends").select("enrollment_id, step_position").in("enrollment_id", ids.slice(i, i + 300)).in("status", ["draft", "approved"]);
+      for (const p of pend ?? []) pendingEnr.add(`${p.enrollment_id}:${p.step_position}`);
+    }
+  }
   for (const e of (enrs ?? []) as any[]) {
     if (opts.deadline && Date.now() > opts.deadline) break; // AI drafting is slow — the rest wait for the next pass
+    if (pendingEnr.has(`${e.id}:${e.current_step}`)) continue;
     out.checked++;
     const camp = e.campaigns as Campaign;
     const deal = e.crm_deals;
