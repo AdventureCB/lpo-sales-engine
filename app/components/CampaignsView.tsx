@@ -231,7 +231,7 @@ export function CampaignsView() {
                   <textarea className="vmsel" style={{ width: "100%", minHeight: 90, resize: "vertical", fontFamily: "inherit" }} placeholder="What this email should accomplish, roughly — the AI writes it per deal from everything it knows about them." value={s.prompt} onChange={(e) => setStep(i, { prompt: e.target.value })} />
                   <input className="vmsel" style={{ width: "100%" }} placeholder="Steering (optional): tone, length, must-mention, never-say…" value={s.steering} onChange={(e) => setStep(i, { steering: e.target.value })} />
                   <div style={{ fontSize: 12, color: "var(--text-3)" }}>Written per deal from the profile, calls, notes and signals, in the rep's voice, with the no-AI-tells style rules enforced. Every AI email waits for approval in the Outbox; written steps send on schedule without approval.</div>
-                  <PromptPreview prompt={s.prompt} steering={s.steering} campaignName={c.name} stepPosition={i} stepCount={steps.length} channel={c.channel} />
+                  <PromptPreview prompt={s.prompt} steering={s.steering} campaignName={c.name} stepPosition={i} stepCount={steps.length} channel={c.channel} campaignId={c.id} trigger={c.trigger} settings={c.settings} />
                 </div>
               )}
               {i > 0 && (
@@ -306,15 +306,25 @@ export function CampaignsView() {
 }
 
 /** Admin: try a step prompt on a real deal before activating (nothing saved or sent). */
-function PromptPreview({ prompt, steering, campaignName, stepPosition, stepCount, channel }: { prompt: string; steering: string; campaignName: string; stepPosition: number; stepCount: number; channel: "email" | "sms" }) {
+function PromptPreview({ prompt, steering, campaignName, stepPosition, stepCount, channel, campaignId, trigger, settings }: { prompt: string; steering: string; campaignName: string; stepPosition: number; stepCount: number; channel: "email" | "sms"; campaignId?: string; trigger?: any; settings?: any }) {
   const [q, setQ] = useState("");
-  const [hits, setHits] = useState<{ id: string; title: string }[]>([]);
+  const [hits, setHits] = useState<{ id: string; title: string; sender?: string }[]>([]);
+  // Only people this campaign would auto-enroll right now (uses the builder's current trigger).
+  const [onlyAudience, setOnlyAudience] = useState(trigger?.type === "state");
+  const [audience, setAudience] = useState<{ total: number; deals: { id: string; title: string; sender: string }[] } | null>(null);
+  const loadAudience = async (text = "") => {
+    const r = await fetch("/api/campaigns/candidates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ campaignId, channel, trigger, settings, q: text }) }).catch(() => null);
+    const j = r && r.ok ? await r.json() : { total: 0, deals: [] };
+    setAudience(j);
+    setHits(j.deals.slice(0, 8));
+  };
   const [deal, setDeal] = useState<{ id: string; title: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [out, setOut] = useState<{ from: string; subject: string; body: string; rationale: string; warnings: string[] } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const search = async (text: string) => {
     setQ(text);
+    if (onlyAudience) { await loadAudience(text); return; }
     if (text.trim().length < 2) { setHits([]); return; }
     const r = await fetch(`/api/crm/deals?q=${encodeURIComponent(text)}&status=open`).catch(() => null);
     const j = r && r.ok ? await r.json() : { deals: [] };
@@ -332,14 +342,20 @@ function PromptPreview({ prompt, steering, campaignName, stepPosition, stepCount
     <div style={{ marginTop: 8, borderTop: "1px dashed var(--border-soft)", paddingTop: 8 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>🧪 Test on a deal:</span>
+        {trigger?.type === "state" && (
+          <label style={{ display: "inline-flex", gap: 5, alignItems: "center", fontSize: 12.5, color: "var(--text-2)" }} title="Pick from the deals this campaign's auto-enroll would enroll right now">
+            <input type="checkbox" checked={onlyAudience} onChange={(e) => { setOnlyAudience(e.target.checked); setHits([]); setAudience(null); if (e.target.checked) void loadAudience(q); }} />
+            only people it would enroll{onlyAudience && audience ? ` (${audience.total})` : ""}
+          </label>
+        )}
         {deal ? (
           <span className="chip stage" style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>{deal.title}<button onClick={() => { setDeal(null); setOut(null); }} style={{ background: "none", border: 0, color: "inherit", cursor: "pointer" }}>✕</button></span>
         ) : (
           <span style={{ position: "relative" }}>
-            <input className="vmsel" style={{ width: 240 }} placeholder="search a deal…" value={q} onChange={(e) => void search(e.target.value)} />
+            <input className="vmsel" style={{ width: 240 }} placeholder={onlyAudience ? "pick from the audience…" : "search a deal…"} value={q} onFocus={() => { if (onlyAudience && !audience) void loadAudience(q); }} onChange={(e) => void search(e.target.value)} />
             {hits.length > 0 && (
               <div className="dropdown-menu" style={{ left: 0, top: "calc(100% + 4px)", width: 320, padding: 4 }}>
-                {hits.map((h) => <button key={h.id} className="btn ghost" style={{ display: "block", width: "100%", textAlign: "left", padding: "5px 8px", fontSize: 13 }} onClick={() => { setDeal(h); setHits([]); setQ(""); }}>{h.title}</button>)}
+                {hits.map((h) => <button key={h.id} className="btn ghost" style={{ display: "block", width: "100%", textAlign: "left", padding: "5px 8px", fontSize: 13 }} onClick={() => { setDeal(h); setHits([]); setQ(""); }}>{h.title}{h.sender && <span style={{ color: "var(--text-3)", fontSize: 11.5 }}> · from {h.sender.split("@")[0]}</span>}</button>)}
               </div>
             )}
           </span>

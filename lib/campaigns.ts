@@ -171,6 +171,100 @@ export async function enrollDeals(db: SupabaseClient, campaign: Campaign, dealId
   return out;
 }
 
+/**
+ * Deals a state-trigger campaign would enroll RIGHT NOW (eligible, not active
+ * in it, under the re-entry gate). Used by the cron and by the builder's
+ * "test on a deal this would enroll" preview, so both see the same people.
+ */
+export async function stateTriggerCandidates(db: SupabaseClient, c: Pick<Campaign, "id" | "channel" | "trigger" | "settings">, limit = 100): Promise<string[]> {
+  const t = c.trigger ?? { type: "manual" };
+  // Source / pipeline filters run in SQL so the candidate cap can't drop matches.
+  let q = db.from("crm_deals").select("id, owner_pipedrive_id, crm_contacts ( emails, phones, dnc, sms_consent, email_unsub )").eq("status", "open").order("updated_at", { ascending: false }).limit(2000);
+  if (t.source) {
+    const { data: src } = await db.from("deal_sources").select("id").ilike("name", t.source).maybeSingle();
+    if (!src) return [];
+    q = q.eq("source_id", src.id);
+  }
+  if (t.pipeline) {
+    const { data: pl } = await db.from("crm_pipelines").select("id").ilike("name", t.pipeline).maybeSingle();
+    const { data: st } = pl ? await db.from("crm_stages").select("id").eq("pipeline_id", pl.id) : { data: [] as any[] };
+    const ids = (st ?? []).map((x: any) => x.id);
+    if (!ids.length) return [];
+    q = q.in("stage_id", ids);
+  }
+  if (t.min_attempts != null) q = q.gte("attempt_count", t.min_attempts);
+  if (t.max_contacts != null) q = q.lte("contact_count", t.max_contacts);
+  if (t.min_contacts != null) q = q.gte("contact_count", t.min_contacts);
+  if (t.min_days_since_created != null) q = q.lte("created_at", iso(Date.now() - hours(24 * t.min_days_since_created)));
+  if (t.min_days_since_activity != null) q = q.or(`last_activity_at.is.null,last_activity_at.lte.${iso(Date.now() - hours(24 * t.min_days_since_activity))}`);
+  const { data: deals } = await q;
+  let rows = (deals ?? []) as any[];
+  if (t.assignment === "assigned" || t.assignment === "unassigned") {
+    const { data: cos } = await db.from("crm_reprospect_checkouts").select("deal_id").is("released_at", null).gt("expires_at", iso(Date.now()));
+    const checkedOut = new Set((cos ?? []).map((x: any) => x.deal_id));
+    const isAssigned = (d: any) => d.owner_pipedrive_id != null || checkedOut.has(d.id);
+    rows = rows.filter((d) => (t.assignment === "assigned" ? isAssigned(d) : !isAssigned(d)));
+  }
+  if (t.web_signal && rows.length) rows = await filterByWebSignal(db, rows, t);
+  if (t.no_campaign_days != null && t.no_campaign_days > 0 && rows.length) {
+    // Contact-level: a person with two deals still counts as messaged.
+    const ch = t.no_campaign_channel ?? "sms";
+    const since = iso(Date.now() - hours(24 * t.no_campaign_days));
+    const { data: sent } = await db.from("campaign_sends").select("deal_id, contact_id").eq("channel", ch).eq("status", "sent").gte("sent_at", since).limit(20000);
+    const recentDeals = new Set((sent ?? []).map((x: any) => x.deal_id).filter(Boolean));
+    const recentContacts = new Set((sent ?? []).map((x: any) => x.contact_id).filter(Boolean));
+    const { data: dc } = await db.from("crm_deals").select("id, contact_id").in("id", rows.map((d) => d.id).slice(0, 2000));
+    const contactOf = new Map((dc ?? []).map((x: any) => [x.id, x.contact_id]));
+    rows = rows.filter((d) => !recentDeals.has(d.id) && !recentContacts.has(contactOf.get(d.id)));
+  }
+  if (t.no_manual_days != null && t.no_manual_days > 0 && rows.length) {
+    const ch = t.no_manual_channel ?? "any";
+    const types = ch === "any" ? ["sms", "email"] : [ch];
+    const since = iso(Date.now() - hours(24 * t.no_manual_days));
+    const ids = rows.map((d) => d.id).slice(0, 2000);
+    const { data: dc } = await db.from("crm_deals").select("id, contact_id").in("id", ids);
+    const contactOf = new Map((dc ?? []).map((x: any) => [x.id, x.contact_id as string | null]));
+    const contactIds = [...new Set([...contactOf.values()].filter(Boolean))] as string[];
+    const touchedDeals = new Set<string>(), touchedContacts = new Set<string>();
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data: acts } = await db.from("crm_activities").select("deal_id, contact_id, meta").in("deal_id", ids.slice(i, i + 200)).in("type", types).like("actor", "%@%").gte("occurred_at", since).limit(5000);
+      for (const a of acts ?? []) {
+        if ((a as any).meta?.campaign_send_id || ["inbound", "internal"].includes((a as any).meta?.direction)) continue;
+        if (a.deal_id) touchedDeals.add(a.deal_id);
+        if (a.contact_id) touchedContacts.add(a.contact_id);
+      }
+    }
+    for (let i = 0; i < contactIds.length; i += 200) {
+      const { data: acts } = await db.from("crm_activities").select("contact_id, meta").in("contact_id", contactIds.slice(i, i + 200)).in("type", types).like("actor", "%@%").gte("occurred_at", since).limit(5000);
+      for (const a of acts ?? []) if (!(a as any).meta?.campaign_send_id && !["inbound", "internal"].includes((a as any).meta?.direction) && a.contact_id) touchedContacts.add(a.contact_id);
+    }
+    rows = rows.filter((d) => !touchedDeals.has(d.id) && !touchedContacts.has(contactOf.get(d.id) ?? ""));
+  }
+  // Skip deals CURRENTLY active in this campaign; the re-entry gate is enforced in enrollDeals.
+  const { data: activeRows } = await db.from("campaign_enrollments").select("deal_id").eq("campaign_id", c.id).eq("status", "active");
+  const activeIds = new Set((activeRows ?? []).map((s: any) => s.deal_id));
+  // Pre-screen what enrollDeals would reject anyway, so permanently-ineligible
+  // deals (no phone, DNC, declined texts, gated) can't crowd out new ones.
+  rows = rows.filter((d) => {
+    const ct = d.crm_contacts;
+    if (!ct || ct.dnc) return false;
+    if (c.channel === "email" && ct.email_unsub) return false;
+    if (c.channel === "sms" && (ct.sms_consent === "opted_out" || ct.sms_consent === "declined")) return false;
+    return !!contactAddress(ct, c.channel);
+  });
+  const reMax = Math.max(1, c.settings.reentry_max ?? 1);
+  const reDays = Math.max(1, c.settings.reentry_days ?? c.settings.reenroll_after_days ?? 60);
+  const entryCount = new Map<string, number>();
+  const candIds = rows.map((d) => d.id).filter((id) => !activeIds.has(id));
+  for (let i = 0; i < candIds.length; i += 200) {
+    const { data: ents } = await db.from("crm_activities").select("deal_id").in("deal_id", candIds.slice(i, i + 200))
+      .eq("type", "system").like("subject", "📣 Enrolled in campaign%").eq("meta->>campaign_id", c.id)
+      .gte("occurred_at", iso(Date.now() - hours(24 * reDays)));
+    for (const e of ents ?? []) entryCount.set(e.deal_id, (entryCount.get(e.deal_id) ?? 0) + 1);
+  }
+  return candIds.filter((id) => (entryCount.get(id) ?? 0) < reMax).slice(0, limit);
+}
+
 /** State triggers: campaigns that auto-enroll deals matching a condition (evaluated every cron pass). */
 export async function evaluateStateTriggers(db: SupabaseClient): Promise<Record<string, { candidates: number; enrolled: number }>> {
   const { data: camps } = await db.from("campaigns").select("*").eq("status", "active");
@@ -178,91 +272,7 @@ export async function evaluateStateTriggers(db: SupabaseClient): Promise<Record<
   for (const c of (camps ?? []) as Campaign[]) {
     const t = c.trigger ?? { type: "manual" };
     if (t.type !== "state") continue;
-    // Source / pipeline filters run in SQL so the candidate cap can't drop matches.
-    let q = db.from("crm_deals").select("id, owner_pipedrive_id, crm_contacts ( emails, phones, dnc, sms_consent, email_unsub )").eq("status", "open").order("updated_at", { ascending: false }).limit(2000);
-    if (t.source) {
-      const { data: src } = await db.from("deal_sources").select("id").ilike("name", t.source).maybeSingle();
-      if (!src) { out[c.name] = { candidates: 0, enrolled: 0 }; continue; }
-      q = q.eq("source_id", src.id);
-    }
-    if (t.pipeline) {
-      const { data: pl } = await db.from("crm_pipelines").select("id").ilike("name", t.pipeline).maybeSingle();
-      const { data: st } = pl ? await db.from("crm_stages").select("id").eq("pipeline_id", pl.id) : { data: [] as any[] };
-      const ids = (st ?? []).map((x: any) => x.id);
-      if (!ids.length) { out[c.name] = { candidates: 0, enrolled: 0 }; continue; }
-      q = q.in("stage_id", ids);
-    }
-    if (t.min_attempts != null) q = q.gte("attempt_count", t.min_attempts);
-    if (t.max_contacts != null) q = q.lte("contact_count", t.max_contacts);
-    if (t.min_contacts != null) q = q.gte("contact_count", t.min_contacts);
-    if (t.min_days_since_created != null) q = q.lte("created_at", iso(Date.now() - hours(24 * t.min_days_since_created)));
-    if (t.min_days_since_activity != null) q = q.or(`last_activity_at.is.null,last_activity_at.lte.${iso(Date.now() - hours(24 * t.min_days_since_activity))}`);
-    const { data: deals } = await q;
-    let rows = (deals ?? []) as any[];
-    if (t.assignment === "assigned" || t.assignment === "unassigned") {
-      const { data: cos } = await db.from("crm_reprospect_checkouts").select("deal_id").is("released_at", null).gt("expires_at", iso(Date.now()));
-      const checkedOut = new Set((cos ?? []).map((x: any) => x.deal_id));
-      const isAssigned = (d: any) => d.owner_pipedrive_id != null || checkedOut.has(d.id);
-      rows = rows.filter((d) => (t.assignment === "assigned" ? isAssigned(d) : !isAssigned(d)));
-    }
-    if (t.web_signal && rows.length) rows = await filterByWebSignal(db, rows, t);
-    if (t.no_campaign_days != null && t.no_campaign_days > 0 && rows.length) {
-      // Contact-level: a person with two deals still counts as messaged.
-      const ch = t.no_campaign_channel ?? "sms";
-      const since = iso(Date.now() - hours(24 * t.no_campaign_days));
-      const { data: sent } = await db.from("campaign_sends").select("deal_id, contact_id").eq("channel", ch).eq("status", "sent").gte("sent_at", since).limit(20000);
-      const recentDeals = new Set((sent ?? []).map((x: any) => x.deal_id).filter(Boolean));
-      const recentContacts = new Set((sent ?? []).map((x: any) => x.contact_id).filter(Boolean));
-      const { data: dc } = await db.from("crm_deals").select("id, contact_id").in("id", rows.map((d) => d.id).slice(0, 2000));
-      const contactOf = new Map((dc ?? []).map((x: any) => [x.id, x.contact_id]));
-      rows = rows.filter((d) => !recentDeals.has(d.id) && !recentContacts.has(contactOf.get(d.id)));
-    }
-    if (t.no_manual_days != null && t.no_manual_days > 0 && rows.length) {
-      const ch = t.no_manual_channel ?? "any";
-      const types = ch === "any" ? ["sms", "email"] : [ch];
-      const since = iso(Date.now() - hours(24 * t.no_manual_days));
-      const ids = rows.map((d) => d.id).slice(0, 2000);
-      const { data: dc } = await db.from("crm_deals").select("id, contact_id").in("id", ids);
-      const contactOf = new Map((dc ?? []).map((x: any) => [x.id, x.contact_id as string | null]));
-      const contactIds = [...new Set([...contactOf.values()].filter(Boolean))] as string[];
-      const touchedDeals = new Set<string>(), touchedContacts = new Set<string>();
-      for (let i = 0; i < ids.length; i += 200) {
-        const { data: acts } = await db.from("crm_activities").select("deal_id, contact_id, meta").in("deal_id", ids.slice(i, i + 200)).in("type", types).like("actor", "%@%").gte("occurred_at", since).limit(5000);
-        for (const a of acts ?? []) {
-          if ((a as any).meta?.campaign_send_id || ["inbound", "internal"].includes((a as any).meta?.direction)) continue;
-          if (a.deal_id) touchedDeals.add(a.deal_id);
-          if (a.contact_id) touchedContacts.add(a.contact_id);
-        }
-      }
-      for (let i = 0; i < contactIds.length; i += 200) {
-        const { data: acts } = await db.from("crm_activities").select("contact_id, meta").in("contact_id", contactIds.slice(i, i + 200)).in("type", types).like("actor", "%@%").gte("occurred_at", since).limit(5000);
-        for (const a of acts ?? []) if (!(a as any).meta?.campaign_send_id && !["inbound", "internal"].includes((a as any).meta?.direction) && a.contact_id) touchedContacts.add(a.contact_id);
-      }
-      rows = rows.filter((d) => !touchedDeals.has(d.id) && !touchedContacts.has(contactOf.get(d.id) ?? ""));
-    }
-    // Skip deals CURRENTLY active in this campaign; the re-entry gate is enforced in enrollDeals.
-    const { data: activeRows } = await db.from("campaign_enrollments").select("deal_id").eq("campaign_id", c.id).eq("status", "active");
-    const activeIds = new Set((activeRows ?? []).map((s: any) => s.deal_id));
-    // Pre-screen what enrollDeals would reject anyway, so permanently-ineligible
-    // deals (no phone, DNC, declined texts, gated) can't crowd out new ones.
-    rows = rows.filter((d) => {
-      const ct = d.crm_contacts;
-      if (!ct || ct.dnc) return false;
-      if (c.channel === "email" && ct.email_unsub) return false;
-      if (c.channel === "sms" && (ct.sms_consent === "opted_out" || ct.sms_consent === "declined")) return false;
-      return !!contactAddress(ct, c.channel);
-    });
-    const reMax = Math.max(1, c.settings.reentry_max ?? 1);
-    const reDays = Math.max(1, c.settings.reentry_days ?? c.settings.reenroll_after_days ?? 60);
-    const entryCount = new Map<string, number>();
-    const candIds = rows.map((d) => d.id).filter((id) => !activeIds.has(id));
-    for (let i = 0; i < candIds.length; i += 200) {
-      const { data: ents } = await db.from("crm_activities").select("deal_id").in("deal_id", candIds.slice(i, i + 200))
-        .eq("type", "system").like("subject", "📣 Enrolled in campaign%").eq("meta->>campaign_id", c.id)
-        .gte("occurred_at", iso(Date.now() - hours(24 * reDays)));
-      for (const e of ents ?? []) entryCount.set(e.deal_id, (entryCount.get(e.deal_id) ?? 0) + 1);
-    }
-    const fresh = candIds.filter((id) => (entryCount.get(id) ?? 0) < reMax).slice(0, 100);
+    const fresh = await stateTriggerCandidates(db, c, 100);
     const res = fresh.length ? await enrollDeals(db, c, fresh, "campaign-trigger") : [];
     out[c.name] = { candidates: fresh.length, enrolled: res.filter((r) => r.ok).length };
   }
