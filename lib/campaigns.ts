@@ -42,6 +42,10 @@ export interface CampaignTrigger {
   // Ownership (Kyle 10/26): "assigned" = owned by a rep OR checked out to one
   // (reprospect hold); "unassigned" = in the pool with no active checkout.
   assignment?: "any" | "assigned" | "unassigned" | null;
+  // Campaign fatigue gate (Kyle 10/26): skip people who received ANY campaign
+  // message on this channel (from any campaign) within the last N days.
+  no_campaign_days?: number | null;
+  no_campaign_channel?: "sms" | "email" | null; // default sms
 }
 
 export { WEB_SIGNAL_LABELS } from "./web-signal-labels";
@@ -196,6 +200,17 @@ export async function evaluateStateTriggers(db: SupabaseClient): Promise<Record<
       rows = rows.filter((d) => (t.assignment === "assigned" ? isAssigned(d) : !isAssigned(d)));
     }
     if (t.web_signal && rows.length) rows = await filterByWebSignal(db, rows, t);
+    if (t.no_campaign_days != null && t.no_campaign_days > 0 && rows.length) {
+      // Contact-level: a person with two deals still counts as messaged.
+      const ch = t.no_campaign_channel ?? "sms";
+      const since = iso(Date.now() - hours(24 * t.no_campaign_days));
+      const { data: sent } = await db.from("campaign_sends").select("deal_id, contact_id").eq("channel", ch).eq("status", "sent").gte("sent_at", since).limit(20000);
+      const recentDeals = new Set((sent ?? []).map((x: any) => x.deal_id).filter(Boolean));
+      const recentContacts = new Set((sent ?? []).map((x: any) => x.contact_id).filter(Boolean));
+      const { data: dc } = await db.from("crm_deals").select("id, contact_id").in("id", rows.map((d) => d.id).slice(0, 2000));
+      const contactOf = new Map((dc ?? []).map((x: any) => [x.id, x.contact_id]));
+      rows = rows.filter((d) => !recentDeals.has(d.id) && !recentContacts.has(contactOf.get(d.id)));
+    }
     // Skip deals CURRENTLY active in this campaign; the re-entry gate is enforced in enrollDeals.
     const { data: activeRows } = await db.from("campaign_enrollments").select("deal_id").eq("campaign_id", c.id).eq("status", "active");
     const activeIds = new Set((activeRows ?? []).map((s: any) => s.deal_id));
