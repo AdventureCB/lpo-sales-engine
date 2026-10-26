@@ -17,5 +17,7 @@ export async function GET(req: Request) {
   const sent = await sendDue(db).catch((e) => ({ error: e instanceof Error ? e.message : "send failed" }));
   const triggers = await evaluateStateTriggers(db, { deadline: t0 + 60_000, perCampaign: 25 }).catch((e) => ({ error: e instanceof Error ? e.message : "triggers failed" }));
   const advanced = await advanceEnrollments(db, { deadline: t0 + 105_000 }).catch((e) => ({ error: e instanceof Error ? e.message : "advance failed" }));
-  return NextResponse.json({ ok: true, triggers, advanced, sent });
+  const result = { at: new Date().toISOString(), ms: Date.now() - t0, triggers, advanced, sent };
+  await db.from("crm_sync_state").upsert({ key: "campaigns_last_run", value: result, updated_at: result.at }, { onConflict: "key" });
+  return NextResponse.json({ ok: true, ...result });
 }

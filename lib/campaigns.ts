@@ -571,6 +571,10 @@ export async function advanceEnrollments(db: SupabaseClient, opts: { deadline?: 
     if (!error) {
       await db.from("campaign_enrollments").update({ hold_reason: null }).eq("id", e.id);
       out.drafted++;
+    } else {
+      // Never fail silently: surface the reason on the enrollment.
+      console.error("campaign draft insert failed", error.message);
+      await hold(Date.now() + hours(1), `draft save failed: ${error.message.slice(0, 120)}`);
     }
   }
   return out;
