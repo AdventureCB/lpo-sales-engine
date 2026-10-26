@@ -31,6 +31,7 @@ export interface CampaignTrigger {
   source?: string | null; // deal_sources.name
   min_attempts?: number | null;
   max_contacts?: number | null; // e.g. 0 = never had a conversation
+  min_contacts?: number | null; // e.g. 1 = has had at least one conversation
   min_days_since_created?: number | null;
   min_days_since_activity?: number | null;
   pipeline?: string | null; // crm_pipelines.name
@@ -193,6 +194,7 @@ export async function evaluateStateTriggers(db: SupabaseClient): Promise<Record<
     }
     if (t.min_attempts != null) q = q.gte("attempt_count", t.min_attempts);
     if (t.max_contacts != null) q = q.lte("contact_count", t.max_contacts);
+    if (t.min_contacts != null) q = q.gte("contact_count", t.min_contacts);
     if (t.min_days_since_created != null) q = q.lte("created_at", iso(Date.now() - hours(24 * t.min_days_since_created)));
     if (t.min_days_since_activity != null) q = q.or(`last_activity_at.is.null,last_activity_at.lte.${iso(Date.now() - hours(24 * t.min_days_since_activity))}`);
     const { data: deals } = await q;
