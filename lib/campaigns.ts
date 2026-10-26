@@ -377,6 +377,13 @@ export async function advanceEnrollments(db: SupabaseClient): Promise<{ checked:
     const currentOwner = await dealOwnerEmail(db, deal);
     if (currentOwner && owner && currentOwner !== owner) { await exit(`deal reassigned to ${currentOwner.split("@")[0]}`); continue; }
     if (!owner) { await exit("deal has no owner"); continue; }
+    // A reprospect pool deal sends only WHILE it's checked out to the sender
+    // (Kyle 10/26) — when the 3-day hold ends without the rep taking it over,
+    // the campaign stops.
+    if (!currentOwner) {
+      const { data: co } = await db.from("crm_reprospect_checkouts").select("id").eq("deal_id", deal.id).eq("rep_email", owner).is("released_at", null).gt("expires_at", iso(Date.now())).limit(1).maybeSingle();
+      if (!co) { await exit("checkout ended"); continue; }
+    }
 
     const since = e.last_send_at ?? e.enrolled_at;
     const inbound = await inboundSince(db, deal.id, contact?.id ?? null, since);
@@ -502,6 +509,18 @@ export async function sendDue(db: SupabaseClient, opts: { limit?: number } = {})
     .order("scheduled_for")
     .limit(opts.limit ?? 25);
   for (const s of (due ?? []) as any[]) {
+    // Pool deal: send only while it's still checked out to the sender.
+    if (s.deal_id) {
+      const { data: dl } = await db.from("crm_deals").select("owner_pipedrive_id, owner_email").eq("id", s.deal_id).maybeSingle();
+      if (dl && dl.owner_pipedrive_id == null && !dl.owner_email) {
+        const { data: co } = await db.from("crm_reprospect_checkouts").select("id").eq("deal_id", s.deal_id).eq("rep_email", s.owner_email).is("released_at", null).gt("expires_at", iso(Date.now())).limit(1).maybeSingle();
+        if (!co) {
+          await db.from("campaign_sends").update({ status: "skipped", error: "checkout ended before send" }).eq("id", s.id);
+          if (s.enrollment_id) await db.from("campaign_enrollments").update({ status: "exited", exited_at: iso(Date.now()), exit_reason: "checkout ended" }).eq("id", s.enrollment_id).eq("status", "active");
+          continue;
+        }
+      }
+    }
     try {
       const meta = { campaign_id: s.campaign_id, campaign_send_id: s.id, campaign_step: s.step_position + 1 };
       const r = s.channel === "sms"
