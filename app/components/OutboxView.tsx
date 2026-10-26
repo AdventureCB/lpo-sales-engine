@@ -9,6 +9,7 @@ interface Item {
   owner: string; channel: string; to: string; subject: string | null; body: string; generatedBy: string; aiMeta: any;
   status: string; scheduledFor: string | null; approvedBy: string | null; approvedAt: string | null; edited: boolean; sentAt: string | null; error: string | null; createdAt: string;
   enrollment: { current_step: number; hold_reason: string | null; status: string } | null;
+  repliedAt: string | null;
 }
 
 const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—");
@@ -73,6 +74,7 @@ export function OutboxView() {
           <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>{item.campaign} · step {item.step}{item.mode === "ai" ? " · AI draft" : ""}</span>
           {item.stage && <span className="chip stage" style={{ fontSize: 11.5 }}>{item.stage}</span>}
           {data?.isAdmin && data.scope !== "mine" && <span style={{ fontSize: 12, color: "var(--text-2)" }}>from {item.owner.split("@")[0]}</span>}
+          {item.repliedAt && <span style={{ fontSize: 12, color: "var(--good)", fontWeight: 600 }}>↩ replied {fmt(item.repliedAt)}</span>}
           <span style={{ marginLeft: "auto", fontSize: 12.5, color: item.status === "failed" ? "var(--crit)" : "var(--text-3)" }}>
             {item.status === "sent" ? `sent ${fmt(item.sentAt)}` : item.status === "failed" ? `failed: ${item.error}` : item.status === "skipped" ? `skipped${item.error ? ` — ${item.error}` : ""}` : `scheduled ${fmt(item.scheduledFor)}`}
             {item.edited ? " · edited" : ""}

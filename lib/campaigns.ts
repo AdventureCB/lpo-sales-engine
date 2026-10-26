@@ -609,6 +609,39 @@ export async function advanceEnrollments(db: SupabaseClient, opts: { deadline?: 
   return out;
 }
 
+// ── Reply sweep ──────────────────────────────────────────────────────────────
+
+/**
+ * Exit active enrollments whose buyer replied since the last send. Advance
+ * only noticed replies when the NEXT step came due, so a reply after step 1
+ * of a 2-step campaign sat unrecognised (and step 2, if already approved,
+ * would still go out). Runs first in every pass, from the message stores
+ * (campaign_replies RPC) in one query.
+ */
+export async function sweepReplies(db: SupabaseClient): Promise<{ replied: number; optedOut: number }> {
+  const out = { replied: 0, optedOut: 0 };
+  const { data: rows, error } = await db.rpc("campaign_replies", { p_owner: null, p_active_only: true });
+  if (error) throw new Error(error.message);
+  const hits = ((rows ?? []) as any[]).filter((r) => r.last_reply_at > (r.last_send_at ?? ""));
+  if (!hits.length) return out;
+  const { data: camps } = await db.from("campaigns").select("id, name, channel, settings").in("id", [...new Set(hits.map((r) => r.campaign_id))]);
+  const campBy = new Map((camps ?? []).map((c: any) => [c.id, c]));
+  for (const r of hits) {
+    const camp = campBy.get(r.campaign_id);
+    if (!camp) continue;
+    const optOut = OPT_OUT_RE.test(r.last_reply_text ?? "");
+    if (!optOut && !(camp.settings?.exit_on_reply ?? true)) continue;
+    const reason = optOut ? "customer asked to stop" : "customer replied";
+    if (optOut && camp.channel === "email" && r.contact_id) await db.from("crm_contacts").update({ email_unsub: true, email_unsub_at: iso(Date.now()), email_unsub_source: "reply keyword" }).eq("id", r.contact_id);
+    const { data: upd } = await db.from("campaign_enrollments").update({ status: "exited", exited_at: iso(Date.now()), exit_reason: reason, hold_reason: null }).eq("id", r.enrollment_id).eq("status", "active").select("id");
+    if (!upd?.length) continue;
+    await db.from("campaign_sends").update({ status: "skipped", error: `campaign exited: ${reason}` }).eq("enrollment_id", r.enrollment_id).in("status", ["draft", "approved"]);
+    if (r.deal_id) await db.from("crm_activities").insert({ deal_id: r.deal_id, contact_id: r.contact_id ?? null, type: "system", subject: `📣 Campaign "${camp.name}" ended — ${reason}`, actor: "campaign", occurred_at: iso(Date.now()), meta: { campaign_id: camp.id } });
+    if (optOut) out.optedOut++; else out.replied++;
+  }
+  return out;
+}
+
 // ── Send approved items that are due ─────────────────────────────────────────
 
 export async function sendDue(db: SupabaseClient, opts: { limit?: number } = {}): Promise<{ sent: number; failed: number }> {

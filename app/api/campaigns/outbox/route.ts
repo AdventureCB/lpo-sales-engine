@@ -44,11 +44,15 @@ export async function GET(req: NextRequest) {
     for (let f = 0; ; f += 1000) { const { data: d } = await build(f, f + 999); all.push(...(d ?? [])); if (!d || d.length < 1000) break; }
     return all;
   };
-  const [allEnrs, allSends, camps] = await Promise.all([
+  const [allEnrs, allSends, camps, replies] = await Promise.all([
     pageAll((f, t) => { let q2 = db.from("campaign_enrollments").select("campaign_id, status, exit_reason, enrolled_at").range(f, t); if (ownerFilter) q2 = q2.eq("owner_email", ownerFilter); return q2; }),
     pageAll((f, t) => { let q2 = db.from("campaign_sends").select("campaign_id, channel, status, sent_at, track_token").range(f, t); if (ownerFilter) q2 = q2.eq("owner_email", ownerFilter); return q2; }),
     db.from("campaigns").select("id, name, channel, status").neq("status", "archived").then((r) => r.data ?? []),
+    // Real replies from the message stores (texts back / inbound email after
+    // the first send), not exit reasons — see migration 00182.
+    db.rpc("campaign_replies", { p_owner: ownerFilter, p_active_only: false }).then((r) => (r.data ?? []) as any[]),
   ]);
+  const repliedAt = new Map<string, string>(replies.map((r: any) => [r.enrollment_id, r.first_reply_at]));
   const tokens = allSends.map((x: any) => x.track_token).filter(Boolean);
   const opened = new Set<string>(), clicked = new Set<string>();
   for (let i = 0; i < tokens.length; i += 200) {
@@ -74,7 +78,7 @@ export async function GET(req: NextRequest) {
     return {
       id: c.id, name: c.name, channel: c.channel, status: c.status,
       enrolled: es.length, active: es.filter((e: any) => e.status === "active").length, completed: es.filter((e: any) => e.status === "completed").length,
-      exits, replied: exits["replied"] ?? 0,
+      exits, replied: replies.filter((r: any) => r.campaign_id === c.id).length,
       awaiting: ss.filter((x: any) => x.status === "draft").length, scheduled: ss.filter((x: any) => x.status === "approved").length,
       sent: sent.length, sent7d: sent.filter((x: any) => (x.sent_at ?? "") >= weekAgo).length,
       failed: ss.filter((x: any) => x.status === "failed").length, skipped: ss.filter((x: any) => x.status === "skipped").length,
@@ -100,6 +104,7 @@ export async function GET(req: NextRequest) {
       contactName: s.crm_contacts?.name ?? null, owner: s.owner_email, channel: s.channel, to: s.to_address, subject: s.subject, body: s.body,
       generatedBy: s.generated_by, aiMeta: s.ai_meta, status: s.status, scheduledFor: s.scheduled_for, approvedBy: s.approved_by, approvedAt: s.approved_at,
       edited: s.edited, sentAt: s.sent_at, error: s.error, createdAt: s.created_at, enrollment: enrBy.get(s.enrollment_id) ?? null,
+      repliedAt: repliedAt.get(s.enrollment_id) ?? null,
     })),
   });
 }
