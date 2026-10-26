@@ -581,12 +581,37 @@ export async function sendDue(db: SupabaseClient, opts: { limit?: number } = {})
   const out = { sent: 0, failed: 0 };
   const { data: due } = await db
     .from("campaign_sends")
-    .select("*, campaign_enrollments ( id, current_step, campaign_id ), campaigns ( name, channel )")
+    .select("*, campaign_enrollments ( id, current_step, campaign_id, enrolled_at, last_send_at ), campaigns ( name, channel, settings )")
     .eq("status", "approved")
     .lte("scheduled_for", new Date().toISOString())
     .order("scheduled_for")
     .limit(opts.limit ?? 25);
   for (const s of (due ?? []) as any[]) {
+    // Re-check manual contact at SEND time — a rep may have texted/emailed
+    // after this step was drafted (Kyle 10/26). Same rules as drafting:
+    // another rep → campaign stops; the owner → wait 24h after their message.
+    if (s.deal_id && s.owner_email) {
+      const enr = s.campaign_enrollments;
+      const since = [s.created_at, enr?.last_send_at, enr?.enrolled_at].filter(Boolean).sort().pop() as string;
+      const manual = await manualSendsSince(db, s.deal_id, s.contact_id ?? null, s.owner_email, since);
+      if (manual.otherBy && (s.campaigns?.settings?.stop_on_other_rep ?? true)) {
+        const reason = `${manual.otherBy.split("@")[0]} contacted them`;
+        await db.from("campaign_sends").update({ status: "skipped", error: `campaign exited: ${reason}` }).eq("id", s.id);
+        if (s.enrollment_id) {
+          await db.from("campaign_enrollments").update({ status: "exited", exited_at: iso(Date.now()), exit_reason: reason }).eq("id", s.enrollment_id).eq("status", "active");
+          await db.from("crm_activities").insert({ deal_id: s.deal_id, contact_id: s.contact_id, type: "system", subject: `📣 Campaign "${s.campaigns?.name ?? ""}" ended — ${reason}`, actor: "campaign", occurred_at: iso(Date.now()), meta: { campaign_id: s.campaign_id } });
+        }
+        continue;
+      }
+      if (manual.ownerAt) {
+        const earliest = Date.parse(manual.ownerAt) + hours(OWNER_SEND_HOLD_H);
+        if (earliest > Date.now()) {
+          await db.from("campaign_sends").update({ scheduled_for: iso(earliest) }).eq("id", s.id);
+          if (s.enrollment_id) await db.from("campaign_enrollments").update({ hold_reason: `${s.owner_email.split("@")[0]} just reached out — waiting 24h` }).eq("id", s.enrollment_id);
+          continue;
+        }
+      }
+    }
     // Pool deal: send only while it's still checked out to the sender.
     if (s.deal_id) {
       const { data: dl } = await db.from("crm_deals").select("owner_pipedrive_id, owner_email").eq("id", s.deal_id).maybeSingle();
