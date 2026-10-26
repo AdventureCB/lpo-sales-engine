@@ -39,6 +39,9 @@ export interface CampaignTrigger {
   web_signal?: import("./web-signal-labels").WebSignalKind | null;
   web_within_days?: number | null; // default 7
   web_min_count?: number | null; // default 1 (e.g. 2 = returned at least twice)
+  // Ownership (Kyle 10/26): "assigned" = owned by a rep OR checked out to one
+  // (reprospect hold); "unassigned" = in the pool with no active checkout.
+  assignment?: "any" | "assigned" | "unassigned" | null;
 }
 
 export { WEB_SIGNAL_LABELS } from "./web-signal-labels";
@@ -47,7 +50,11 @@ export interface CampaignSettings {
   window_end?: number;
   exit_on_reply?: boolean; // default true
   stop_on_other_rep?: boolean; // default true
-  reenroll_after_days?: number; // default 60: exited/completed deals can't re-enter sooner
+  reenroll_after_days?: number; // legacy default for reentry_days
+  // Re-entry gate (Kyle 10/26): a deal may ENTER this campaign at most
+  // reentry_max times within any reentry_days window (default 1 in 60).
+  reentry_max?: number;
+  reentry_days?: number;
 }
 export interface Campaign {
   id: string; name: string; channel: "email" | "sms"; mode: "macro" | "ai"; status: string;
@@ -105,10 +112,16 @@ export async function enrollDeals(db: SupabaseClient, campaign: Campaign, dealId
     if (c.dnc) { out.push({ dealId: d.id, ok: false, reason: "contact is DNC" }); continue; }
     if (campaign.channel === "email" && c.email_unsub) { out.push({ dealId: d.id, ok: false, reason: "opted out of email" }); continue; }
     if (campaign.channel === "sms" && c.sms_consent === "opted_out") { out.push({ dealId: d.id, ok: false, reason: "texted STOP" }); continue; }
+    if (campaign.channel === "sms" && c.sms_consent === "declined") { out.push({ dealId: d.id, ok: false, reason: "declined texts" }); continue; }
     const to = contactAddress(c, campaign.channel);
     if (!to) { out.push({ dealId: d.id, ok: false, reason: campaign.channel === "email" ? "no email on contact" : "no usable phone" }); continue; }
-    const owner = await dealOwnerEmail(db, d);
-    if (!owner) { out.push({ dealId: d.id, ok: false, reason: "deal has no owner (pool)" }); continue; }
+    // Sender = deal owner, else the rep the pool deal is checked out to.
+    let owner = await dealOwnerEmail(db, d);
+    if (!owner) {
+      const { data: co } = await db.from("crm_reprospect_checkouts").select("rep_email").eq("deal_id", d.id).is("released_at", null).gt("expires_at", iso(Date.now())).limit(1).maybeSingle();
+      owner = co?.rep_email ?? null;
+    }
+    if (!owner) { out.push({ dealId: d.id, ok: false, reason: "deal has no owner and isn't checked out (pool)" }); continue; }
     if (campaign.channel === "email") {
       const { data: g } = await db.from("gmail_accounts").select("status").eq("user_email", owner).maybeSingle();
       if (!g || g.status !== "active") { out.push({ dealId: d.id, ok: false, reason: `${owner.split("@")[0]} has no connected Gmail` }); continue; }
@@ -124,10 +137,14 @@ export async function enrollDeals(db: SupabaseClient, campaign: Campaign, dealId
     const activeSameChannel = (existing ?? []).find((e: any) => e.status === "active" && e.campaigns?.channel === campaign.channel);
     if (activeSameChannel) { out.push({ dealId: d.id, ok: false, reason: activeSameChannel.campaign_id === campaign.id ? "already enrolled" : `already in another ${campaign.channel} campaign` }); continue; }
     const prior = (existing ?? []).find((e: any) => e.campaign_id === campaign.id);
-    if (prior && prior.exited_at && Date.now() - Date.parse(prior.exited_at) < hours(24 * reenrollDays)) {
-      out.push({ dealId: d.id, ok: false, reason: `was in this campaign <${reenrollDays}d ago` });
-      continue;
-    }
+    if (prior && prior.status === "active") { out.push({ dealId: d.id, ok: false, reason: "already enrolled" }); continue; }
+    // Re-entry gate: entries are logged as "📣 Enrolled in campaign" activities.
+    const reMax = Math.max(1, campaign.settings.reentry_max ?? 1);
+    const reDays = Math.max(1, campaign.settings.reentry_days ?? reenrollDays);
+    const { count: entries } = await db.from("crm_activities").select("id", { count: "exact", head: true })
+      .eq("deal_id", d.id).eq("type", "system").like("subject", "📣 Enrolled in campaign%")
+      .eq("meta->>campaign_id", campaign.id).gte("occurred_at", iso(Date.now() - hours(24 * reDays)));
+    if ((entries ?? 0) >= reMax) { out.push({ dealId: d.id, ok: false, reason: `entered ${entries}× in the last ${reDays}d (limit ${reMax})` }); continue; }
     const row = {
       campaign_id: campaign.id, deal_id: d.id, contact_id: c.id, owner_email: owner, status: "active", current_step: 0,
       next_step_at: iso(Date.now() + hours(firstDelay)), enrolled_at: new Date().toISOString(), enrolled_by: by, exited_at: null, exit_reason: null, hold_reason: null, last_send_at: null,
@@ -152,20 +169,56 @@ export async function evaluateStateTriggers(db: SupabaseClient): Promise<Record<
   for (const c of (camps ?? []) as Campaign[]) {
     const t = c.trigger ?? { type: "manual" };
     if (t.type !== "state") continue;
-    let q = db.from("crm_deals").select("id, source_id, deal_sources ( name ), crm_stages ( crm_pipelines ( name ) ), crm_contacts ( emails )").eq("status", "open").limit(500);
+    // Source / pipeline filters run in SQL so the candidate cap can't drop matches.
+    let q = db.from("crm_deals").select("id, owner_pipedrive_id, crm_contacts ( emails, phones, dnc, sms_consent, email_unsub )").eq("status", "open").order("updated_at", { ascending: false }).limit(2000);
+    if (t.source) {
+      const { data: src } = await db.from("deal_sources").select("id").ilike("name", t.source).maybeSingle();
+      if (!src) { out[c.name] = { candidates: 0, enrolled: 0 }; continue; }
+      q = q.eq("source_id", src.id);
+    }
+    if (t.pipeline) {
+      const { data: pl } = await db.from("crm_pipelines").select("id").ilike("name", t.pipeline).maybeSingle();
+      const { data: st } = pl ? await db.from("crm_stages").select("id").eq("pipeline_id", pl.id) : { data: [] as any[] };
+      const ids = (st ?? []).map((x: any) => x.id);
+      if (!ids.length) { out[c.name] = { candidates: 0, enrolled: 0 }; continue; }
+      q = q.in("stage_id", ids);
+    }
     if (t.min_attempts != null) q = q.gte("attempt_count", t.min_attempts);
     if (t.max_contacts != null) q = q.lte("contact_count", t.max_contacts);
     if (t.min_days_since_created != null) q = q.lte("created_at", iso(Date.now() - hours(24 * t.min_days_since_created)));
     if (t.min_days_since_activity != null) q = q.or(`last_activity_at.is.null,last_activity_at.lte.${iso(Date.now() - hours(24 * t.min_days_since_activity))}`);
     const { data: deals } = await q;
     let rows = (deals ?? []) as any[];
-    if (t.source) rows = rows.filter((d) => String(d.deal_sources?.name ?? "").toLowerCase() === String(t.source).toLowerCase());
-    if (t.pipeline) rows = rows.filter((d) => String(d.crm_stages?.crm_pipelines?.name ?? "").toLowerCase() === String(t.pipeline).toLowerCase());
+    if (t.assignment === "assigned" || t.assignment === "unassigned") {
+      const { data: cos } = await db.from("crm_reprospect_checkouts").select("deal_id").is("released_at", null).gt("expires_at", iso(Date.now()));
+      const checkedOut = new Set((cos ?? []).map((x: any) => x.deal_id));
+      const isAssigned = (d: any) => d.owner_pipedrive_id != null || checkedOut.has(d.id);
+      rows = rows.filter((d) => (t.assignment === "assigned" ? isAssigned(d) : !isAssigned(d)));
+    }
     if (t.web_signal && rows.length) rows = await filterByWebSignal(db, rows, t);
-    // Skip deals already enrolled in this campaign (any status — the re-enroll window is enforced inside enrollDeals).
-    const { data: seen } = await db.from("campaign_enrollments").select("deal_id").eq("campaign_id", c.id);
-    const seenIds = new Set((seen ?? []).map((s: any) => s.deal_id));
-    const fresh = rows.filter((d) => !seenIds.has(d.id)).map((d) => d.id).slice(0, 100);
+    // Skip deals CURRENTLY active in this campaign; the re-entry gate is enforced in enrollDeals.
+    const { data: activeRows } = await db.from("campaign_enrollments").select("deal_id").eq("campaign_id", c.id).eq("status", "active");
+    const activeIds = new Set((activeRows ?? []).map((s: any) => s.deal_id));
+    // Pre-screen what enrollDeals would reject anyway, so permanently-ineligible
+    // deals (no phone, DNC, declined texts, gated) can't crowd out new ones.
+    rows = rows.filter((d) => {
+      const ct = d.crm_contacts;
+      if (!ct || ct.dnc) return false;
+      if (c.channel === "email" && ct.email_unsub) return false;
+      if (c.channel === "sms" && (ct.sms_consent === "opted_out" || ct.sms_consent === "declined")) return false;
+      return !!contactAddress(ct, c.channel);
+    });
+    const reMax = Math.max(1, c.settings.reentry_max ?? 1);
+    const reDays = Math.max(1, c.settings.reentry_days ?? c.settings.reenroll_after_days ?? 60);
+    const entryCount = new Map<string, number>();
+    const candIds = rows.map((d) => d.id).filter((id) => !activeIds.has(id));
+    for (let i = 0; i < candIds.length; i += 200) {
+      const { data: ents } = await db.from("crm_activities").select("deal_id").in("deal_id", candIds.slice(i, i + 200))
+        .eq("type", "system").like("subject", "📣 Enrolled in campaign%").eq("meta->>campaign_id", c.id)
+        .gte("occurred_at", iso(Date.now() - hours(24 * reDays)));
+      for (const e of ents ?? []) entryCount.set(e.deal_id, (entryCount.get(e.deal_id) ?? 0) + 1);
+    }
+    const fresh = candIds.filter((id) => (entryCount.get(id) ?? 0) < reMax).slice(0, 100);
     const res = fresh.length ? await enrollDeals(db, c, fresh, "campaign-trigger") : [];
     out[c.name] = { candidates: fresh.length, enrolled: res.filter((r) => r.ok).length };
   }
@@ -319,6 +372,7 @@ export async function advanceEnrollments(db: SupabaseClient): Promise<{ checked:
     if (contact?.dnc) { await exit("contact marked DNC"); continue; }
     if (camp.channel === "email" && contact?.email_unsub) { await exit("opted out of email"); continue; }
     if (camp.channel === "sms" && contact?.sms_consent === "opted_out") { await exit("texted STOP"); continue; }
+    if (camp.channel === "sms" && contact?.sms_consent === "declined") { await exit("declined texts"); continue; }
     const owner = e.owner_email ?? (await dealOwnerEmail(db, deal));
     const currentOwner = await dealOwnerEmail(db, deal);
     if (currentOwner && owner && currentOwner !== owner) { await exit(`deal reassigned to ${currentOwner.split("@")[0]}`); continue; }

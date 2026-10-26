@@ -11,8 +11,8 @@ interface Step {
 }
 interface Campaign {
   id?: string; name: string; channel: "email" | "sms"; mode: "macro" | "ai"; status: string; shared: boolean; owner_email?: string | null;
-  trigger: { type: "manual" | "state"; source?: string | null; min_attempts?: number | null; max_contacts?: number | null; min_days_since_created?: number | null; min_days_since_activity?: number | null; pipeline?: string | null; web_signal?: string | null; web_within_days?: number | null; web_min_count?: number | null };
-  settings: { window_start?: number; window_end?: number; exit_on_reply?: boolean; stop_on_other_rep?: boolean; reenroll_after_days?: number };
+  trigger: { type: "manual" | "state"; source?: string | null; min_attempts?: number | null; max_contacts?: number | null; min_days_since_created?: number | null; min_days_since_activity?: number | null; pipeline?: string | null; web_signal?: string | null; web_within_days?: number | null; web_min_count?: number | null; assignment?: "any" | "assigned" | "unassigned" | null };
+  settings: { window_start?: number; window_end?: number; exit_on_reply?: boolean; stop_on_other_rep?: boolean; reenroll_after_days?: number; reentry_max?: number; reentry_days?: number };
   campaign_steps?: Step[];
   stats?: { active: number; completed: number; exited: number };
   stepStats?: Record<string, { sent: number; opened: number; clicked: number; replied: number }>;
@@ -130,11 +130,19 @@ export function CampaignsView() {
                   <div className="field"><label>…at least (visits)</label><input className="vmsel" type="number" min={1} value={c.trigger.web_min_count ?? 1} onChange={(e) => set({ trigger: { ...c.trigger, web_min_count: Math.max(1, Number(e.target.value) || 1) } })} /></div>
                 </>
               )}
+              <div className="field">
+                <label>Assigned to a rep</label>
+                <select className="vmsel" value={c.trigger.assignment ?? "any"} onChange={(e) => set({ trigger: { ...c.trigger, assignment: e.target.value === "any" ? null : (e.target.value as any) } })}>
+                  <option value="any">Either</option>
+                  <option value="assigned">Yes: owned or checked out to a rep</option>
+                  <option value="unassigned">No: unassigned pool, not checked out</option>
+                </select>
+              </div>
               <div className="field"><label>Quiet for (days, no activity)</label><input className="vmsel" type="number" min={0} value={c.trigger.min_days_since_activity ?? ""} onChange={(e) => set({ trigger: { ...c.trigger, min_days_since_activity: e.target.value === "" ? null : Number(e.target.value) } })} placeholder="any" /></div>
             </div>
           )}
           <div className="viewsub" style={{ fontSize: 12.5 }}>
-            Always enforced: open deals only · has an email · owner has Gmail connected · not DNC / opted out · one active email campaign per deal · no re-entry within {c.settings.reenroll_after_days ?? 60} days.
+            Always enforced: open deals only · {c.channel === "sms" ? "has a usable phone · sender has a texting number · not DNC, STOP or declined texts" : "has an email · sender has Gmail connected · not DNC / unsubscribed"} · sender = deal owner, or the rep it's checked out to · one active {c.channel === "sms" ? "text" : "email"} campaign per deal · may enter {c.settings.reentry_max ?? 1}× per {c.settings.reentry_days ?? c.settings.reenroll_after_days ?? 60} days.
           </div>
         </div>
 
@@ -149,6 +157,13 @@ export function CampaignsView() {
                 <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>o'clock</span>
               </div>
             </div>
+            <span style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 13.5 }} title="Re-entry gate: how often the same deal may enter this campaign">
+              May enter
+              <input className="vmsel" type="number" min={1} max={10} style={{ width: 56 }} value={c.settings.reentry_max ?? 1} onChange={(e) => set({ settings: { ...c.settings, reentry_max: Math.max(1, Number(e.target.value) || 1) } })} />
+              time(s) within
+              <input className="vmsel" type="number" min={1} max={365} style={{ width: 64 }} value={c.settings.reentry_days ?? c.settings.reenroll_after_days ?? 60} onChange={(e) => set({ settings: { ...c.settings, reentry_days: Math.max(1, Number(e.target.value) || 30) } })} />
+              days
+            </span>
             <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 13.5 }}><input type="checkbox" checked={c.settings.exit_on_reply ?? true} onChange={(e) => set({ settings: { ...c.settings, exit_on_reply: e.target.checked } })} /> Stop when the customer replies</label>
             <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 13.5 }}><input type="checkbox" checked={c.settings.stop_on_other_rep ?? true} onChange={(e) => set({ settings: { ...c.settings, stop_on_other_rep: e.target.checked } })} /> Stop if another rep contacts them</label>
           </div>
@@ -221,7 +236,7 @@ export function CampaignsView() {
   const triggerSummary = (c: Campaign) => {
     const t = c.trigger;
     if (t.type !== "state") return "manual enrollment";
-    const bits = [t.source ? `source ${t.source}` : "any source", t.pipeline ? `pipeline ${t.pipeline}` : null, t.min_attempts != null ? `≥${t.min_attempts} attempts` : null, t.max_contacts != null ? `≤${t.max_contacts} convos` : null, t.min_days_since_created != null ? `≥${t.min_days_since_created}d old` : null, t.min_days_since_activity != null ? `quiet ${t.min_days_since_activity}d` : null, t.web_signal ? `${(WEB_SIGNAL_LABELS as any)[t.web_signal] ?? t.web_signal} ${t.web_min_count && t.web_min_count > 1 ? `${t.web_min_count}× ` : ""}in ${t.web_within_days ?? 7}d` : null].filter(Boolean);
+    const bits = [t.source ? `source ${t.source}` : "any source", t.pipeline ? `pipeline ${t.pipeline}` : null, t.min_attempts != null ? `≥${t.min_attempts} attempts` : null, t.max_contacts != null ? `≤${t.max_contacts} convos` : null, t.min_days_since_created != null ? `≥${t.min_days_since_created}d old` : null, t.min_days_since_activity != null ? `quiet ${t.min_days_since_activity}d` : null, t.assignment === "assigned" ? "assigned to a rep" : t.assignment === "unassigned" ? "unassigned pool" : null, t.web_signal ? `${(WEB_SIGNAL_LABELS as any)[t.web_signal] ?? t.web_signal} ${t.web_min_count && t.web_min_count > 1 ? `${t.web_min_count}× ` : ""}in ${t.web_within_days ?? 7}d` : null].filter(Boolean);
     return `auto: ${bits.join(" · ")}`;
   };
 
