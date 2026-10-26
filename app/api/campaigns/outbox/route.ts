@@ -36,6 +36,53 @@ export async function GET(req: NextRequest) {
     ? await db.from("campaign_enrollments").select("id, current_step, hold_reason, status").in("id", enrollmentIds)
     : { data: [] as any[] };
   const enrBy = new Map((enrs ?? []).map((e: any) => [e.id, e]));
+  // Per-campaign summary (all time, same owner scope): enrollment states,
+  // why people left, send counts, and email opens/clicks where tracked.
+  const ownerFilter = !isAdmin || scope === "mine" ? user.email : scope.startsWith("rep:") ? scope.slice(4) : null;
+  const pageAll = async (build: (f: number, t: number) => any) => {
+    const all: any[] = [];
+    for (let f = 0; ; f += 1000) { const { data: d } = await build(f, f + 999); all.push(...(d ?? [])); if (!d || d.length < 1000) break; }
+    return all;
+  };
+  const [allEnrs, allSends, camps] = await Promise.all([
+    pageAll((f, t) => { let q2 = db.from("campaign_enrollments").select("campaign_id, status, exit_reason, enrolled_at").range(f, t); if (ownerFilter) q2 = q2.eq("owner_email", ownerFilter); return q2; }),
+    pageAll((f, t) => { let q2 = db.from("campaign_sends").select("campaign_id, channel, status, sent_at, track_token").range(f, t); if (ownerFilter) q2 = q2.eq("owner_email", ownerFilter); return q2; }),
+    db.from("campaigns").select("id, name, channel, status").neq("status", "archived").then((r) => r.data ?? []),
+  ]);
+  const tokens = allSends.map((x: any) => x.track_token).filter(Boolean);
+  const opened = new Set<string>(), clicked = new Set<string>();
+  for (let i = 0; i < tokens.length; i += 200) {
+    const { data: tr } = await db.from("email_tracking").select("token, opens, clicks").in("token", tokens.slice(i, i + 200));
+    for (const r of tr ?? []) { if ((r.opens ?? 0) > 0) opened.add(r.token); if ((r.clicks ?? 0) > 0) clicked.add(r.token); }
+  }
+  const bucket = (reason: string | null) => {
+    const r = (reason ?? "").toLowerCase();
+    if (r.includes("replied")) return "replied";
+    if (/stop|opted out|declined|dnc|asked to stop/.test(r)) return "opted out";
+    if (r.includes("checkout ended")) return "checkout ended";
+    if (r.includes("contacted them") || r.includes("reassigned")) return "rep took over";
+    if (r.startsWith("deal ")) return "deal closed";
+    return "other";
+  };
+  const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const summary = (camps as any[]).map((c) => {
+    const es = allEnrs.filter((e: any) => e.campaign_id === c.id);
+    const ss = allSends.filter((x: any) => x.campaign_id === c.id);
+    const exits: Record<string, number> = {};
+    for (const e of es.filter((e: any) => e.status === "exited")) { const b = bucket(e.exit_reason); exits[b] = (exits[b] ?? 0) + 1; }
+    const sent = ss.filter((x: any) => x.status === "sent");
+    return {
+      id: c.id, name: c.name, channel: c.channel, status: c.status,
+      enrolled: es.length, active: es.filter((e: any) => e.status === "active").length, completed: es.filter((e: any) => e.status === "completed").length,
+      exits, replied: exits["replied"] ?? 0,
+      awaiting: ss.filter((x: any) => x.status === "draft").length, scheduled: ss.filter((x: any) => x.status === "approved").length,
+      sent: sent.length, sent7d: sent.filter((x: any) => (x.sent_at ?? "") >= weekAgo).length,
+      failed: ss.filter((x: any) => x.status === "failed").length, skipped: ss.filter((x: any) => x.status === "skipped").length,
+      opened: sent.filter((x: any) => x.track_token && opened.has(x.track_token)).length,
+      clicked: sent.filter((x: any) => x.track_token && clicked.has(x.track_token)).length,
+    };
+  }).filter((c) => c.enrolled > 0 || c.status === "active");
+
   let reps: { email: string; name: string }[] = [];
   if (isAdmin) {
     const { data: r } = await db.from("reps").select("email, name").eq("active", true).not("email", "is", null).order("sort_order");
@@ -46,6 +93,7 @@ export async function GET(req: NextRequest) {
     me: user.email,
     scope: isAdmin ? scope : "mine",
     reps,
+    summary,
     items: (data ?? []).map((s: any) => ({
       id: s.id, enrollmentId: s.enrollment_id, campaignId: s.campaign_id, campaign: s.campaigns?.name ?? "", mode: s.campaigns?.mode ?? "macro",
       step: s.step_position + 1, dealId: s.deal_id, dealTitle: s.crm_deals?.title ?? null, stage: s.crm_deals?.crm_stages?.name ?? null, truck: s.crm_deals?.truck_model ?? null,

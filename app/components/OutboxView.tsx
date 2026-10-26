@@ -18,8 +18,12 @@ const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString("en-US",
  * scheduled slot or now), edit first, skip the step, reject, or stop the
  * whole campaign for that deal. Reps see their own; admins can scope.
  */
+interface Summary { id: string; name: string; channel: string; status: string; enrolled: number; active: number; completed: number; exits: Record<string, number>; replied: number; awaiting: number; scheduled: number; sent: number; sent7d: number; failed: number; skipped: number; opened: number; clicked: number }
+const pctOf = (n: number, d: number) => (d > 0 ? `${Math.round((100 * n) / d)}%` : "—");
+
 export function OutboxView() {
-  const [data, setData] = useState<{ isAdmin: boolean; me: string; scope: string; reps: { email: string; name: string }[]; items: Item[] } | null>(null);
+  const [data, setData] = useState<{ isAdmin: boolean; me: string; scope: string; reps: { email: string; name: string }[]; items: Item[]; summary?: Summary[] } | null>(null);
+  const [view, setView] = useState<"pending" | "scheduled" | "sent">("pending");
   const [scope, setScope] = useState("mine");
   const [err, setErr] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, { subject: string; body: string }>>({});
@@ -53,7 +57,7 @@ export function OutboxView() {
   const items = data?.items ?? [];
   const pending = items.filter((i) => i.status === "draft");
   const approved = items.filter((i) => i.status === "approved");
-  const recent = items.filter((i) => ["sent", "failed", "skipped"].includes(i.status)).sort((a, b) => (b.sentAt ?? b.createdAt).localeCompare(a.sentAt ?? a.createdAt)).slice(0, 40);
+  const recent = items.filter((i) => ["sent", "failed", "skipped"].includes(i.status)).sort((a, b) => (b.sentAt ?? b.createdAt).localeCompare(a.sentAt ?? a.createdAt)).slice(0, 200);
 
   const card = (item: Item, editable: boolean) => {
     const d = drafts[item.id] ?? { subject: item.subject ?? "", body: item.body };
@@ -116,21 +120,51 @@ export function OutboxView() {
       {!data && !err && <p className="viewsub">Loading…</p>}
       {data && (
         <>
-          <div className="panel-h">Awaiting approval {pending.length ? `(${pending.length})` : ""}</div>
-          {pending.length === 0 && <div className="viewsub" style={{ marginTop: 0 }}>Nothing waiting. 🎉</div>}
-          {pending.map((i) => card(i, true))}
-          {approved.length > 0 && (
-            <>
-              <div className="panel-h" style={{ marginTop: 18 }}>Approved · scheduled ({approved.length})</div>
-              {approved.map((i) => card(i, false))}
-            </>
+          {(data.summary ?? []).length > 0 && (
+            <div className="card" style={{ padding: 0, overflowX: "auto", marginBottom: 16 }}>
+              <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ color: "var(--text-3)", fontSize: 12 }}>
+                    {["Campaign", "In it now", "Enrolled", "Waiting", "Scheduled", "Sent (7d)", "Replied", "Opened", "Clicked", "Left early", "Failed"].map((h, i) => <th key={h} style={{ padding: "8px 10px", textAlign: i ? "right" : "left", whiteSpace: "nowrap" }}>{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data.summary ?? []).map((c) => {
+                    const left = Object.entries(c.exits).filter(([k]) => k !== "replied");
+                    const leftN = left.reduce((n, [, v]) => n + v, 0);
+                    const td: React.CSSProperties = { padding: "8px 10px", textAlign: "right", borderTop: "1px solid var(--border-soft)", fontVariantNumeric: "tabular-nums" };
+                    return (
+                      <tr key={c.id}>
+                        <td style={{ ...td, textAlign: "left" }}><b>{c.name}</b> <span style={{ color: "var(--text-3)", fontSize: 12 }}>{c.channel === "sms" ? "💬 text" : "✉️ email"}{c.status !== "active" ? ` · ${c.status}` : ""}</span></td>
+                        <td style={td}>{c.active}</td>
+                        <td style={td}>{c.enrolled}</td>
+                        <td style={{ ...td, fontWeight: c.awaiting ? 700 : 400 }}>{c.awaiting}</td>
+                        <td style={td}>{c.scheduled}</td>
+                        <td style={td}>{c.sent} <span style={{ color: "var(--text-3)" }}>({c.sent7d})</span></td>
+                        <td style={{ ...td, color: c.replied ? "var(--good)" : undefined, fontWeight: c.replied ? 700 : 400 }}>{c.replied} <span style={{ color: "var(--text-3)", fontWeight: 400 }}>{pctOf(c.replied, c.enrolled)}</span></td>
+                        <td style={td}>{c.channel === "email" ? `${c.opened} · ${pctOf(c.opened, c.sent)}` : "—"}</td>
+                        <td style={td}>{c.channel === "email" ? `${c.clicked} · ${pctOf(c.clicked, c.sent)}` : "—"}</td>
+                        <td style={td} title={left.map(([k, v]) => `${k}: ${v}`).join("\n") || undefined}>{leftN}{leftN ? <span style={{ color: "var(--text-3)", fontSize: 11.5 }}> ({left.map(([k, v]) => `${v} ${k}`).join(", ")})</span> : ""}</td>
+                        <td style={{ ...td, color: c.failed ? "var(--crit)" : undefined }}>{c.failed}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div style={{ padding: "6px 10px 8px", fontSize: 11.5, color: "var(--text-3)" }}>
+                All-time, {data.scope === "mine" ? "your deals" : data.scope === "team" ? "whole team" : "this rep"}. <b>Replied</b> = the customer answered and the campaign handed the conversation back to the rep. Text opens and clicks aren&apos;t trackable.
+              </div>
+            </div>
           )}
-          {recent.length > 0 && (
-            <>
-              <div className="panel-h" style={{ marginTop: 18 }}>Recent</div>
-              {recent.map((i) => card(i, false))}
-            </>
-          )}
+
+          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+            {([["pending", `Awaiting approval (${pending.length})`], ["scheduled", `Scheduled (${approved.length})`], ["sent", `Sent & history (${recent.length})`]] as const).map(([k, l]) => (
+              <button key={k} className={`btn ${view === k ? "primary" : "ghost"}`} style={{ padding: "5px 12px", fontSize: 13 }} onClick={() => setView(k)}>{l}</button>
+            ))}
+          </div>
+          {view === "pending" && (pending.length === 0 ? <div className="viewsub" style={{ marginTop: 0 }}>Nothing waiting. 🎉 Written (macro) campaigns skip approval and go straight to Scheduled.</div> : pending.map((i) => card(i, true)))}
+          {view === "scheduled" && (approved.length === 0 ? <div className="viewsub" style={{ marginTop: 0 }}>Nothing scheduled.</div> : approved.map((i) => card(i, false)))}
+          {view === "sent" && (recent.length === 0 ? <div className="viewsub" style={{ marginTop: 0 }}>Nothing sent in the last 14 days.</div> : recent.map((i) => card(i, false)))}
         </>
       )}
     </div>
