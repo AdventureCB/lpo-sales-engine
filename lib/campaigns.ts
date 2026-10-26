@@ -60,6 +60,7 @@ export interface CampaignSettings {
   window_end?: number;
   exit_on_reply?: boolean; // default true
   stop_on_other_rep?: boolean; // default true
+  pause_on_owner_contact?: boolean; // default true: owner messaged by hand → next step waits 24h
   reenroll_after_days?: number; // legacy default for reentry_days
   // Re-entry gate (Kyle 10/26): a deal may ENTER this campaign at most
   // reentry_max times within any reentry_days window (default 1 in 60).
@@ -487,7 +488,7 @@ export async function advanceEnrollments(db: SupabaseClient, opts: { deadline?: 
 
     // Holds: owner's own manual send (<24h), weekly cap, Klaviyo, contact window.
     let dueMs = Date.parse(e.next_step_at);
-    if (manual.ownerAt) {
+    if (manual.ownerAt && (camp.settings?.pause_on_owner_contact ?? true)) {
       const earliest = Date.parse(manual.ownerAt) + hours(OWNER_SEND_HOLD_H);
       if (earliest > dueMs) { await hold(earliest, `${owner.split("@")[0]} just reached out — waiting 24h`); continue; }
     }
@@ -603,7 +604,7 @@ export async function sendDue(db: SupabaseClient, opts: { limit?: number } = {})
         }
         continue;
       }
-      if (manual.ownerAt) {
+      if (manual.ownerAt && (s.campaigns?.settings?.pause_on_owner_contact ?? true)) {
         const earliest = Date.parse(manual.ownerAt) + hours(OWNER_SEND_HOLD_H);
         if (earliest > Date.now()) {
           await db.from("campaign_sends").update({ scheduled_for: iso(earliest) }).eq("id", s.id);

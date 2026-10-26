@@ -12,7 +12,7 @@ interface Step {
 interface Campaign {
   id?: string; name: string; channel: "email" | "sms"; mode: "macro" | "ai"; status: string; shared: boolean; owner_email?: string | null;
   trigger: { type: "manual" | "state"; source?: string | null; min_attempts?: number | null; max_contacts?: number | null; min_contacts?: number | null; has_phone?: "yes" | "no" | null; min_days_since_created?: number | null; min_days_since_activity?: number | null; pipeline?: string | null; web_signal?: string | null; web_within_days?: number | null; web_min_count?: number | null; assignment?: "any" | "assigned" | "unassigned" | null; no_campaign_days?: number | null; no_campaign_channel?: "sms" | "email" | null; no_manual_days?: number | null; no_manual_channel?: "sms" | "email" | "any" | null };
-  settings: { window_start?: number; window_end?: number; exit_on_reply?: boolean; stop_on_other_rep?: boolean; reenroll_after_days?: number; reentry_max?: number; reentry_days?: number };
+  settings: { window_start?: number; window_end?: number; exit_on_reply?: boolean; stop_on_other_rep?: boolean; pause_on_owner_contact?: boolean; reenroll_after_days?: number; reentry_max?: number; reentry_days?: number };
   campaign_steps?: Step[];
   stats?: { active: number; completed: number; exited: number };
   stepStats?: Record<string, { sent: number; opened: number; clicked: number; replied: number }>;
@@ -174,7 +174,7 @@ export function CampaignsView() {
             </div>
           )}
           <div className="viewsub" style={{ fontSize: 12.5 }}>
-            Always enforced: open deals only · {c.channel === "sms" ? "has a usable phone · sender has a texting number · not DNC, STOP or declined texts" : "has an email · sender has Gmail connected · not DNC / unsubscribed"} · sender = deal owner, or the rep it's checked out to · one active {c.channel === "sms" ? "text" : "email"} campaign per deal · may enter {c.settings.reentry_max ?? 1}× per {c.settings.reentry_days ?? c.settings.reenroll_after_days ?? 60} days.
+            Always enforced: open deals only · {c.channel === "sms" ? "has a usable phone · sender has a texting number · not DNC, STOP or declined texts" : "has an email · sender has Gmail connected · not DNC / unsubscribed"} · sender = deal owner, or the rep it's checked out to · one active {c.channel === "sms" ? "text" : "email"} campaign per deal · may enter {c.settings.reentry_max ?? 1}× per {c.settings.reentry_days ?? c.settings.reenroll_after_days ?? 60} days. The auto-enroll conditions are checked only at entry; once enrolled, only the stop/wait rules below apply before each step.
           </div>
         </div>
 
@@ -198,6 +198,7 @@ export function CampaignsView() {
             </span>
             <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 13.5 }}><input type="checkbox" checked={c.settings.exit_on_reply ?? true} onChange={(e) => set({ settings: { ...c.settings, exit_on_reply: e.target.checked } })} /> Stop when the customer replies</label>
             <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 13.5 }}><input type="checkbox" checked={c.settings.stop_on_other_rep ?? true} onChange={(e) => set({ settings: { ...c.settings, stop_on_other_rep: e.target.checked } })} /> Stop if another rep contacts them</label>
+            <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 13.5 }} title="Checked right before every step sends, not just at entry"><input type="checkbox" checked={c.settings.pause_on_owner_contact ?? true} onChange={(e) => set({ settings: { ...c.settings, pause_on_owner_contact: e.target.checked } })} /> Wait 24h after the owner messages them by hand</label>
           </div>
           <div className="viewsub" style={{ fontSize: 12.5 }}>Fixed for every campaign: max 2 emails and 2 texts per contact per week · the owner's own manual email or text delays the next step by 24h · a Klaviyo-heavy day (2+ opens) delays an email 12h · texts only go to contacts who haven't texted STOP · AI-written messages wait for approval in the Outbox; written steps send on schedule · weekdays only, at the hour the buyer usually opens.</div>
         </div>
