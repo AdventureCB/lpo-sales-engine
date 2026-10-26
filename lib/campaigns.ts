@@ -180,7 +180,7 @@ export async function enrollDeals(db: SupabaseClient, campaign: Campaign, dealId
 export async function stateTriggerCandidates(db: SupabaseClient, c: Pick<Campaign, "id" | "channel" | "trigger" | "settings">, limit = 100): Promise<string[]> {
   const t = c.trigger ?? { type: "manual" };
   // Source / pipeline filters run in SQL so the candidate cap can't drop matches.
-  let q = db.from("crm_deals").select("id, owner_pipedrive_id, crm_contacts ( emails, phones, dnc, sms_consent, email_unsub )").eq("status", "open").order("updated_at", { ascending: false }).limit(2000);
+  let q = db.from("crm_deals").select(`id, owner_pipedrive_id, crm_contacts${t.has_phone ? "!inner" : ""} ( emails, phones, dnc, sms_consent, email_unsub )`).eq("status", "open").order("updated_at", { ascending: false }).limit(2000);
   if (t.source) {
     const { data: src } = await db.from("deal_sources").select("id").ilike("name", t.source).maybeSingle();
     if (!src) return [];
@@ -196,6 +196,7 @@ export async function stateTriggerCandidates(db: SupabaseClient, c: Pick<Campaig
   if (t.min_attempts != null) q = q.gte("attempt_count", t.min_attempts);
   if (t.max_contacts != null) q = q.lte("contact_count", t.max_contacts);
   if (t.min_contacts != null) q = q.gte("contact_count", t.min_contacts);
+  if (t.has_phone === "yes" || t.has_phone === "no") q = q.eq("crm_contacts.has_usable_phone", t.has_phone === "yes"); // in SQL so the 2,000-row cap can't hide matches
   if (t.min_days_since_created != null) q = q.lte("created_at", iso(Date.now() - hours(24 * t.min_days_since_created)));
   if (t.min_days_since_activity != null) q = q.or(`last_activity_at.is.null,last_activity_at.lte.${iso(Date.now() - hours(24 * t.min_days_since_activity))}`);
   const { data: deals } = await q;
