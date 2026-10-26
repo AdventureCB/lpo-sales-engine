@@ -448,9 +448,18 @@ export async function advanceEnrollments(db: SupabaseClient, opts: { deadline?: 
       for (const p of pend ?? []) pendingEnr.add(`${p.enrollment_id}:${p.step_position}`);
     }
   }
-  for (const e of (enrs ?? []) as any[]) {
+  // Interleave campaigns (round-robin by campaign, each in due order) so a big
+  // fast macro campaign can't consume the whole time budget while an AI
+  // campaign's people wait behind it (Re-engage, 10/26).
+  const byCamp = new Map<string, any[]>();
+  for (const e of ((enrs ?? []) as any[]).filter((x) => !pendingEnr.has(`${x.id}:${x.current_step}`))) {
+    (byCamp.get(e.campaign_id) ?? byCamp.set(e.campaign_id, []).get(e.campaign_id)!).push(e);
+  }
+  const queues = [...byCamp.values()];
+  const interleaved: any[] = [];
+  for (let i = 0; queues.some((q) => q.length > i); i++) for (const q of queues) if (q[i]) interleaved.push(q[i]);
+  for (const e of interleaved) {
     if (opts.deadline && Date.now() > opts.deadline) break; // AI drafting is slow — the rest wait for the next pass
-    if (pendingEnr.has(`${e.id}:${e.current_step}`)) continue;
     out.checked++;
     const camp = e.campaigns as Campaign;
     const deal = e.crm_deals;
