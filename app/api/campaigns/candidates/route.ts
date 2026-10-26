@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSessionUser } from "@/lib/auth";
-import { stateTriggerCandidates, dealOwnerEmail } from "@/lib/campaigns";
+import { stateTriggerCandidates } from "@/lib/campaigns";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,13 +24,16 @@ export async function POST(req: NextRequest) {
   const { data: deals } = await db.from("crm_deals").select("id, title, owner_email, owner_pipedrive_id").in("id", ids.slice(0, 500));
   const { data: cos } = await db.from("crm_reprospect_checkouts").select("deal_id, rep_email").in("deal_id", ids.slice(0, 500)).is("released_at", null).gt("expires_at", new Date().toISOString());
   const coRep = new Map((cos ?? []).map((c: any) => [c.deal_id, c.rep_email as string]));
-  const q = String(body.q ?? "").trim().toLowerCase();
+  // Sender per deal in one pass (was one query per deal).
+  const pdIds = [...new Set((deals ?? []).map((d: any) => d.owner_pipedrive_id).filter((x: any) => x != null))];
+  const { data: reps } = pdIds.length ? await db.from("reps").select("email, pipedrive_user_id").in("pipedrive_user_id", pdIds) : { data: [] as any[] };
+  const repByPd = new Map((reps ?? []).map((r: any) => [r.pipedrive_user_id, r.email as string]));
   const out: { id: string; title: string; sender: string }[] = [];
   for (const d of (deals ?? []) as any[]) {
-    const sender = (await dealOwnerEmail(db, d)) ?? coRep.get(d.id) ?? null;
+    const sender = d.owner_email ?? (d.owner_pipedrive_id != null ? repByPd.get(d.owner_pipedrive_id) : null) ?? coRep.get(d.id) ?? null;
     if (!sender) continue; // enrollDeals would reject: nobody to send from
-    if (q && !String(d.title ?? "").toLowerCase().includes(q)) continue;
     out.push({ id: d.id, title: d.title, sender });
   }
-  return NextResponse.json({ total: out.length, deals: out.slice(0, 50) });
+  // Whole audience (≤500) — the picker filters client-side as you type.
+  return NextResponse.json({ total: out.length, deals: out });
 }

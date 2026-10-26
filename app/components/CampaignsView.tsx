@@ -322,11 +322,23 @@ function PromptPreview({ prompt, steering, campaignName, stepPosition, stepCount
   // Only people this campaign would auto-enroll right now (uses the builder's current trigger).
   const [onlyAudience, setOnlyAudience] = useState(trigger?.type === "state");
   const [audience, setAudience] = useState<{ total: number; deals: { id: string; title: string; sender: string }[] } | null>(null);
+  const [audLoading, setAudLoading] = useState(false);
+  const audKey = JSON.stringify({ channel, trigger, settings });
+  const [audFor, setAudFor] = useState<string | null>(null);
+  const filterAud = (list: { id: string; title: string; sender: string }[], text: string) => {
+    const t = text.trim().toLowerCase();
+    return (t ? list.filter((d) => d.title.toLowerCase().includes(t)) : list).slice(0, 8);
+  };
+  // Fetch the audience ONCE per trigger version; typing filters locally.
   const loadAudience = async (text = "") => {
-    const r = await fetch("/api/campaigns/candidates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ campaignId, channel, trigger, settings, q: text }) }).catch(() => null);
+    if (audience && audFor === audKey) { setHits(filterAud(audience.deals, text)); return; }
+    setAudLoading(true);
+    const r = await fetch("/api/campaigns/candidates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ campaignId, channel, trigger, settings }) }).catch(() => null);
     const j = r && r.ok ? await r.json() : { total: 0, deals: [] };
+    setAudLoading(false);
     setAudience(j);
-    setHits(j.deals.slice(0, 8));
+    setAudFor(audKey);
+    setHits(filterAud(j.deals, text));
   };
   const [deal, setDeal] = useState<{ id: string; title: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -355,7 +367,7 @@ function PromptPreview({ prompt, steering, campaignName, stepPosition, stepCount
         {trigger?.type === "state" && (
           <label style={{ display: "inline-flex", gap: 5, alignItems: "center", fontSize: 12.5, color: "var(--text-2)" }} title="Pick from the deals this campaign's auto-enroll would enroll right now">
             <input type="checkbox" checked={onlyAudience} onChange={(e) => { setOnlyAudience(e.target.checked); setHits([]); setAudience(null); if (e.target.checked) void loadAudience(q); }} />
-            only people it would enroll{onlyAudience && audience ? ` (${audience.total})` : ""}
+            only people it would enroll{onlyAudience ? (audLoading ? " (finding…)" : audience ? ` (${audience.total})` : "") : ""}
           </label>
         )}
         {deal ? (
