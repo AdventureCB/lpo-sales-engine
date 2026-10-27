@@ -44,6 +44,14 @@ export interface IntakeSource {
     // Hot List Import / recovery-style engines:
     reopen_keep_previous_owner?: boolean; // reopen → the deal's previous owner (not round-robin)
     reopen_to_default_stage?: boolean; // reopen → move into this engine's default stage
+    // Reopen guards (Kyle 10/27 — marketing-signal engines kept reopening
+    // competitor-purchase deals days after reps closed them): a closed deal
+    // whose lost reason starts with one of these is never reopened by this
+    // engine, nor one lost fewer than N days ago, nor a won deal when set.
+    // The engine leaves a quiet note on the closed deal instead.
+    never_reopen_reasons?: string[];
+    reopen_min_days_lost?: number;
+    never_reopen_won?: boolean;
     recovery?: { window_days?: number; click_hours?: number; distinct_hours?: number; per_sweep?: number };
     // web_form engines (website forms → POST /api/webhooks/web-form):
     form_key?: string; // the `form` value the page sends; one engine per form
@@ -245,6 +253,28 @@ async function createDealNative(
   return { crmDealId: deal?.id ?? null };
 }
 
+/**
+ * Why this engine must NOT reopen a closed deal (null = free to reopen):
+ * a terminal lost reason (prefix match, case-insensitive), lost too recently,
+ * or won when the engine says won deals stay won.
+ */
+export function reopenBlockedBy(
+  cfg: IntakeSource["config"],
+  deal: { status: string; lost_at?: string | null; lost_reason?: string | null }
+): string | null {
+  if (deal.status === "won") return cfg.never_reopen_won ? "won deal" : null;
+  const reason = (deal.lost_reason ?? "").trim().toLowerCase();
+  const terminal = (cfg.never_reopen_reasons ?? []).map((r) => r.trim().toLowerCase()).filter(Boolean);
+  const hit = terminal.find((t) => reason.startsWith(t));
+  if (hit) return `lost: ${deal.lost_reason!.split(" — ")[0]}`;
+  const minDays = cfg.reopen_min_days_lost ?? 0;
+  if (minDays > 0 && deal.lost_at) {
+    const days = Math.floor((Date.now() - Date.parse(deal.lost_at)) / 86_400_000);
+    if (days < minDays) return `lost ${days}d ago, under the ${minDays}d cooldown`;
+  }
+  return null;
+}
+
 function touchNote(source: IntakeSource, payload: IntakePayload): { subject: string; body: string } {
   const bits: string[] = [];
   if (payload.valueCents != null) bits.push(`$${Math.round(payload.valueCents / 100).toLocaleString()}`);
@@ -339,12 +369,13 @@ export async function processIntake(
     // Most recent deal for the contact decides the path.
     const { data: deals } = await db
       .from("crm_deals")
-      .select("id, status, title, pipedrive_deal_id, owner_pipedrive_id, stage_id")
+      .select("id, status, title, pipedrive_deal_id, owner_pipedrive_id, stage_id, lost_at, lost_reason")
       .eq("contact_id", contact.id)
       .order("updated_at", { ascending: false })
       .limit(5);
     const open = (deals ?? []).find((d) => d.status === "open");
     const closed = (deals ?? [])[0];
+    const reopenBlock = closed && !open ? reopenBlockedBy(source.config, closed) : null;
 
     if (open) {
       // Fast-lane race repair: the Hot List Import safety net can create a
@@ -372,6 +403,32 @@ export async function processIntake(
         return log({ action: "noted", dealId: open.id });
       }
       // behavior === "new_deal" falls through to creation below.
+    } else if (closed && reopenBlock && (source.config.on_existing_closed ?? "reopen_assign") !== "new_deal") {
+      // Closed for a terminal reason / too recently / won: stays closed. One
+      // quiet line per 30 days so the timeline shows they're still engaging
+      // without the deal resurfacing on anyone's list.
+      const n = touchNote(source, payload);
+      const subject = `💤 Still closed — ${source.label} signal ignored (${reopenBlock})`;
+      const { data: recent } = await db
+        .from("crm_activities")
+        .select("id")
+        .eq("deal_id", closed.id)
+        .eq("subject", subject)
+        .gt("occurred_at", new Date(Date.now() - 30 * 86_400_000).toISOString())
+        .limit(1)
+        .maybeSingle();
+      if (!recent) {
+        await db.from("crm_activities").insert({
+          deal_id: closed.id,
+          contact_id: contact.id,
+          type: "system",
+          subject,
+          body: n.body,
+          actor: "intake",
+          occurred_at: eventTime(payload),
+        });
+      }
+      return log({ action: "skipped", dealId: closed.id, detail: `closed deal not reopened: ${reopenBlock}` });
     } else if (closed && (source.config.on_existing_closed ?? "reopen_assign") === "reopen_assign") {
       // Owner on reopen: recovery engines default to the deal's PREVIOUS owner
       // (they review whether it should really be reopened); otherwise keep the

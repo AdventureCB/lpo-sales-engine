@@ -687,6 +687,38 @@ export function IntakeAdmin() {
                   <option value="skip">Skip</option>
                 </select>
               </label>
+              {(cfg.on_existing_closed ?? "reopen_assign") === "reopen_assign" && (
+                <>
+                  <label style={{ fontSize: 12.5, color: "var(--text-3)" }} title="Comma-separated lost-reason prefixes. A deal closed for one of these is never reopened by this engine — it gets a quiet 'still closed' line instead.">
+                    Never reopen when lost for
+                    <input
+                      className="vmsel"
+                      style={{ display: "block", marginTop: 3, width: 260 }}
+                      placeholder="Competitor purchase, Duplicate, …"
+                      defaultValue={(cfg.never_reopen_reasons ?? []).join(", ")}
+                      onBlur={(e) => {
+                        const next = e.target.value.split(",").map((s) => s.trim()).filter(Boolean);
+                        if (next.join("|") !== (cfg.never_reopen_reasons ?? []).join("|")) setCfg("never_reopen_reasons", next);
+                      }}
+                    />
+                  </label>
+                  <label style={{ fontSize: 12.5, color: "var(--text-3)" }} title="Other lost deals can be reopened by this engine only once they've been lost at least this many days (0 = no cooldown)">
+                    Reopen only if lost ≥ days
+                    <input
+                      className="vmsel"
+                      type="number"
+                      min={0}
+                      style={{ width: 70, display: "block", marginTop: 3 }}
+                      defaultValue={cfg.reopen_min_days_lost ?? 0}
+                      onBlur={(e) => { const v = Math.max(0, Number(e.target.value) || 0); if (v !== (cfg.reopen_min_days_lost ?? 0)) setCfg("reopen_min_days_lost", v); }}
+                    />
+                  </label>
+                  <label style={{ fontSize: 12.5, color: "var(--text-3)", alignSelf: "end" }} title="Won deals stay won — this engine never reopens one">
+                    <input type="checkbox" checked={cfg.never_reopen_won === true} onChange={() => setCfg("never_reopen_won", cfg.never_reopen_won !== true)} style={{ marginRight: 4 }} />
+                    Never reopen won
+                  </label>
+                </>
+              )}
             </div>
             <div style={{ marginTop: 8, fontSize: 12.5, color: "var(--text-3)" }}>
               <label style={{ marginRight: 18 }} title="Notify the deal owner (bell) on new deals, notes, and reopens from this engine">
