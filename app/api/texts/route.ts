@@ -30,15 +30,18 @@ export async function GET(req: Request) {
   const contactByPhone = new Map<string, any>();
   const readByPhone = new Map<string, string>();
   const doneByPhone = new Map<string, { at: string; through: string }>();
+  const favs = new Set<string>();
   if (phones.length > 0) {
-    const [{ data: resolved }, { data: reads }, { data: dones }] = await Promise.all([
+    const [{ data: resolved }, { data: reads }, { data: dones }, { data: favRows }] = await Promise.all([
       db.rpc("contacts_by_phones", { p_phones: phones }),
       db.from("sms_thread_reads").select("peer_phone, read_at").eq("user_email", user.email).in("peer_phone", phones),
       db.from("sms_thread_done").select("peer_phone, done_at, done_through_at").eq("user_email", user.email).in("peer_phone", phones),
+      db.from("sms_thread_favorites").select("peer_phone").eq("user_email", user.email).in("peer_phone", phones),
     ]);
     for (const r of resolved ?? []) contactByPhone.set(r.phone, r);
     for (const r of reads ?? []) readByPhone.set(r.peer_phone, r.read_at);
     for (const r of dones ?? []) doneByPhone.set(r.peer_phone, { at: r.done_at, through: r.done_through_at });
+    for (const r of favRows ?? []) favs.add(r.peer_phone);
   }
 
   return NextResponse.json({
@@ -50,8 +53,10 @@ export async function GET(req: Request) {
         // Done sticks until a NEWER message lands — then it's back in "to do".
         done: !!dn && Date.parse(t.last_at) <= Date.parse(dn.through) + 1000,
         doneAt: dn && Date.parse(t.last_at) <= Date.parse(dn.through) + 1000 ? dn.at : null,
+        favorite: favs.has(t.peer_phone),
         phone: t.peer_phone,
         lastAt: t.last_at,
+        lastInboundAt: t.last_inbound_at ?? null,
         lastBody: t.last_body,
         lastDirection: t.last_direction,
         awaitingReply: t.awaiting_reply,
@@ -68,15 +73,22 @@ export async function GET(req: Request) {
 }
 
 /** Mark a thread read for this user: POST { phone } (called on open/view).
- *  Done checkbox: POST { phone, done: true, lastAt } / { phone, done: false }. */
+ *  Done checkbox: POST { phone, done: true, lastAt } / { phone, done: false }.
+ *  Favorite star: POST { phone, favorite: true|false }. */
 export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  let body: { phone?: string; done?: boolean; lastAt?: string } = {};
+  let body: { phone?: string; done?: boolean; lastAt?: string; favorite?: boolean } = {};
   try {
     body = await req.json();
   } catch {}
   if (!body.phone) return NextResponse.json({ error: "phone required" }, { status: 400 });
+  if (typeof body.favorite === "boolean") {
+    const db = supabaseAdmin();
+    if (body.favorite) await db.from("sms_thread_favorites").upsert({ user_email: user.email, peer_phone: body.phone }, { onConflict: "user_email,peer_phone" });
+    else await db.from("sms_thread_favorites").delete().eq("user_email", user.email).eq("peer_phone", body.phone);
+    return NextResponse.json({ ok: true, favorite: body.favorite });
+  }
   if (typeof body.done === "boolean") {
     const db = supabaseAdmin();
     if (!body.done) {

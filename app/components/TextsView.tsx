@@ -13,6 +13,8 @@ interface Thread {
   unread: boolean;
   done: boolean;
   doneAt: string | null;
+  favorite: boolean;
+  lastInboundAt: string | null;
   count: number;
   contactName: string | null;
   crmDealId: string | null;
@@ -38,13 +40,18 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
   const [newNum, setNewNum] = useState("");
   const [showNew, setShowNew] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
-  const [tab, setTab] = useState<"todo" | "done" | "all">(() => { try { return (sessionStorage.getItem("textsTab") as any) || "todo"; } catch { return "todo"; } });
+  type Tab = "todo" | "fav" | "done" | "all";
+  const [tab, setTab] = useState<Tab>(() => { try { return (sessionStorage.getItem("textsTab") as Tab) || "todo"; } catch { return "todo"; } });
   const [oldestFirst, setOldestFirst] = useState(false);
-  const pickTab = (t: "todo" | "done" | "all") => { setTab(t); try { sessionStorage.setItem("textsTab", t); } catch {} };
+  const pickTab = (t: Tab) => { setTab(t); try { sessionStorage.setItem("textsTab", t); } catch {} };
 
   const setDone = async (t: Thread, done: boolean) => {
     setThreads((prev) => prev?.map((x) => (x.phone === t.phone ? { ...x, done, doneAt: done ? new Date().toISOString() : null, unread: done ? false : x.unread } : x)) ?? prev);
     await fetch("/api/texts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ phone: t.phone, done, lastAt: t.lastAt }) });
+  };
+  const setFavorite = async (t: Thread, favorite: boolean) => {
+    setThreads((prev) => prev?.map((x) => (x.phone === t.phone ? { ...x, favorite } : x)) ?? prev);
+    await fetch("/api/texts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ phone: t.phone, favorite }) });
   };
   // Admin: narrow to one rep's lines (remembered per browser).
   const roster = useRoster();
@@ -92,8 +99,13 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
   const q = search.trim().toLowerCase();
   const all = threads ?? [];
   const todoCount = all.filter((t) => !t.done).length;
+  const favCount = all.filter((t) => t.favorite).length;
+  // Inbox order: the most recently RECEIVED text first (reps 10/27) — a
+  // thread the rep just replied on sorts by when the customer last wrote,
+  // not by the rep's own send. Threads with no inbound yet use their last send.
+  const recvAt = (t: Thread) => t.lastInboundAt ?? t.lastAt;
   const shownThreads = all
-    .filter((t) => (tab === "todo" ? !t.done : tab === "done" ? t.done : true))
+    .filter((t) => (tab === "todo" ? !t.done : tab === "done" ? t.done : tab === "fav" ? t.favorite : true))
     .filter(
       (t) =>
         !q ||
@@ -101,7 +113,7 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
         (t.contactName ?? "").toLowerCase().includes(q) ||
         (t.lastBody ?? "").toLowerCase().includes(q)
     )
-    .sort((a, b) => (oldestFirst ? a.lastAt.localeCompare(b.lastAt) : b.lastAt.localeCompare(a.lastAt)));
+    .sort((a, b) => (oldestFirst ? recvAt(a).localeCompare(recvAt(b)) : recvAt(b).localeCompare(recvAt(a))));
 
   return (
     <>
@@ -135,11 +147,11 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
           </button>
         </div>
         <div style={{ padding: "6px 10px", display: "flex", gap: 6, alignItems: "center", borderBottom: "1px solid var(--border-soft)" }}>
-          {([["todo", `To do${todoCount ? ` · ${todoCount}` : ""}`], ["done", "Done"], ["all", "All"]] as const).map(([k, l]) => (
-            <button key={k} className={`btn ${tab === k ? "primary" : "ghost"}`} style={{ padding: "3px 10px", fontSize: 12.5 }} onClick={() => pickTab(k)}>{l}</button>
+          {([["todo", `To do${todoCount ? ` · ${todoCount}` : ""}`], ["fav", `⭐${favCount ? ` ${favCount}` : ""}`], ["done", "Done"], ["all", "All"]] as const).map(([k, l]) => (
+            <button key={k} className={`btn ${tab === k ? "primary" : "ghost"}`} style={{ padding: "3px 10px", fontSize: 12.5 }} title={k === "fav" ? "Favorites — conversations you starred" : undefined} onClick={() => pickTab(k)}>{l}</button>
           ))}
-          <button className="btn ghost" style={{ marginLeft: "auto", padding: "3px 10px", fontSize: 12.5 }} title="Flip the order" onClick={() => setOldestFirst((v) => !v)}>
-            {oldestFirst ? "Oldest first ↑" : "Newest first ↓"}
+          <button className="btn ghost" style={{ marginLeft: "auto", padding: "3px 10px", fontSize: 12.5 }} title="Ordered by when the customer last texted — click to flip" onClick={() => setOldestFirst((v) => !v)}>
+            {oldestFirst ? "Oldest received first ↑" : "Latest received first ↓"}
           </button>
         </div>
         {showNew && (
@@ -167,7 +179,7 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
           {threads === null && <div className="viewsub" style={{ padding: 12 }}>Loading…</div>}
           {threads !== null && shownThreads.length === 0 && (
             <div className="viewsub" style={{ padding: 12, marginBottom: 0 }}>
-              {tab === "todo" ? "All caught up — nothing left to do." : tab === "done" ? "Nothing marked done yet." : "No conversations on your line yet — new inbound texts appear here automatically."}
+              {tab === "todo" ? "All caught up — nothing left to do." : tab === "done" ? "Nothing marked done yet." : tab === "fav" ? "No favorites yet — click the ☆ on a conversation to keep it here." : "No conversations on your line yet — new inbound texts appear here automatically."}
             </div>
           )}
           {shownThreads.map((t) => (
@@ -190,7 +202,17 @@ export function TextsView({ isAdmin }: { isAdmin: boolean }) {
                   {t.unread && <span style={{ color: "var(--accent)" }}>● </span>}
                   {t.contactName ?? t.phone}
                 </b>
-                <span style={{ color: "var(--text-3)", fontSize: 12.5, whiteSpace: "nowrap" }}>{fmtWhen(t.lastAt)}</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                  <span style={{ color: "var(--text-3)", fontSize: 12.5 }} title={t.lastInboundAt ? `Last received ${fmtWhen(t.lastInboundAt)}` : "No reply yet"}>{fmtWhen(t.lastAt)}</span>
+                  <button
+                    type="button"
+                    title={t.favorite ? "Unfavorite" : "Favorite — keep this conversation in the ⭐ tab"}
+                    onClick={(e) => { e.stopPropagation(); void setFavorite(t, !t.favorite); }}
+                    style={{ border: 0, background: "none", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 0, color: t.favorite ? "#f5b301" : "var(--text-3)" }}
+                  >
+                    {t.favorite ? "★" : "☆"}
+                  </button>
+                </span>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
                 <div style={{ color: "var(--text-3)", fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2, flex: 1 }}>
