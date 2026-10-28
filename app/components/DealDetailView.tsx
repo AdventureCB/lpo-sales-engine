@@ -997,10 +997,12 @@ export function DealDetailView({
                   onChange={(e) => setSchedSubject(e.target.value)}
                 />
                 <div style={{ display: "flex", gap: 8 }}>
-                  <input ref={schedDateRef} type="date" className="vmsel" value={schedDate} onChange={(e) => setSchedDate(e.target.value)} onInput={(e) => setSchedDate((e.target as HTMLInputElement).value)} style={{ flex: 1 }} />
+                  <input ref={schedDateRef} type="date" className="vmsel" value={schedDate} onChange={(e) => setSchedDate(e.target.value)} onInput={(e) => setSchedDate((e.target as HTMLInputElement).value)} onBlur={(e) => setSchedDate(e.target.value)} style={{ flex: 1 }} />
                   <TimeSelect value={schedTime} onChange={setSchedTime} allowEmpty style={{ width: 130 }} />
                 </div>
-                <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: -2 }}>Pick &quot;All day&quot; for a no-specific-time activity.</div>
+                <div style={{ fontSize: 11.5, color: !schedDate ? "var(--crit)" : "var(--text-3)", marginTop: -2 }}>
+                  {!schedDate ? "Pick a date — without one this would just be logged as done, not scheduled." : "Pick \"All day\" for a no-specific-time activity."}
+                </div>
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: !schedTime ? "var(--text-3)" : schedPriority ? "#d99a2b" : "var(--text-2)", cursor: schedTime ? "pointer" : "not-allowed", fontWeight: schedPriority ? 700 : 400 }} title={schedTime ? "Countdown banner 10 min before + popup at the scheduled time" : "Set a time first — a countdown needs a clock time"}>
                   <input type="checkbox" checked={schedPriority && !!schedTime} disabled={!schedTime} onChange={(e) => setSchedPriority(e.target.checked)} style={{ cursor: schedTime ? "pointer" : "not-allowed" }} />
                   ⭐ Priority — remind me with a countdown{!schedTime ? " (needs a time)" : ""}
@@ -1008,13 +1010,18 @@ export function DealDetailView({
                 <div style={{ display: "flex", gap: 8 }}>
                   <button
                     className="btn primary"
-                    disabled={!schedSubject.trim() || saving || (depositFollow && !schedDate)}
+                    disabled={!schedSubject.trim() || saving || !schedDate}
+                    title={!schedDate ? "Pick a date first" : undefined}
                     onClick={async () => {
                       const confSched = depositFollow
                         ? orderStageId(/confirmation scheduled/i) ?? orderStageId(/deposit placed/i)
                         : undefined;
                       const dateV = schedDateRef.current?.value || schedDate;
                       const timeV = schedTime; // dropdown — can't half-commit
+                      // A schedule with no date is a logged-as-done activity in
+                      // disguise (Colton 10/28: "Scheduled Call" never reached
+                      // the calendar) — refuse rather than save it wrong.
+                      if (!dateV) { setSchedDate(""); return; }
                       await update({
                         activity: {
                           type: schedType,

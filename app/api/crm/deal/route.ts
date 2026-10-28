@@ -404,6 +404,12 @@ export async function POST(req: NextRequest) {
     if (!["call", "task", "meeting", "email"].includes(type) || !subject?.trim()) {
       return NextResponse.json({ error: "activity type/subject invalid" }, { status: 400 });
     }
+    // Every caller of this path is scheduling something; a missing due date
+    // would silently save a "done" activity that never reaches the calendar
+    // (Colton 10/28). Completed activities go through the log path instead.
+    if (!dueAt || Number.isNaN(Date.parse(dueAt))) {
+      return NextResponse.json({ error: "Pick a date for the activity" }, { status: 400 });
+    }
     const { data: inserted, error } = await db
       .from("crm_activities")
       .insert({
