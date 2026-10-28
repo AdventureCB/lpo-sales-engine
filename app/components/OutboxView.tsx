@@ -59,7 +59,7 @@ export function OutboxView() {
     const j = await r.json().catch(() => ({}));
     setBusy(null);
     if (!r.ok || j.error) { setMsg(`⚠ ${j.error ?? `HTTP ${r.status}`}`); return; }
-    setMsg(action === "approve" ? (extra.sendNow ? "Sent ✓" : `Approved — sends ${fmt(j.scheduledFor ?? item.scheduledFor)} ✓`) : action === "skip" ? "Step skipped" : action === "reject" ? "Rejected" : "Campaign stopped");
+    setMsg(action === "approve" ? (extra.sendNow ? "Sent ✓" : `Approved — sends ${fmt(j.scheduledFor ?? item.scheduledFor)} ✓`) : action === "skip" ? "Step skipped" : action === "reject" ? "Rejected — they're out of this campaign" : action === "redraft" ? "Draft discarded — a new one arrives on the next pass" : "Campaign stopped");
     setTimeout(() => setMsg(null), 4000);
     load();
   };
@@ -103,9 +103,9 @@ export function OutboxView() {
           <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
             {item.status !== "approved" && <button className="btn primary" style={{ padding: "6px 14px" }} disabled={busy === item.id} onClick={() => act(item, "approve")}>✓ Approve{changed ? " with edits" : ""}{data?.me && item.owner !== data.me ? ` for ${item.owner.split("@")[0]}` : ""}</button>}
             <button className="btn" style={{ padding: "6px 14px" }} disabled={busy === item.id} onClick={() => act(item, "approve", { sendNow: true })}>Send now</button>
-            {item.status !== "approved" && <button className="btn ghost" style={{ padding: "6px 12px" }} disabled={busy === item.id} onClick={() => act(item, "skip")} title="Don't send this step; continue with the next one">Skip step</button>}
-            <button className="btn ghost" style={{ padding: "6px 12px" }} disabled={busy === item.id} onClick={() => act(item, "reject")} title="Don't send; the campaign pauses on this step">Reject</button>
-            <button className="btn ghost" style={{ padding: "6px 12px", color: "var(--crit)" }} disabled={busy === item.id} onClick={() => confirm(`Stop the "${item.campaign}" campaign for this deal?`) && act(item, "stop")}>Stop campaign</button>
+            <button className="btn ghost" style={{ padding: "6px 12px" }} disabled={busy === item.id} onClick={() => act(item, "skip")} title="Don't send this step; continue with the next one">Skip step</button>
+            {item.generatedBy === "ai" && item.status === "draft" && <button className="btn ghost" style={{ padding: "6px 12px" }} disabled={busy === item.id} onClick={() => act(item, "redraft")} title="Throw this draft away — the AI writes a new one on the next pass">↻ Redraft</button>}
+            <button className="btn ghost" style={{ padding: "6px 12px", color: "var(--crit)" }} disabled={busy === item.id} onClick={() => act(item, "reject")} title="Don't send — this person leaves the campaign (no more steps)">Reject</button>
           </div>
         )}
       </div>

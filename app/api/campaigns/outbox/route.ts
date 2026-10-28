@@ -9,7 +9,10 @@ export const dynamic = "force-dynamic";
 /**
  * Outbox — campaign sends awaiting approval (and recent history).
  *   GET ?scope=mine|team|rep:<email>   (team/rep = admin)
- *   POST {id, action: approve|skip|reject, subject?, body?, sendNow?}
+ *   POST {id, action: approve|skip|reject|redraft, subject?, body?, sendNow?}
+ *     skip    → don't send this step, continue with the next
+ *     reject  → don't send; this person leaves the campaign (same as stop)
+ *     redraft → AI drafts only: throw this draft away, the AI writes another next pass
  *   POST {id, action: stop}            → stop the whole enrollment
  * Approver = the deal owner (the sender) or an admin.
  */
@@ -133,9 +136,9 @@ export async function POST(req: NextRequest) {
   }
   if (!["draft", "approved", "failed"].includes(s.status)) return NextResponse.json({ error: `already ${s.status}` }, { status: 409 });
 
-  if (body.action === "skip" || body.action === "reject") {
+  if (body.action === "skip" || body.action === "reject" || body.action === "redraft") {
     await db.from("campaign_sends").update({ status: body.action === "skip" ? "skipped" : "rejected", approved_by: user.email, approved_at: now }).eq("id", s.id);
-    if (body.action === "reject" && s.generated_by === "ai") {
+    if ((body.action === "reject" || body.action === "redraft") && s.generated_by === "ai") {
       // Learning signal: a rejected AI draft is a 👎 for the critic.
       await db.from("draft_events").insert({
         deal_id: s.deal_id, kind: s.channel === "sms" ? "sms" : "email", theme_key: `campaign:${s.campaign_id}`, direction: `step ${s.step_position + 1}`, rep: s.owner_email,
@@ -146,6 +149,19 @@ export async function POST(req: NextRequest) {
       // Skip = move on to the next step without sending this one.
       const { data: next } = await db.from("campaign_steps").select("delay_hours").eq("campaign_id", s.campaign_id).eq("position", s.step_position + 1).maybeSingle();
       await db.from("campaign_enrollments").update({ current_step: s.step_position + 1, next_step_at: next ? new Date(Date.now() + next.delay_hours * 3_600_000).toISOString() : now, hold_reason: null }).eq("id", s.enrollment_id);
+    } else if (body.action === "reject") {
+      // Reject = this person doesn't get this campaign. Previously the
+      // enrollment stayed active on the same step, so the engine simply
+      // re-drafted it (a written step auto-approved itself again) and the
+      // "rejected" message was back in the Outbox next pass (Jackson 10/28).
+      // "redraft" keeps that behaviour on purpose, for AI drafts only.
+      const reason = `rejected by ${user.email.split("@")[0]}`;
+      await db.from("campaign_enrollments").update({ status: "exited", exited_at: now, exit_reason: reason, hold_reason: null }).eq("id", s.enrollment_id).eq("status", "active");
+      await db.from("campaign_sends").update({ status: "skipped", error: `campaign exited: ${reason}` }).eq("enrollment_id", s.enrollment_id).in("status", ["draft", "approved"]);
+      if (s.deal_id) {
+        const { data: camp } = await db.from("campaigns").select("name").eq("id", s.campaign_id).maybeSingle();
+        await db.from("crm_activities").insert({ deal_id: s.deal_id, contact_id: s.contact_id, type: "system", subject: `📣 Campaign "${camp?.name ?? ""}" ended — ${reason} in the Outbox`, actor: user.email, occurred_at: now, meta: { campaign_id: s.campaign_id } });
+      }
     }
     return NextResponse.json({ ok: true });
   }
