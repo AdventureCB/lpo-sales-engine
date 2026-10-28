@@ -344,7 +344,8 @@ export function DealDetailView({
         }
         await load();
       } else {
-        setWarn("Update failed");
+        const msg = r ? await r.json().then((j) => j?.error).catch(() => null) : null;
+        setWarn(msg ? `Not saved — ${msg}` : "Update failed");
       }
       setSaving(false);
     },
