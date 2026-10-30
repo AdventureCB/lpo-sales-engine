@@ -541,6 +541,14 @@ export function IntakeAdmin() {
                 drawings becomes a note on their existing deal. When a drawing is run, the winner's deal gets a ⭐ task with the discount code and expiry.
               </div>
             )}
+            {s.adapter === "trailhub_interest" && (
+              <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 6 }}>
+                Product-interest signups from the Trailhub app (&quot;tell me when the new camper is ready&quot;), read from its own Supabase project hourly.
+                Consent to call / text / email is a condition of signing up, so every row is contactable. The first note on the deal records which product
+                list, where they came from (website / homepage / newsletter / app link) and any UTM tags. A second list signup by the same person becomes
+                a note on their existing deal.
+              </div>
+            )}
             {s.adapter === "web_form" && (
               <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 6 }}>
                 A form on the website posts to <code>/api/webhooks/web-form</code> with <code>form = {cfg.form_key ?? "?"}</code>. The message and any extra
