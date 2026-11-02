@@ -76,7 +76,9 @@ export interface DialerDeal {
   sources: { id: string; name: string }[];
   record: { created: string | null; stageChanged: string | null; lastActivity: string | null; pdId: number | null };
   // Primary (or first) email on file — the dialer shows/edits it in the lead card.
-  contact: { id: string; email: string | null } | null;
+  // phones = every number on the contact (incl. bad/primary flags) so the dialer
+  // can list them, star a primary and dial a specific one.
+  contact: { id: string; email: string | null; phones: { value: string; e164?: string; primary?: boolean; bad?: boolean }[] } | null;
   saving: boolean;
   update: (fields: Record<string, unknown>) => Promise<void>;
   refresh: () => Promise<void>;
@@ -377,7 +379,13 @@ export function DealDetailView({
         lastActivity: d.last_activity_at ?? null,
         pdId: d.pipedrive_deal_id ?? null,
       },
-      contact: c ? { id: c.id, email: cEmails.find((e) => e.primary)?.value ?? cEmails[0]?.value ?? null } : null,
+      contact: c
+        ? {
+            id: c.id,
+            email: cEmails.find((e) => e.primary)?.value ?? cEmails[0]?.value ?? null,
+            phones: (c.phones ?? []) as { value: string; e164?: string; primary?: boolean; bad?: boolean }[],
+          }
+        : null,
       saving,
       update,
       refresh: load,
@@ -3081,6 +3089,10 @@ function CommBar({
 
   // ── Disposition flow — same shape as the dialer's ──
   const dialStartedAtRef = useRef<string | null>(null);
+  // The number actually dialed (the picker may choose a secondary) — the
+  // disposition logs against it, not the primary, so a bad-number strike
+  // hits the right entry.
+  const dialedNumRef = useRef<string | null>(null);
   const [awaitingDispo, setAwaitingDispo] = useState(false);
   const [pendingDispo, setPendingDispo] = useState<string | null>(null);
   const [dispoNote, setDispoNote] = useState("");
@@ -3188,6 +3200,7 @@ function CommBar({
     const num = target ?? phone;
     if (!num || awaitingDispo) return;
     setShowNumPicker(false);
+    dialedNumRef.current = num;
     dialStartedAtRef.current = new Date().toISOString();
     // Attempt log drives pool cooldown/fairness, same as the dialer.
     if (pdDealId) {
@@ -3271,11 +3284,12 @@ function CommBar({
   /** Same retry contract as the dialer: 202 until the webhook lands. */
   const completeDispo = async (dueAt: string | null) => {
     const dispo = pendingDispo;
-    if (!dispo || !phone || !dialStartedAtRef.current) return;
+    const dialed = dialedNumRef.current ?? phone;
+    if (!dispo || !dialed || !dialStartedAtRef.current) return;
     const payload = {
       dealId: pdDealId ?? undefined,
       crmDealId: dealId,
-      phone,
+      phone: dialed,
       disposition: dispo,
       dialStartedAt: dialStartedAtRef.current,
       next: dueAt ? { type: nextType, subject: FOLLOW_UP_SUBJECT[dispo] ?? "Follow up", dueAt } : null,

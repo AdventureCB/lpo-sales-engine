@@ -6,6 +6,7 @@ import { ensurePhone, getPhoneState, newOutboundCall, setOutboundHandler, subscr
 import type { VmDrop } from "./VmPanel";
 import { DealDetailView, prefetchDeal, fmtWhen, BAND_COLOR, humanize, type AiProfile, type DialerDeal } from "./DealDetailView";
 import { timedIso } from "@/lib/allday";
+import { normalizePhone } from "@/lib/identity";
 import { TimeSelect } from "./TimeSelect";
 import MentionInput from "./MentionInput";
 import { setExtraLock } from "./PageLock";
@@ -240,6 +241,136 @@ function LeadEmail({ deal }: { deal: DialerDeal }) {
         {email ? "✎" : "＋ add"}
       </button>
     </div>
+  );
+}
+
+type LeadPhoneEntry = { value: string; e164?: string; primary?: boolean; bad?: boolean };
+
+/** Same rule as the queue builder (lib/dialer.ts pickPhone): non-bad primary,
+ * else first non-bad — so the lead card dials exactly what a fresh queue would. */
+function pickDialPhone(phones: LeadPhoneEntry[]): string | null {
+  const ok = (phones ?? []).filter((p) => !p.bad);
+  const raw = ok.find((p) => p.primary && p.e164)?.e164 ?? ok.find((p) => p.e164)?.e164 ?? ok.find((p) => p.value)?.value ?? null;
+  return normalizePhone(raw);
+}
+
+/** Phones on file, in the lead card. ★ = make primary (the dialer follows at
+ * once — lead.phone is recomputed from the server's returned phones, no queue
+ * reload), ＋ add = new number, 📞 = dial that one for THIS call only. Saves
+ * through the same contact ops as the deal page's Contact card. */
+function LeadPhone({
+  deal,
+  current,
+  canDial,
+  onDialNumber,
+  onDial,
+}: {
+  deal: DialerDeal;
+  current: string | null;
+  canDial: boolean;
+  onDialNumber: (phone: string | null) => void;
+  onDial: (num: string) => void;
+}) {
+  const [adding, setAdding] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const good = (deal.contact?.phones ?? []).filter((p) => !p.bad);
+  const keyOf = (p: LeadPhoneEntry) => p.e164 ?? p.value;
+
+  const post = async (payload: Record<string, unknown>) => {
+    if (!deal.contact) return false;
+    setBusy(true);
+    setErr(null);
+    const r = await fetch("/api/crm/contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contactId: deal.contact.id, ...payload }),
+    }).catch(() => null);
+    const d = await r?.json().catch(() => ({}));
+    if (r?.ok) {
+      onDialNumber(pickDialPhone((d?.phones as LeadPhoneEntry[]) ?? []));
+      await deal.refresh();
+    } else {
+      setErr(d?.error ?? "Save failed");
+    }
+    setBusy(false);
+    return Boolean(r?.ok);
+  };
+
+  const saveAdd = async () => {
+    const v = normalizePhone(adding ?? "");
+    if (!v) {
+      setErr("Enter a 10-digit phone number");
+      return;
+    }
+    if (await post({ phone: v })) setAdding(null);
+  };
+
+  return (
+    <span style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+      {good.length === 0 && (current ?? <span style={{ color: "var(--text-3)" }}>no phone on file</span>)}
+      {good.map((p) => {
+        const num = keyOf(p);
+        return (
+          <span key={num} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontVariantNumeric: "tabular-nums" }}>
+            {num}
+            {p.primary ? (
+              <span style={{ fontSize: 11, color: "var(--text-3)" }}>· primary</span>
+            ) : (
+              <button
+                className="btn ghost"
+                style={{ padding: "0 6px", fontSize: 12 }}
+                title="Make this the primary number (the dialer uses it from now on)"
+                disabled={busy}
+                onClick={() => void post({ op: "set_primary_phone", value: num })}
+              >
+                ★
+              </button>
+            )}
+            {canDial && num !== current && (
+              <button
+                className="btn ghost"
+                style={{ padding: "0 6px", fontSize: 12 }}
+                title="Dial this number for this call only"
+                disabled={busy}
+                onClick={() => onDial(num)}
+              >
+                📞
+              </button>
+            )}
+          </span>
+        );
+      })}
+      {adding === null ? (
+        <button className="btn ghost" style={{ padding: "1px 8px", fontSize: 12 }} title="Add another phone number" disabled={busy} onClick={() => setAdding("")}>
+          ＋ add
+        </button>
+      ) : (
+        <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+          <input
+            className="vmsel"
+            type="tel"
+            autoFocus
+            style={{ width: 160, padding: "3px 8px", fontSize: 13 }}
+            placeholder="(555) 123-4567"
+            value={adding}
+            disabled={busy}
+            onChange={(e) => setAdding(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void saveAdd();
+              if (e.key === "Escape") setAdding(null);
+            }}
+          />
+          <button className="btn primary" style={{ padding: "3px 10px", fontSize: 12.5 }} disabled={busy || !(adding ?? "").trim()} onClick={() => void saveAdd()}>
+            Save
+          </button>
+          <button className="btn ghost" style={{ padding: "3px 8px", fontSize: 12.5 }} disabled={busy} onClick={() => setAdding(null)}>
+            Cancel
+          </button>
+        </span>
+      )}
+      {err && <span style={{ fontSize: 12, color: "var(--crit)" }}>{err}</span>}
+    </span>
   );
 }
 
@@ -514,6 +645,9 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const lastBreakRef = useRef<number>(Date.now());
   const [showBreak, setShowBreak] = useState(false);
   const dialStartRef = useRef<string | null>(null);
+  // The number actually dialed (lead.phone, or a per-call pick from the lead
+  // card) — the disposition logs against it so bad-number strikes the right entry.
+  const dialedPhoneRef = useRef<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const callSecRef = useRef(0);
@@ -536,7 +670,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   });
   useEffect(() => {
     cycleRef.current = { shownAt: Date.now(), dialAt: null, callEndAt: null };
-  }, [lead?.crmDealId, lead?.dealId, lead?.phone]);
+  }, [lead?.crmDealId, lead?.dealId]); // deal id only — a primary change mid-review must not reset the clock
   const reportCycle = () => {
     const c = cycleRef.current;
     if (!c.dialAt) return; // never dialed — nothing to measure
@@ -736,6 +870,7 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
   const dial = (opts?: { redial?: boolean; leadOverride?: Lead }) => {
     const l = opts?.leadOverride ?? lead;
     if (!l?.phone || inCall || (awaitingDispo && !opts?.redial) || l.callable === false) return;
+    dialedPhoneRef.current = l.phone;
     setSkipPrompt(false);
     setAwaitingNext(false);
     if (opts?.redial) {
@@ -819,11 +954,12 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
     next: { type: string; subject: string; dueAt: string } | null,
     note: string | null
   ) => {
-    if (!lead?.phone || !dialStartRef.current) return;
+    const dialed = dialedPhoneRef.current ?? lead?.phone ?? null;
+    if (!lead || !dialed || !dialStartRef.current) return;
     const q = qualityRef.current;
     const body = {
       dealId: lead.dealId || undefined,
-      phone: lead.phone,
+      phone: dialed,
       disposition: dispo,
       dialStartedAt: dialStartRef.current,
       sprintId: lead.sprintId,
@@ -1499,7 +1635,19 @@ export function DialerView({ isAdmin }: { isAdmin: boolean }) {
                     <div className="lead-name">{lead.personName ?? lead.title}</div>
                   )}
                   <div className="lead-phone">
-                    {lead.phone} ·{" "}
+                    {leadDeal?.contact ? (
+                      <LeadPhone
+                        key={`p-${leadDeal.contact.id}`}
+                        deal={leadDeal}
+                        current={lead.phone}
+                        canDial={!inCall && !awaitingDispo && lead.callable !== false}
+                        onDialNumber={(p) => setLeads((prev) => prev.map((l, i) => (i === leadIdx ? { ...l, phone: p } : l)))}
+                        onDial={(n) => dial({ leadOverride: { ...lead, phone: n } })}
+                      />
+                    ) : (
+                      lead.phone
+                    )}
+                    {" "}·{" "}
                     {leadDeal ? (
                       <LeadTitle
                         key={`t-${leadDeal.record.pdId ?? "x"}`}
