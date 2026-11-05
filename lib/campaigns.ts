@@ -108,8 +108,17 @@ export interface EnrollResult { dealId: string; ok: boolean; reason?: string }
 /** Enroll deals into a campaign, applying every eligibility rule. */
 export async function enrollDeals(db: SupabaseClient, campaign: Campaign, dealIds: string[], by: string): Promise<EnrollResult[]> {
   if (!dealIds.length) return [];
-  const { data: steps } = await db.from("campaign_steps").select("id, delay_hours").eq("campaign_id", campaign.id).order("position").limit(1);
+  const { data: steps } = await db.from("campaign_steps").select("id, delay_hours, content_kind").eq("campaign_id", campaign.id).order("position");
   const firstDelay = steps?.[0]?.delay_hours ?? 0;
+  // The enrollment line must describe what will actually happen: written
+  // steps auto-approve and send on schedule; only AI-written steps wait in the
+  // Outbox (Jackson 11/5 — a macro campaign's line said "after approval").
+  const aiSteps = (steps ?? []).filter((s: any) => s.content_kind === "prompt").length;
+  const howSends = aiSteps === 0
+    ? "Written steps send automatically on schedule — no approval needed."
+    : aiSteps === (steps ?? []).length
+      ? "AI-written steps wait for approval in the Outbox before sending."
+      : "Written steps send automatically on schedule; AI-written steps wait for approval in the Outbox.";
   const { data: deals } = await db
     .from("crm_deals")
     .select("id, status, owner_email, owner_pipedrive_id, contact_id, crm_contacts ( id, emails, phones, dnc, sms_consent, email_unsub )")
@@ -166,7 +175,7 @@ export async function enrollDeals(db: SupabaseClient, campaign: Campaign, dealId
     if (error) { out.push({ dealId: d.id, ok: false, reason: error.message }); continue; }
     await db.from("crm_activities").insert({
       deal_id: d.id, contact_id: c.id, type: "system", subject: `📣 Enrolled in campaign "${campaign.name}"`,
-      body: `Sends will come from ${owner} after approval in the Outbox.`, actor: by, occurred_at: new Date().toISOString(), meta: { campaign_id: campaign.id },
+      body: `Sends will come from ${owner}. ${howSends}`, actor: by, occurred_at: new Date().toISOString(), meta: { campaign_id: campaign.id },
     });
     out.push({ dealId: d.id, ok: true });
   }
