@@ -174,6 +174,7 @@ async function applyEvent(db: SupabaseClient, e: OpsEvent, engine: IntakeSource 
   const name = customerName(e.customer) ?? customerName(quote?.customer) ?? "the customer";
   let notify: { email: string; title: string } | null = null;
   let detail: string | undefined;
+  let justCreated = false; // the Quote Created engine made the deal in this event (its own 🛒 note already carries the quote)
 
   // A quote with no deal: create one through the Quote Created engine
   // (only on created/updated/paid — a stray view for an unknown quote just
@@ -191,7 +192,7 @@ async function applyEvent(db: SupabaseClient, e: OpsEvent, engine: IntakeSource 
         occurredAt: e.occurred_at,
         meta: { ops_quote_id: e.quote_id, quote_number: e.quote_number ?? null, origin: d.origin ?? null, created_by: d.created_by ?? null },
       });
-      if (r.dealId) { dealId = r.dealId; const { data: dl } = await db.from("crm_deals").select("contact_id").eq("id", r.dealId).maybeSingle(); contactId = dl?.contact_id ?? contactId; detail = `deal ${r.action}`; }
+      if (r.dealId) { dealId = r.dealId; const { data: dl } = await db.from("crm_deals").select("contact_id").eq("id", r.dealId).maybeSingle(); contactId = dl?.contact_id ?? contactId; detail = `deal ${r.action}`; justCreated = r.action === "created"; }
       else detail = `no deal (${r.action}${r.detail ? `: ${r.detail}` : ""})`;
     } else {
       detail = engine?.enabled ? "no email/phone to match or create a deal" : "Quote Created engine disabled";
@@ -223,7 +224,9 @@ async function applyEvent(db: SupabaseClient, e: OpsEvent, engine: IntakeSource 
         const changed = e.type === "quote.updated" && quote && (quote.status !== row.status || quote.total_cents !== row.total_cents || quote.link !== row.link);
         const orig = row.originator as OpsOriginator | null;
         const external = isExternalOrg(orig);
-        if (e.type === "quote.created" || !quote || changed) {
+        // Skip our own "created" line when the engine's intake note just said
+        // it — unless there's an external originator to warn about.
+        if ((e.type === "quote.created" || !quote || changed) && (!justCreated || external)) {
           await timeline(db, {
             ...base, type: "note",
             subject: e.type === "quote.created" || !quote ? `🧾 Quote ${label} created${d.total_cents != null ? ` — ${usd(d.total_cents)}` : ""}${orig ? ` · by ${originatorLabel(orig)}` : d.origin === "builder" ? " · from the website builder" : ""}`
