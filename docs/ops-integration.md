@@ -239,11 +239,68 @@ Practical implementation: write every outgoing event to an `outbound_events` tab
 ## 8. What the Sales Engine does with the events (for context)
 
 - Deal page gets a **Quote card**: number, status chip, amount, Open quote button, last viewed, view count, production status, recent activity.
-- Timeline entries: quote created/sent, each view session, pay clicked, paid, emails sent/opened, production changes.
+- Timeline entries: quote created/sent, each view session, pay clicked, paid, emails sent/opened, production changes. Quote activity is **recorded as timeline notes only** — it does not count as an engagement signal for the hot list or sprint lists (decided 11/5).
 - Owner notifications: first view, pay clicked, paid, and a view after 24+ quiet hours. Other views are recorded silently.
-- `quote.paid` → stage **Deposit Placed**, note with amount and kind, rep reviews.
-- Builder-origin quotes with no deal → deal created via the Quote Created intake engine (pool/stage/source configurable in Settings).
+- `quote.paid` → stage **Deposit Placed in the Confirmation pipeline** (decided 11/5), note with amount and kind, rep reviews; the person is also **exited from any active Sales Engine campaign** (no drip continues after money is down).
+- Matching when `crm_deal_id` is null: open deal by customer email → by phone → else a new deal via the Quote Created intake engine (pool/stage/source configurable in Settings).
 - Nothing flows back to Ops except the deep link.
+
+### 8a. Why webhooks and not polling
+
+Both apps run on serverless compute and Ops' database (Neon) auto-suspends when idle. A poller would wake it every few minutes around the clock whether or not anything happened; webhooks cost nothing at idle and one small request per batch. The nightly pull (§7) is a single call a day, used only to reconcile. Keep it that way.
+
+### 8b. Minimal Ops sender (so the webhook side stays small)
+
+Write every event into one table and let one job deliver it. Nothing else is needed on the Ops side for delivery, retries and the pull endpoint.
+
+```sql
+create table outbound_events (
+  seq         bigserial primary key,
+  event_id    text unique not null,
+  payload     jsonb not null,          -- the §5 event object
+  created_at  timestamptz not null default now(),
+  delivered_at timestamptz,
+  attempts    int not null default 0,
+  next_attempt_at timestamptz not null default now()
+);
+```
+
+```js
+// deliver.js — run on a short schedule (e.g. every minute) or right after inserting events
+const crypto = require("crypto");
+const BACKOFF_MIN = [1, 5, 30, 120, 720];            // §4 retry policy
+
+async function deliverPending(db) {
+  const rows = await db.query(
+    `select seq, event_id, payload, attempts from outbound_events
+      where delivered_at is null and next_attempt_at <= now() and attempts < 6
+      order by seq limit 100`);
+  if (!rows.length) return;
+  const body = JSON.stringify({ events: rows.map((r) => r.payload) });
+  const ts = Math.floor(Date.now() / 1000).toString();
+  const sig = "sha256=" + crypto.createHmac("sha256", process.env.OPS_WEBHOOK_SECRET).update(body).digest("base64");
+  let ok = false, status = 0;
+  try {
+    const res = await fetch("https://lpo-sales-engine.vercel.app/api/webhooks/ops", {
+      method: "POST", headers: { "content-type": "application/json", "x-ops-signature": sig, "x-ops-timestamp": ts }, body,
+      signal: AbortSignal.timeout(10_000),
+    });
+    status = res.status; ok = res.ok;
+    if (status === 400 || status === 401) { console.error("ops webhook rejected", status, await res.text()); }
+  } catch (e) { console.error("ops webhook failed", e); }
+  const seqs = rows.map((r) => r.seq);
+  if (ok) {
+    await db.query(`update outbound_events set delivered_at = now() where seq = any($1)`, [seqs]);
+  } else if (status !== 400 && status !== 401) {
+    await db.query(
+      `update outbound_events set attempts = attempts + 1,
+         next_attempt_at = now() + make_interval(mins => $2) where seq = any($1)`,
+      [seqs, BACKOFF_MIN[Math.min(rows[0].attempts, BACKOFF_MIN.length - 1)]]);
+  }
+}
+```
+
+The pull endpoint (§7) is then `select payload from outbound_events where seq > $since order by seq limit $limit` with `next = max(seq)`.
 
 ## 9. If the Ops quote page does not track customer activity yet
 
@@ -285,6 +342,8 @@ await fetch("https://lpo-sales-engine.vercel.app/api/webhooks/ops?dry=1", {
 ```
 
 ## 11. Questions for the Ops session to answer back
+
+(Still open as of 11/5. The Sales Engine side is being built against the sample payloads in §6 in the meantime, so answers can arrive with the first real events.)
 
 1. Does the customer quote page already record views/clicks? If not, is §9 acceptable as specified?
 2. Which email provider sends Ops' customer emails, and does it provide open/click webhooks?
