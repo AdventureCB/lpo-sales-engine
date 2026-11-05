@@ -11,7 +11,7 @@ const OVERDUE_WINDOW_MS = 14 * 86_400_000; // don't resurface ancient tasks
 type NotifGroup = "deals" | "notes" | "comms" | "tasks";
 interface Notif {
   key: string; // stable id for dismissal
-  kind: "sms" | "whatsapp" | "missed_call" | "inbound_email" | "booking" | "overdue" | "intake" | "mention" | "outbox";
+  kind: "sms" | "whatsapp" | "missed_call" | "inbound_email" | "booking" | "overdue" | "intake" | "mention" | "outbox" | "quote";
   group: NotifGroup;
   title: string;
   sub: string | null;
@@ -109,7 +109,11 @@ export async function GET(req: NextRequest) {
   const mentionSince = new Date(Date.now() - 7 * 86_400_000).toISOString();
   // @mentions are personal: the viewer's own, or the scoped rep's when an admin looks at one rep.
   const mentionEmail = t?.email ?? user.email;
-  const [{ data: sms }, { data: wa }, { data: missed }, { data: due }, { data: intake }, { data: mentions }, { data: emails }, { data: bookings }] = await Promise.all([
+  // Ops quote events the engine flagged for the owner (first view, pay click,
+  // paid, production) — ops_events.notify_email is set at processing time.
+  let quoteQ = db.from("ops_events").select("event_id, type, notify_title, notify_email, crm_deal_id, occurred_at, received_at").not("notify_email", "is", null).gte("received_at", since).order("received_at", { ascending: false }).limit(20);
+  if (t) quoteQ = quoteQ.eq("notify_email", t.email);
+  const [{ data: sms }, { data: wa }, { data: missed }, { data: due }, { data: intake }, { data: mentions }, { data: emails }, { data: bookings }, { data: quoteEvents }] = await Promise.all([
     smsQ,
     db
       .from("whatsapp_messages")
@@ -147,6 +151,7 @@ export async function GET(req: NextRequest) {
       .limit(20),
     emailQ,
     bookQ,
+    quoteQ,
   ]);
 
   const intakeItems = (intake ?? []).filter((e: any) => {
@@ -266,6 +271,16 @@ export async function GET(req: NextRequest) {
       at: b.created_at,
       href: b.deal_id ? `/crm/deal/${b.deal_id}` : "/calendar",
       isNew: b.created_at > seenAt,
+    })),
+    ...(quoteEvents ?? []).map((q: any): Notif => ({
+      key: `quote:${q.event_id}`,
+      kind: "quote",
+      group: "deals",
+      title: q.notify_title ?? "Quote update",
+      sub: t ? null : `for ${String(q.notify_email).split("@")[0]}`,
+      at: q.received_at,
+      href: q.crm_deal_id ? `/crm/deal/${q.crm_deal_id}` : "/crm",
+      isNew: q.received_at > seenAt,
     })),
     ...(mentions ?? []).map((a: any): Notif => ({
       key: `mention:${a.id}`,

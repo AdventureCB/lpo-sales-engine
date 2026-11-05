@@ -541,6 +541,20 @@ export function IntakeAdmin() {
                 drawings becomes a note on their existing deal. When a drawing is run, the winner's deal gets a ⭐ task with the discount code and expiry.
               </div>
             )}
+            {s.adapter === "ops_quote" && (
+              <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 6 }}>
+                Quotes from Ops (lone-peak-ops.vercel.app). A quote that doesn&apos;t match an open deal by <code>crm_deal_id</code>, email or phone becomes a new deal
+                through this engine (website-builder self-serve quotes included). Any payment on a quote moves its deal to the <b>paid stage</b> below for the
+                rep to review — never auto-won — and ends any campaign the person is in. Quote views are recorded on the timeline only.
+                <label style={{ display: "block", marginTop: 6 }}>
+                  Paid stage
+                  <select className="vmsel" style={{ display: "block", marginTop: 3, maxWidth: 300 }} value={cfg.paid_stage_id ?? ""} onChange={(e) => setCfg("paid_stage_id", e.target.value || undefined)}>
+                    <option value="">— don&apos;t move the stage —</option>
+                    {(data.stages ?? []).map((st) => <option key={st.id} value={st.id}>{st.pipeline} → {st.name}</option>)}
+                  </select>
+                </label>
+              </div>
+            )}
             {s.adapter === "trailhub_interest" && (
               <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 6 }}>
                 Product-interest signups from the Trailhub app (&quot;tell me when the new camper is ready&quot;), read from its own Supabase project hourly.

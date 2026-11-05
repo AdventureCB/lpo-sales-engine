@@ -245,6 +245,9 @@ export async function GET(req: NextRequest) {
     webActivity = await computeWebActivity(db, contactEmails);
   } catch {}
 
+  // Ops quotes linked to this deal (docs/ops-integration.md).
+  const { data: opsQuotes } = await db.from("ops_quotes").select("quote_id, quote_number, link, total_cents, deposit_cents, currency, status, origin, created_by, originator, demos, truck, summary, version, paid_cents, last_paid_at, view_count, first_viewed_at, last_viewed_at, production_status, production_label, production_eta, quote_created_at, updated_at").eq("crm_deal_id", deal.id).order("updated_at", { ascending: false });
+
   // AI buyer profile (if one has been built for this deal).
   const { data: aiProfile } = await db.from("deal_profiles").select("*").eq("deal_id", deal.id).maybeSingle();
 
@@ -297,6 +300,7 @@ export async function GET(req: NextRequest) {
     adInfo,
     adJourney,
     webActivity,
+    opsQuotes: opsQuotes ?? [],
     aiProfile: aiProfile ?? null,
     aiProfileStale,
     sources: sources ?? [],

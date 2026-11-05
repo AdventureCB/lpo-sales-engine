@@ -25,6 +25,14 @@ interface DealData {
   callStats: { dials: number; answered: number; talkS: number; inbound: number } | null;
   adInfo?: { source: string | null; campaign: string | null; channel: string | null; leadCostCents: number | null } | null;
   webActivity?: import("@/lib/web-activity").WebActivity | null;
+  opsQuotes?: {
+    quote_id: string; quote_number: string | null; link: string | null; total_cents: number | null; deposit_cents: number | null; currency: string | null;
+    status: string | null; origin: string | null; created_by: string | null; originator?: { name?: string | null; email?: string | null; organization?: string | null } | null;
+    truck: string | null; summary: string | null; version: number | null;
+    paid_cents: number; last_paid_at: string | null; view_count: number; first_viewed_at: string | null; last_viewed_at: string | null;
+    production_status: string | null; production_label: string | null; production_eta: string | null; quote_created_at: string | null; updated_at: string;
+    demos?: { organization?: string | null; by?: string | null; at?: string | null }[] | null;
+  }[];
   adJourney?: {
     interactions: {
       at: string | null; source: string; channel: string | null; campaign: string | null; adId: string | null; origin: string; costCents: number | null;
@@ -636,6 +644,7 @@ export function DealDetailView({
   ) : null;
   const adJourneyEl = data.adJourney ? <AdJourneySection journey={data.adJourney} /> : null;
   const webActivityEl = data.webActivity ? <WebActivitySection activity={data.webActivity} /> : null;
+  const quotesEl = data.opsQuotes && data.opsQuotes.length > 0 ? <OpsQuotesSection quotes={data.opsQuotes} /> : null;
   const profileEl = (
     <>
       {d.status === "open" && <CloseLikelihood dealId={d.id} />}
@@ -874,6 +883,15 @@ export function DealDetailView({
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               <button className="btn" onClick={() => setModal("note")}>📝 Add note</button>
               <button className="btn" onClick={() => setModal("schedule")}>📅 Schedule activity</button>
+              <a
+                className="btn"
+                href={opsQuoteLink(d, contact)}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open Ops with this customer prefilled — the quote links back to this deal"
+              >
+                🧾 Create quote
+              </a>
               <button className="btn" onClick={() => setModal("sprint")}>
                 ⚡ Add to sprint{data.dealSprintIds.length > 0 ? ` (in ${data.dealSprintIds.length})` : ""}
               </button>
@@ -1888,6 +1906,7 @@ export function DealDetailView({
           {/* Dialer: the suggested next action sits right under Call effort;
               summary + confidence/archetypes render in the dialer chrome. */}
           {embedded && <NextActionCard profile={data.aiProfile ?? null} building={aiBuilding} />}
+          {embedded && quotesEl}
           {embedded && klaviyoEl}
           {embedded && webActivityEl}
           {embedded && adJourneyEl}
@@ -1922,6 +1941,7 @@ export function DealDetailView({
               {interestsEl}
             </div>
           )}
+          {!embedded && quotesEl}
           {!embedded && klaviyoEl}
           {!embedded && webActivityEl}
           {!embedded && adJourneyEl}
@@ -2370,6 +2390,67 @@ function DealProfileSection({
 
 
 const IX_ICON: Record<string, string> = { click: "👆", link: "↗", expand: "▸", tab: "▸", video: "▶", form_start: "✎", form_submit: "✅", outbound: "⇗", tel: "📞", mail: "✉" };
+
+/** Deep link into Ops (docs/ops-integration.md §3): customer prefilled, crm_deal_id carried onto the quote. */
+function opsQuoteLink(d: any, contact: any): string {
+  const p = new URLSearchParams({ tab: "quote", source: "sales-engine", crm_deal_id: d.id, crm_deal_url: `https://lpo-sales-engine.vercel.app/crm/deal/${d.id}` });
+  const name = contact?.name ?? "";
+  if (name) p.set("name", name);
+  if (contact?.first_name) p.set("first_name", contact.first_name);
+  if (contact?.last_name) p.set("last_name", contact.last_name);
+  const emails = (contact?.emails as any[]) ?? [];
+  const email = emails.find((e) => e.primary && e.value)?.value ?? emails[0]?.value ?? "";
+  if (email) p.set("email", String(email).toLowerCase());
+  const phones = (contact?.phones as any[]) ?? [];
+  const phone = phones.find((x) => x.primary)?.e164 ?? phones[0]?.e164 ?? phones[0]?.value ?? "";
+  if (phone) p.set("phone", phone);
+  return `https://lone-peak-ops.vercel.app/builds/sales?${p.toString()}`;
+}
+
+/** Ops quotes on this deal: status, money, views, production, who originated it (another org = don't step on their toes). */
+function OpsQuotesSection({ quotes }: { quotes: NonNullable<DealData["opsQuotes"]> }) {
+  const usd = (c: number | null | undefined) => (c == null ? "—" : `$${Math.round(c / 100).toLocaleString()}`);
+  const when = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : null);
+  const chip = (s: string | null) => {
+    const c = s === "paid" ? "var(--good)" : s === "accepted" ? "var(--accent)" : s === "void" || s === "expired" || s === "declined" ? "var(--crit)" : "var(--text-2)";
+    return <span className="chip" style={{ fontSize: 11.5, color: c, borderColor: c }}>{s ?? "draft"}</span>;
+  };
+  return (
+    <div className="card" style={{ marginBottom: 14 }}>
+      <h4 style={{ margin: "0 0 8px" }}>🧾 Quotes</h4>
+      <div style={{ display: "grid", gap: 10 }}>
+        {quotes.map((q) => {
+          const org = q.originator?.organization?.trim();
+          const external = !!org && !/lone ?peak/i.test(org);
+          const who = q.originator?.name || (q.created_by && q.created_by !== "builder" ? q.created_by.split("@")[0] : null);
+          return (
+            <div key={q.quote_id} style={{ border: "1px solid var(--border-soft)", borderRadius: 8, padding: "10px 12px", display: "grid", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <b style={{ fontSize: 14.5 }}>{q.quote_number ?? q.quote_id}</b>
+                {chip(q.status)}
+                <span style={{ fontSize: 13.5 }}>{usd(q.total_cents)}{q.deposit_cents ? <span style={{ color: "var(--text-3)" }}> · deposit {usd(q.deposit_cents)}</span> : null}</span>
+                {q.paid_cents > 0 && <span style={{ fontSize: 13, color: "var(--good)", fontWeight: 700 }}>💰 {usd(q.paid_cents)} paid</span>}
+                {q.link && <a className="btn ghost" href={q.link} target="_blank" rel="noopener noreferrer" style={{ marginLeft: "auto", padding: "4px 10px", fontSize: 12.5 }}>Open quote ↗</a>}
+              </div>
+              {(who || q.origin === "builder") && (
+                <div style={{ fontSize: 12.5, color: external ? "#d99a2b" : "var(--text-3)", fontWeight: external ? 700 : 400 }}>
+                  {q.origin === "builder" && !who ? "Built by the customer on the website" : <>Quote by {who}{org ? ` · ${org}` : ""}{external ? " — another team is working this deal; coordinate before reaching out" : ""}</>}
+                </div>
+              )}
+              {q.truck || q.summary ? <div style={{ fontSize: 12.5, color: "var(--text-2)" }}>{[q.truck, q.summary].filter(Boolean).join(" — ")}</div> : null}
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: "var(--text-3)" }}>
+                <span>👀 {q.view_count} view{q.view_count === 1 ? "" : "s"}{q.last_viewed_at ? ` · last ${when(q.last_viewed_at)}` : ""}</span>
+                {q.production_label && <span>🏭 {q.production_label}{q.production_eta ? ` · ETA ${q.production_eta}` : ""}</span>}
+                {q.demos && q.demos.length > 0 && <span>🚙 Demo done{q.demos[0]?.organization ? ` by ${q.demos[0].organization}` : ""}{q.demos[0]?.at ? ` · ${when(q.demos[0].at)}` : ""}</span>}
+                {q.quote_created_at && <span>created {when(q.quote_created_at)}</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function WebActivitySection({ activity }: { activity: NonNullable<DealData["webActivity"]> }) {
   const [open, setOpen] = useState(false);

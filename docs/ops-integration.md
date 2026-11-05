@@ -118,6 +118,13 @@ Unknown extra fields are ignored, so Ops may add fields without a contract chang
 
 - `link` is the customer-facing quote URL (whatever the customer receives by email). Must stay valid for the life of the quote.
 - `origin`: `"rep"` or `"builder"` (website 3D builder self-serve).
+- **`originator`** (added 11/5 — Ops is opening up to ambassadors and installers as their sales tool): who made the quote, so the LPO rep can see another team is working the deal and not interfere.
+
+  ```json
+  "originator": { "name": "Jane Doe", "email": "jane@overlandinstalls.com", "organization": "Overland Installs", "role": "installer" }
+  ```
+
+  Send it on `quote.created` and `quote.updated`. `organization` is the display name of the company/team (`"Lone Peak Overland"` for in-house reps); `role` is free text (`rep`, `ambassador`, `installer`, …). `created_by` can stay for backwards compatibility but `originator` wins when both are present. For builder quotes send `"origin": "builder"` and omit `originator`. The Sales Engine shows "Quote by Jane Doe · Overland Installs — another team is working this deal" on the deal, writes it on the timeline, and notifies the deal owner whenever the organization isn't Lone Peak.
 - `status`: `"draft" | "sent" | "viewed" | "accepted" | "paid" | "expired" | "void"`. Send `quote.created` when the quote exists; it's fine if the status is still `draft`.
 - `truck` and `summary` are free text shown to the rep.
 
@@ -199,6 +206,27 @@ See §9 if the quote page does not record this today.
 ```
 
 `email.opened` / `email.clicked` reuse `message_id` and, for clicks, put the target in `url`. Send these only if your email provider gives you opens/clicks; `email.sent` alone is already useful because it stops reps from double-sending.
+
+### `demo.completed`
+
+Sent when a user in Ops marks that a demo was done for this quote's customer — in particular when another organization (ambassador, installer) did it, so the LPO rep knows not to schedule their own.
+
+```json
+{
+  "type": "demo.completed",
+  "quote_id": "q_01HX…",
+  "crm_deal_id": "…or null",
+  "customer": { "name": "Jordan Lee", "email": "jordan@example.com", "phone": "+15095550142" },
+  "data": {
+    "originator": { "name": "Jane Doe", "email": "jane@overlandinstalls.com", "organization": "Overland Installs", "role": "installer" },
+    "demo_at": "2026-11-04T22:00:00Z",
+    "location": "Boise showroom",
+    "note": "Showed the V2 on their Tundra; interested in the Expedition package."
+  }
+}
+```
+
+`demo_at` is when the demo happened (defaults to `occurred_at`); `location` and `note` are optional free text. The Sales Engine records a meeting on the timeline ("🚙 Demo done by Overland Installs (Jane Doe)"), shows it on the Quote card, and notifies the deal owner.
 
 ### `production.status`
 
@@ -343,7 +371,19 @@ await fetch("https://lpo-sales-engine.vercel.app/api/webhooks/ops?dry=1", {
 
 ## 11. Questions for the Ops session to answer back
 
-(Still open as of 11/5. The Sales Engine side is being built against the sample payloads in §6 in the meantime, so answers can arrive with the first real events.)
+(Still open as of 11/5. The Sales Engine side is built against the sample payloads in §6 — the webhook, the nightly pull, the Quote card and the Quote Created engine are live and waiting — so answers can arrive with the first real events.)
+
+7. **What else could Ops tell the sales team?** You see things the CRM can't: which options the customer configured, how many revisions a quote went through, whether financing was started, delivery/install preferences, when a customer re-opened an old quote. Propose additions that are cheap for you to emit and useful for a rep deciding what to do next — ideally as new fields inside existing events (unknown fields are already stored; §5) or as new event types with the same envelope. Don't add anything that needs a new endpoint, a new auth scheme, or synchronous calls between the apps.
+
+   For each suggestion, tell us what the Sales Engine would need to do to receive and show it, in this form so we can build it without a second round-trip:
+
+   - **Event / field:** name and where it lives (which event's `data`, or a new `type`).
+   - **Shape:** the JSON, with types and which fields are optional.
+   - **When sent:** the trigger in Ops and expected volume.
+   - **Meaning for a rep:** one sentence on why they'd care, and whether it should notify the deal owner or just sit on the timeline / Quote card.
+   - **Identity:** how it maps to a quote (`quote_id`) or customer (`crm_deal_id` / email) — same rules as §2.
+
+   Anything you emit before we've built for it is harmless: it's kept in `ops_events` and can be back-filled onto deals later.
 
 1. Does the customer quote page already record views/clicks? If not, is §9 acceptable as specified?
 2. Which email provider sends Ops' customer emails, and does it provide open/click webhooks?
