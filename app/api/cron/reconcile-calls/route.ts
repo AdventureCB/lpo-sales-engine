@@ -159,5 +159,15 @@ export async function GET(req: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true, lookbackHours, results });
+  // Inbound Telnyx calls stored without a deal (duplicate contacts on one
+  // number, or the contact was created after the call) get another pass.
+  let relinked: unknown = null;
+  try {
+    const { relinkUnlinkedInboundCalls } = await import("@/lib/caller-deal");
+    relinked = await relinkUnlinkedInboundCalls(db);
+  } catch (e) {
+    relinked = { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  return NextResponse.json({ ok: true, lookbackHours, results, relinked });
 }

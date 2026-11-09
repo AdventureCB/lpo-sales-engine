@@ -605,27 +605,16 @@ export async function POST(req: NextRequest) {
       let contactDnc = false;
       let crmDealId: string | null = null;
       if (peer) {
-        const { data: contact } = await db
-          .from("crm_contacts")
-          .select("id, dnc")
-          .contains("phones", JSON.stringify([{ e164: peer }]))
-          .maybeSingle();
-        if (contact) {
-          contactId = contact.id;
-          contactDnc = Boolean((contact as any).dnc);
-          const { data: deal } = await db
-            .from("crm_deals")
-            .select("id, pipedrive_deal_id, status")
-            .eq("contact_id", contact.id)
-            .order("status", { ascending: true })
-            .order("updated_at", { ascending: false })
-            .limit(1)
-            .maybeSingle();
+        const { resolveCallerDeal } = await import("@/lib/caller-deal");
+        const hit = await resolveCallerDeal(db, peer, update.rep_id ?? null);
+        if (hit) {
+          contactId = hit.contactId;
+          contactDnc = hit.dnc;
           // Native-first: link by crm id always; PD id rides along when it exists.
-          if (deal) {
-            crmDealId = deal.id;
-            update.crm_deal_id = deal.id;
-            if (deal.pipedrive_deal_id) update.deal_id = deal.pipedrive_deal_id;
+          if (hit.dealId) {
+            crmDealId = hit.dealId;
+            update.crm_deal_id = hit.dealId;
+            if (hit.pipedriveDealId) update.deal_id = hit.pipedriveDealId;
           }
         }
       }
