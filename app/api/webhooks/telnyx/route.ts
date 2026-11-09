@@ -606,7 +606,7 @@ export async function POST(req: NextRequest) {
       let crmDealId: string | null = null;
       if (peer) {
         const { resolveCallerDeal } = await import("@/lib/caller-deal");
-        const hit = await resolveCallerDeal(db, peer, update.rep_id ?? null);
+        const hit = await resolveCallerDeal(db, peer, typeof update.rep_id === "string" ? update.rep_id : null);
         if (hit) {
           contactId = hit.contactId;
           contactDnc = hit.dnc;
