@@ -12,8 +12,11 @@ interface Recent { id: string; kind: Kind; name: string; email: string | null; p
 const DAY_LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 /**
  * iframe + listener for the main website. Origin-checked so only our booking
- * page can resize it. Also fires GA4 Book_Consult on a confirmed new call /
- * showroom booking ("confirm" = existing depositor, not a new consult).
+ * page can resize it. On a confirmed new call / showroom booking ("confirm" =
+ * existing depositor, not a new consult) it publishes the Shopify customer
+ * event "lpo_book_consult"; the "GA4 camper_order" custom pixel subscribes and
+ * sends GA4 Book_Consult. (GA4 lives in Shopify's sandboxed pixel — there is
+ * no gtag on the page.)
  */
 function embedSnippet(base: string, theme: "light" | "dark"): string {
   let origin = base;
@@ -26,7 +29,7 @@ function embedSnippet(base: string, theme: "light" | "dark"): string {
     `  var f=document.getElementById("lpo-book");`,
     `  if(e.data.type==="lpo-book:height")f.style.height=(e.data.height+8)+"px";`,
     `  if(e.data.type==="lpo-book:step"&&f.getBoundingClientRect().top<0)f.scrollIntoView({behavior:"smooth",block:"start"});`,
-    `  if(e.data.type==="lpo-book:booked"&&(e.data.kind==="call"||e.data.kind==="showroom")&&typeof gtag==="function")gtag("event","Book_Consult",{consult_type:e.data.kind});`,
+    `  if(e.data.type==="lpo-book:booked"&&(e.data.kind==="call"||e.data.kind==="showroom")&&window.Shopify&&Shopify.analytics&&Shopify.analytics.publish)Shopify.analytics.publish("lpo_book_consult",{consult_type:e.data.kind});`,
     `});`,
     `</script>`,
   ].join("\n");
