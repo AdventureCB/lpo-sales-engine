@@ -14,7 +14,12 @@
  * interactions (buttons, links, videos, accordions, tabs, forms) — batched
  * to our app with sendBeacon so nothing blocks the page. Meta's _fbp/_fbc
  * cookies ride along for server-side conversion matching.
+ *
+ * v2.1 (2026-11-11): public API for structured page events —
+ * window.lpo.track(ev) / window.lpo.flush(), draining any window.lpoq queue.
+ * Only whitelisted types (t:"sv" = Build Survey funnel) are accepted.
  */
+/* attr.js v2.1 2026-11-11 */
 (function () {
   "use strict";
   var KEYS = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
@@ -197,8 +202,10 @@
   (function behavior() {
     if (!vid || !window.navigator) return;
     var ENDPOINT = "https://lpo-sales-engine.vercel.app/api/attr/events";
-    var MAX_PER_PAGE = 150;
-    var queue = [], sent = 0;
+    var MAX_PER_PAGE = 150;            // generic behavior events
+    var MAX_SV_PER_PAGE = 400;         // Build Survey funnel events (own cap)
+    var TRACK_TYPES = { sv: 1 };       // window.lpo.track whitelist
+    var queue = [], sent = 0, svCount = 0;
     var path = location.pathname.slice(0, 300);
     var title = (document.title || "").slice(0, 200);
 
@@ -214,7 +221,8 @@
     function touchSession() { try { sessionStorage.setItem("lpo_sid", JSON.stringify({ id: sid, t: Date.now() })); } catch (e) {} }
 
     function push(ev) {
-      if (sent + queue.length >= MAX_PER_PAGE) return;
+      if (ev.t === "sv") { if (svCount >= MAX_SV_PER_PAGE) return; svCount++; }
+      else if (sent + queue.length - svCount >= MAX_PER_PAGE) return;
       ev.at = new Date().toISOString();
       ev.p = path;
       queue.push(ev);
@@ -231,6 +239,21 @@
       } catch (e) {}
       try { fetch(ENDPOINT, { method: "POST", headers: { "Content-Type": "text/plain" }, body: body, keepalive: true }).catch(function () {}); } catch (e) {}
     }
+    // Send EVERYTHING queued (several beacons of 50) — used on hide/unload and
+    // by lpo.flush(), so the tail of a survey run isn't dropped.
+    function flushAll() { var guard = 0; while (queue.length && guard++ < 20) flush(); }
+
+    // Public API: structured events from site code (the Build Survey).
+    window.lpo = window.lpo || {};
+    window.lpo.track = function (ev) {
+      try { if (ev && typeof ev === "object" && TRACK_TYPES[ev.t]) push(ev); } catch (e) {}
+    };
+    window.lpo.flush = flushAll;
+    try {
+      var pending = window.lpoq || [];
+      window.lpoq = { push: function (ev) { window.lpo.track(ev); } }; // later pushes go straight through
+      for (var pi = 0; pi < pending.length; pi++) window.lpo.track(pending[pi]);
+    } catch (e) {}
 
     // Page view.
     var extRef = document.referrer && document.referrer.indexOf(location.hostname) === -1 ? document.referrer.slice(0, 300) : null;
@@ -293,6 +316,8 @@
     document.addEventListener("click", function (ev) {
       try {
         var t = ev.target; if (!t || !t.closest) return;
+        // Areas that send their own structured events (the Build Survey) opt out.
+        if (t.closest('[data-lpo-track="off"]')) return;
         var a = t.closest("a[href]");
         if (a) {
           var href = a.getAttribute("href") || "";
@@ -346,7 +371,7 @@
       try {
         var f = ev.target; if (!f || !f.matches || !f.matches("form")) return;
         push({ t: "ix", n: "form_submit", d: (f.id || f.getAttribute("name") || f.getAttribute("action") || "form").slice(0, 80) });
-        flush();
+        flushAll();
       } catch (e) {}
     }, true);
 
@@ -357,7 +382,7 @@
       if (ended) return; ended = true;
       depth();
       push({ t: "pe", dur: active, sc: maxScroll, secs: seen.slice(0, 40) });
-      flush();
+      flushAll();
       // A later return to the tab reports only the NEW time/sections.
       active = 0; seen = []; seenSet = {};
     }

@@ -35,6 +35,9 @@ const STR = (v: unknown, max: number): string | null => (typeof v === "string" &
 const INT = (v: unknown, max: number): number | null => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.min(max, Math.round(v))) : null);
 const NAMES = new Set(["click", "link", "expand", "tab", "video", "form_start", "form_submit", "outbound", "tel", "mail"]);
 const MAX_EVENTS_PER_VISITOR_DAY = 1500;
+const SV_NAMES = new Set(["start", "view", "done", "back", "change", "more", "sound", "reveal", "canvas_blocked", "pause", "exit", "invalid", "submit_fail", "submit"]);
+// Event keys stored in their own survey_events columns (everything else → data).
+const SV_COLS = new Set(["t", "n", "run", "form", "v", "test", "step", "i", "ms", "a", "at", "p"]);
 const ID_RE = /^[a-z0-9-]{8,64}$/i;
 
 export async function POST(req: NextRequest) {
@@ -61,6 +64,9 @@ export async function POST(req: NextRequest) {
 
   const now = Date.now();
   const rows: Record<string, unknown>[] = [];
+  // Build Survey funnel events (t:"sv") → survey_events rows + per-run rollup.
+  const svRows: Record<string, unknown>[] = [];
+  const ua = STR(body?.ua, 200);
   for (const e of events) {
     const at = typeof e?.at === "string" ? Date.parse(e.at) : NaN;
     if (!Number.isFinite(at) || at > now + 300_000 || at < now - 7 * 86_400_000) continue;
@@ -69,13 +75,32 @@ export async function POST(req: NextRequest) {
     else if (e.t === "pe") {
       const secs = Array.isArray(e.secs) ? e.secs.map((s: unknown) => STR(s, 60)).filter(Boolean).slice(0, 40) : [];
       rows.push({ ...base, type: "pageend", duration_s: INT(e.dur, 6 * 3600), scroll_pct: INT(e.sc, 100), sections: secs.length ? secs : null });
+    } else if (e.t === "sv") {
+      const run = STR(e.run, 80);
+      const name = STR(e.n, 30);
+      if (!run || !run.startsWith("sv-") || !name || !SV_NAMES.has(name)) continue;
+      const data: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(e)) {
+        if (SV_COLS.has(k)) continue;
+        if (typeof v === "string") data[k] = v.slice(0, 200);
+        else if (typeof v === "number" || typeof v === "boolean") data[k] = v;
+      }
+      svRows.push({
+        at: base.at, vid, sid, run_id: run, form: STR(e.form, 40) ?? "build-survey", version: STR(e.v, 40), name,
+        step: STR(e.step, 40), step_index: INT(e.i, 100), ms: INT(e.ms, 3_600_000), answer: STR(e.a, 200),
+        data: Object.keys(data).length ? data : null, test: e.test === true, ua,
+      });
     } else if (e.t === "ix") {
       const name = STR(e.n, 20);
       if (!name || !NAMES.has(name)) continue;
       rows.push({ ...base, type: "interaction", name, detail: STR(e.d, 200) });
     }
   }
-  if (!rows.length) return NextResponse.json({ ok: true, stored: 0 }, { headers });
+  if (svRows.length) {
+    const { error: svErr } = await db.from("survey_events").insert(svRows);
+    if (!svErr) await db.rpc("refresh_survey_runs", { p_runs: [...new Set(svRows.map((r) => r.run_id as string))] }).then(() => {}, () => {});
+  }
+  if (!rows.length) return NextResponse.json({ ok: true, stored: svRows.length }, { headers });
 
   const nowIso = new Date().toISOString();
   const [{ error }, _v] = await Promise.all([
@@ -93,5 +118,5 @@ export async function POST(req: NextRequest) {
     ),
   ]);
   if (error) return NextResponse.json({ error: "db" }, { status: 500, headers });
-  return NextResponse.json({ ok: true, stored: rows.length }, { headers });
+  return NextResponse.json({ ok: true, stored: rows.length + svRows.length }, { headers });
 }

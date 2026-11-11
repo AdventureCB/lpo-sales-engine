@@ -245,6 +245,10 @@ export async function GET(req: NextRequest) {
     webActivity = await computeWebActivity(db, contactEmails);
   } catch {}
 
+  // Build Survey run that produced this lead (web-form field survey_run_id).
+  const { data: surveyIe } = await db.from("intake_events").select("detail").eq("deal_id", deal.id).not("detail->fields->>survey_run_id", "is", null).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  const surveyRunId = ((surveyIe as any)?.detail?.fields?.survey_run_id as string | undefined) ?? null;
+
   // Ops quotes linked to this deal (docs/ops-integration.md).
   const { data: opsQuotes } = await db.from("ops_quotes").select("quote_id, quote_number, link, total_cents, deposit_cents, currency, status, origin, created_by, originator, demos, truck, summary, version, paid_cents, last_paid_at, view_count, first_viewed_at, last_viewed_at, production_status, production_label, production_eta, quote_created_at, updated_at").eq("crm_deal_id", deal.id).order("updated_at", { ascending: false });
 
@@ -301,6 +305,7 @@ export async function GET(req: NextRequest) {
     adJourney,
     webActivity,
     opsQuotes: opsQuotes ?? [],
+    surveyRunId,
     aiProfile: aiProfile ?? null,
     aiProfileStale,
     sources: sources ?? [],

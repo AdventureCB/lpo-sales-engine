@@ -25,6 +25,7 @@ interface DealData {
   callStats: { dials: number; answered: number; talkS: number; inbound: number } | null;
   adInfo?: { source: string | null; campaign: string | null; channel: string | null; leadCostCents: number | null } | null;
   webActivity?: import("@/lib/web-activity").WebActivity | null;
+  surveyRunId?: string | null;
   opsQuotes?: {
     quote_id: string; quote_number: string | null; link: string | null; total_cents: number | null; deposit_cents: number | null; currency: string | null;
     status: string | null; origin: string | null; created_by: string | null; originator?: { name?: string | null; email?: string | null; organization?: string | null } | null;
@@ -644,7 +645,16 @@ export function DealDetailView({
   ) : null;
   const adJourneyEl = data.adJourney ? <AdJourneySection journey={data.adJourney} /> : null;
   const webActivityEl = data.webActivity ? <WebActivitySection activity={data.webActivity} /> : null;
-  const quotesEl = data.opsQuotes && data.opsQuotes.length > 0 ? <OpsQuotesSection quotes={data.opsQuotes} /> : null;
+  const quotesEl = (
+    <>
+      {data.opsQuotes && data.opsQuotes.length > 0 ? <OpsQuotesSection quotes={data.opsQuotes} /> : null}
+      {data.surveyRunId ? (
+        <div style={{ marginBottom: 10, fontSize: 13 }}>
+          <a href={`/analytics/survey?run=${encodeURIComponent(data.surveyRunId)}`} style={{ color: "var(--accent)" }}>🛻 View their Build Survey run</a>
+        </div>
+      ) : null}
+    </>
+  );
   const profileEl = (
     <>
       {d.status === "open" && <CloseLikelihood dealId={d.id} />}
