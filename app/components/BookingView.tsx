@@ -72,10 +72,22 @@ export function BookingView({ repSlug, repFirst }: Props) {
   const [slot, setSlot] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", phone: "", email: "", note: "" });
   const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState<{ startAt: string; repFirst: string } | null>(null);
+  const [done, setDone] = useState<{ startAt: string; repFirst: string; bookingId: string | null } | null>(null);
+  // Conversion signal for the parent website (Book_Consult in GA4 → Google
+  // Ads): ONE "lpo-book:booked" per confirmed NEW booking. Reschedules aren't
+  // a new consult and don't send it. No personal data — kind + booking id only.
+  // GA4 itself stays on the parent page; it is never loaded in the iframe.
+  const bookedSent = useRef<string | null>(null);
   // Reschedule flow: /book/<slug>?rebook=<token> prefills the customer's details
   // (and booking type) and cancels the old booking once the new one is confirmed.
   const [rebook, setRebook] = useState<{ token: string; oldStartAt: string } | null>(null);
+  useEffect(() => {
+    if (!done || !kind || rebook || window.parent === window) return;
+    const key = done.bookingId ?? `${done.startAt}:${kind}`;
+    if (bookedSent.current === key) return; // StrictMode / re-render guard
+    bookedSent.current = key;
+    window.parent.postMessage({ type: "lpo-book:booked", kind, ...(done.bookingId ? { bookingId: done.bookingId } : {}) }, "*");
+  }, [done, kind, rebook]);
   useEffect(() => {
     const qs = new URLSearchParams(window.location.search);
     const pre = qs.get("kind"); // ?kind=showroom deep-links straight to step 2
@@ -141,7 +153,7 @@ export function BookingView({ repSlug, repFirst }: Props) {
         setError(d.error ?? "Something went wrong.");
         if (r.status === 409) { setSlot(null); setStep(2); load(); }
       } else {
-        setDone({ startAt: d.startAt, repFirst: d.rep?.first ?? repFirst ?? "your Gravel Guide" });
+        setDone({ startAt: d.startAt, repFirst: d.rep?.first ?? repFirst ?? "your Gravel Guide", bookingId: typeof d.bookingId === "string" ? d.bookingId : null });
       }
     } catch {
       setError("Something went wrong — please try again.");
