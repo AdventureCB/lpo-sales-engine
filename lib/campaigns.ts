@@ -24,6 +24,7 @@ export const OWNER_SEND_HOLD_H = 24; // owner emailed/texted by hand → wait th
 export const DRAFT_AHEAD_H = 24; // drafts appear in the Outbox this far ahead of their slot
 export const DEFAULT_WINDOW = { start: 9, end: 17 }; // contact-local hours (email)
 export const SMS_WINDOW = { start: 9, end: 18 }; // texts: quiet hours are mandatory
+const AUTO_REPLY_RE = /^(📥\s*)?(automatic reply|auto[- ]?reply|autoreply|out of (the )?office|ooo\b|away from)/i;
 const OPT_OUT_RE = /\b(unsubscribe|opt[ -]?out|remove me|stop (emailing|texting|contacting|messaging)|don'?t (email|text|contact|message) me|take me off)\b/i;
 
 export interface CampaignTrigger {
@@ -358,8 +359,10 @@ async function contactPhones(db: SupabaseClient, contactId: string | null): Prom
 
 /** Inbound replies since `since` (email on the deal, or texts from the contact's numbers). Returns the newest body for opt-out detection. */
 async function inboundSince(db: SupabaseClient, dealId: string, contactId: string | null, since: string): Promise<{ any: boolean; text: string }> {
+  // Gmail sync stores inbound mail on the CONTACT only (deal_id is null), so
+  // match either — a deal_id-only check missed every email reply (Scott Marrs 11/11).
   const [{ data: emails }, phones] = await Promise.all([
-    db.from("crm_activities").select("body, subject").eq("deal_id", dealId).eq("type", "email").eq("meta->>direction", "inbound").gt("occurred_at", since).order("occurred_at", { ascending: false }).limit(3),
+    db.from("crm_activities").select("body, subject").or(contactId ? `deal_id.eq.${dealId},contact_id.eq.${contactId}` : `deal_id.eq.${dealId}`).eq("type", "email").eq("meta->>direction", "inbound").gt("occurred_at", since).order("occurred_at", { ascending: false }).limit(3),
     contactPhones(db, contactId),
   ]);
   let texts: any[] = [];
@@ -367,8 +370,10 @@ async function inboundSince(db: SupabaseClient, dealId: string, contactId: strin
     const { data } = await db.from("sms_messages").select("body").eq("direction", "incoming").in("peer_phone", phones).gt("sent_at", since).order("sent_at", { ascending: false }).limit(3);
     texts = data ?? [];
   }
-  const text = [...(emails ?? []).map((e: any) => `${e.subject ?? ""} ${e.body ?? ""}`), ...texts.map((t) => t.body ?? "")].join("\n");
-  return { any: (emails?.length ?? 0) + texts.length > 0, text };
+  // Out-of-office / auto-replies aren't the buyer answering — don't end the drip on them.
+  const realEmails = (emails ?? []).filter((e: any) => !AUTO_REPLY_RE.test(e.subject ?? ""));
+  const text = [...realEmails.map((e: any) => `${e.subject ?? ""} ${e.body ?? ""}`), ...texts.map((t) => t.body ?? "")].join("\n");
+  return { any: realEmails.length + texts.length > 0, text };
 }
 
 /** Manual outbound touches by a rep since `since` — split into the owner's own and anyone else's. Campaign sends are excluded. */
@@ -631,7 +636,7 @@ export async function sweepReplies(db: SupabaseClient): Promise<{ replied: numbe
   const out = { replied: 0, optedOut: 0 };
   const { data: rows, error } = await db.rpc("campaign_replies", { p_owner: null, p_active_only: true });
   if (error) throw new Error(error.message);
-  const hits = ((rows ?? []) as any[]).filter((r) => r.last_reply_at > (r.last_send_at ?? ""));
+  const hits = ((rows ?? []) as any[]).filter((r) => r.last_reply_at > (r.last_send_at ?? "") && !AUTO_REPLY_RE.test(r.last_reply_text ?? ""));
   if (!hits.length) return out;
   const { data: camps } = await db.from("campaigns").select("id, name, channel, settings").in("id", [...new Set(hits.map((r) => r.campaign_id))]);
   const campBy = new Map((camps ?? []).map((c: any) => [c.id, c]));
