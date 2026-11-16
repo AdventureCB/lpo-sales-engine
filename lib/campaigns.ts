@@ -34,6 +34,7 @@ export interface CampaignTrigger {
   max_contacts?: number | null; // e.g. 0 = never had a conversation
   min_contacts?: number | null; // e.g. 1 = has had at least one conversation
   has_phone?: "yes" | "no" | null; // usable phone on the contact (null = either) — e.g. email-only leads
+  never_texted_us?: boolean | null; // exclude anyone who has EVER texted us (any of their numbers, any line) — Kyle 11/16
   min_days_since_created?: number | null;
   min_days_since_activity?: number | null;
   pipeline?: string | null; // crm_pipelines.name
@@ -222,17 +223,22 @@ export async function stateTriggerCandidates(db: SupabaseClient, c: Pick<Campaig
   // Conversations are counted per PERSON (any linked or unlinked call that
   // connected, plus any text they sent us) — the deal's own contact_count
   // misses calls on other lines and replies by text (Kyle 10/26).
-  if ((t.max_contacts != null || t.min_contacts != null) && rows.length) {
+  if ((t.max_contacts != null || t.min_contacts != null || t.never_texted_us) && rows.length) {
     const { data: dcs } = await db.from("crm_deals").select("id, contact_id, contact_count").in("id", rows.map((d) => d.id).slice(0, 2000));
     const byDeal = new Map((dcs ?? []).map((x: any) => [x.id, x]));
     const cids = [...new Set((dcs ?? []).map((x: any) => x.contact_id).filter(Boolean))] as string[];
     const personConv = new Map<string, number>();
+    const textedUs = new Set<string>();
     for (let i = 0; i < cids.length; i += 500) {
       const { data: cc } = await db.rpc("contact_conversations", { p_contact_ids: cids.slice(i, i + 500) });
-      for (const r of (cc ?? []) as any[]) personConv.set(r.contact_id, Number(r.conv_calls) + Number(r.inbound_texts));
+      for (const r of (cc ?? []) as any[]) {
+        personConv.set(r.contact_id, Number(r.conv_calls) + Number(r.inbound_texts));
+        if (Number(r.inbound_texts) > 0) textedUs.add(r.contact_id);
+      }
     }
     rows = rows.filter((d) => {
       const x: any = byDeal.get(d.id);
+      if (t.never_texted_us && textedUs.has(x?.contact_id)) return false;
       const n = Math.max(x?.contact_count ?? 0, personConv.get(x?.contact_id) ?? 0);
       if (t.max_contacts != null && n > t.max_contacts) return false;
       if (t.min_contacts != null && n < t.min_contacts) return false;
