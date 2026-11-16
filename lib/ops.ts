@@ -346,7 +346,7 @@ async function applyEvent(db: SupabaseClient, e: OpsEvent, engine: IntakeSource 
       const amount = Number(d.amount_cents ?? 0);
       const kind = String(d.kind ?? "deposit");
       const firstPayment = !(quote?.paid_cents > 0) && (kind === "deposit" || kind === "full");
-      await mirror({ paid_cents: (quote?.paid_cents ?? 0) + amount, last_paid_at: d.paid_at ?? e.occurred_at, status: "paid", ops_stage: kind === "full" ? "paid" : quote?.ops_stage === "paid" ? "paid" : "deposit_paid", total_cents: d.total_cents ?? quote?.total_cents ?? null, balance_cents: d.balance_cents ?? quote?.balance_cents ?? null });
+      await mirror({ paid_cents: (quote?.paid_cents ?? 0) + amount, last_paid_at: d.paid_at ?? e.occurred_at, status: "paid", ops_stage: kind === "full" || d.balance_cents === 0 || quote?.ops_stage === "paid" ? "paid" : "deposit_paid", total_cents: d.total_cents ?? quote?.total_cents ?? null, balance_cents: d.balance_cents ?? quote?.balance_cents ?? null });
       if (!dealId) return { dealId, detail: detail ?? "paid quote with no deal", result: { paid: amount } };
       const kindLabel = ({ deposit: "deposit", full: "in full", balance: "balance", additions: "for additions", split: "split payment" } as Record<string, string>)[kind] ?? kind;
       const subject = `💰 ${name} paid ${usd(amount)} ${kindLabel} on ${label}`;
