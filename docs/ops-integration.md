@@ -1,395 +1,165 @@
-# Ops ↔ LPO Sales Engine integration contract (v1)
+# Ops ↔ LPO Sales Engine integration contract (v2)
+
+*v2, 2026-11-16. Replaces v1 (11/5). Built from the Ops reply of 11/16 (`ops-integration-reply.md`) and the owner's decisions on it. Everything Ops asked for in its section 1 is accepted. The Sales Engine side of v2 is built and live; it is waiting on Ops' first events.*
 
 Two apps, same company, different codebases and databases:
 
-- **Ops** — https://lone-peak-ops.vercel.app, Next.js on Neon Postgres. Builds quotes, takes deposits and payments, sends customer emails, tracks production.
-- **Sales Engine** — https://lpo-sales-engine.vercel.app, Next.js on Supabase. The sales CRM: deals, contacts, reps, call/text/email timeline, notifications.
+- **Ops**: staff at `https://ops.lonepeakoverland.com`, customers at `https://orders.lonepeakoverland.com`. Quotes, payments (through Shopify), customer emails (Resend), production.
+- **Sales Engine**: `https://lpo-sales-engine.vercel.app`. The sales CRM: deals, contacts, reps, timeline, notifications, campaigns.
 
-This document is the full contract between them. Ops implements the "Ops side" sections; the Sales Engine implements the rest. Neither app reads the other's database.
+Neither app reads the other's database. Data flows Ops → Sales Engine as signed events, plus one server-to-server prefill call the other way.
 
-## 1. Overview
+## 1. What changed from v1
 
-Direction of data is almost entirely **Ops → Sales Engine**:
+| Ops ask (reply §) | v2 |
+|---|---|
+| 1.1 No PII in the deep link | Accepted. Sales Engine calls `POST /api/crm/prefill` server-to-server, then opens a link with only `crm_deal_id`. `crm_deal_url` dropped. (§3) |
+| 1.2 `link` = staff quote page | Accepted. The Sales Engine shows it as "Open in Ops". |
+| 1.3 Hostnames | Accepted: `ops.` for staff/API, `orders.` for customers. |
+| 1.4 Email can be null at creation | **Option (a):** send `quote.created` right away. Hold it only when there is no `crm_deal_id`, no email, no phone and no `website_submission_id`. |
+| 1.5 `backfill` flag | Accepted, and stricter: backfill events only mirror the quote and add timeline lines to an **existing** deal. No new deals, stage moves, campaign exits, owner changes or notifications. |
+| 1.6 Sign the timestamp; separate pull token | Accepted: HMAC over `<timestamp>.<raw body>`; pull uses `OPS_PULL_TOKEN`. (§4, §7) |
+| 2.x Ops' model (ids, statuses, money, production, activity, email) | Adopted as written. See §6. |
+| 4.x Enrichments | All accepted. See §6. |
+| 4.7 Website submission id | **Yes, the Sales Engine is that CRM.** Website forms (including the Build Survey) store their `submission_id` on the lead. Send `data.website_submission_id`; it is the first match key after `crm_deal_id`. |
 
-1. Ops **pushes events** (quote created, customer viewed the quote, paid, email sent, production status) to a signed webhook on the Sales Engine, as they happen.
-2. Ops exposes a **pull endpoint** returning the same events by cursor, which the Sales Engine polls nightly to catch anything a webhook delivery missed, and once to backfill history.
-3. The Sales Engine **deep-links into Ops** from a deal page ("Create quote") with the customer prefilled and a `crm_deal_id`. That id is the correlation key: Ops stores it on the quote and includes it on every event about that quote.
+## 2. Owner decisions (reply §5)
 
-The shared secret `OPS_WEBHOOK_SECRET` (a random 32+ byte string) is set as an environment variable in **both** Vercel projects by the LPO admin. It is never committed, logged, or pasted into chat.
+**5.1 Whose deal is it.** Ops sends `data.rep` on every `quote.created`/`quote.updated`.
+- Deal in the unassigned pool → the Sales Engine adopts Ops' rep as owner.
+- Deal owned by someone else, before any payment → flagged on the deal and the owner is notified. The owner is **not** changed.
+- **At first payment** (deposit or full) → the deal owner is asked to **approve** Ops' credit or **flag** it. A flag notifies the admins, who reassign credit in Ops if Ops is wrong. Commission follows Ops; the flag catches mistakes early.
 
-## 2. Correlation: how a quote maps to a deal
+**5.2 Who emails before the deposit.** Ops owns follow-up once a quote has been **emailed** (`ops_stage` becomes `sent`). From that moment the person leaves every Sales Engine drip and cannot be enrolled again; only manual rep emails go out from the Sales Engine. An `expired` or `deleted` quote releases them.
 
-- A quote started from the Sales Engine button arrives with `crm_deal_id` on the deep link. **Store it on the quote** and send it on every event for that quote.
-- A quote created inside Ops without that id (a rep starts one directly, or the website 3D builder auto-generates one after a self-serve deposit) has no `crm_deal_id`. Send `null`. The Sales Engine matches by customer email to an open deal; when there is none it creates a deal through its own "Quote Created" intake engine (owner assignment and pipeline stage are configured on the Sales Engine side). Ops does nothing special here beyond always sending the customer's email.
-- `customer.email` is therefore **required** on `quote.created` and strongly expected on every other event. Lowercase it. Phone is optional but valuable; any format is fine.
-- `created_by` on `quote.created` is the Ops user's email. Ops users sign in with `@lonepeakoverland.com` addresses, and the Sales Engine maps that to the rep. For builder-generated quotes send `created_by: "builder"`.
+**5.3 Completion dates.** The Sales Engine shows `eta_label` (the window). `eta` (a day) only when the build is pinned.
 
-## 3. Deep link into Ops (Ops side)
+**Demos.** `demo.completed` is a future feature. Ops doesn't need to build it now. The Sales Engine already accepts the event shape in §6 for when it exists.
 
-The Sales Engine opens, in a new tab:
+## 3. Create quote: prefill + deep link
 
-```
-https://lone-peak-ops.vercel.app/builds/sales?tab=quote
-  &source=sales-engine
-  &crm_deal_id=<uuid>
-  &crm_deal_url=https://lpo-sales-engine.vercel.app/crm/deal/<uuid>
-  &name=<url-encoded full name>
-  &first_name=<…>&last_name=<…>
-  &email=<url-encoded email>
-  &phone=<E.164 or empty>
-```
+When a rep clicks **Create quote** on a deal, the Sales Engine:
 
-Ops must:
+1. Calls Ops server-to-server:
+   ```
+   POST https://ops.lonepeakoverland.com/api/crm/prefill
+   Content-Type: application/json
+   X-Ops-Signature: sha256=<base64 HMAC-SHA256 of "<timestamp>.<raw body>", keyed OPS_WEBHOOK_SECRET>
+   X-Ops-Timestamp: <unix seconds>
 
-1. Prefill the new-quote form from `name`/`first_name`/`last_name`, `email`, `phone` when `source=sales-engine` is present. Any of them may be empty.
-2. Keep `crm_deal_id` with the draft and persist it on the quote record when the quote is saved. Treat it as an opaque string up to 64 characters; it is a UUID today.
-3. Optionally show a small "Opened from Sales Engine" indicator with a link to `crm_deal_url`.
+   { "crm_deal_id": "<uuid>",
+     "customer": { "name", "first_name", "last_name", "email", "phone" } }
+   ```
+   Ops answers `200 {"ok":true}` and keeps the details 24 hours keyed by `crm_deal_id`. Any field may be null.
+2. Opens, in a new tab:
+   ```
+   https://ops.lonepeakoverland.com/builds/sales?tab=quote&source=sales-engine&crm_deal_id=<uuid>
+   ```
 
-If the Ops user is not signed in, redirect to sign-in and return to the same URL with the parameters intact.
+If the prefill call fails, the link still opens and the rep types the details. Ops stores `crm_deal_id` on the quote (opaque, ≤ 64 chars), builds its own "back to the deal" link from it, and shows an existing quote first when the deal already has one. The rep picks the truck from Ops' list.
 
-## 4. Webhook delivery (Ops side)
+## 4. Webhook delivery (Ops → Sales Engine)
 
 ```
 POST https://lpo-sales-engine.vercel.app/api/webhooks/ops
 Content-Type: application/json
-X-Ops-Signature: sha256=<base64 HMAC-SHA256 of the raw request body, keyed with OPS_WEBHOOK_SECRET>
-X-Ops-Timestamp: <unix seconds when the request was signed>
+X-Ops-Signature: sha256=<base64 HMAC-SHA256 of "<timestamp>.<raw body>", keyed OPS_WEBHOOK_SECRET>
+X-Ops-Timestamp: <unix seconds, within 5 minutes>
+
+{ "events": [ … 1 to 100 events … ] }
 ```
 
-Body:
-
-```json
-{ "events": [ { ...event }, { ...event } ] }
+```js
+const ts = Math.floor(Date.now() / 1000).toString();
+const body = JSON.stringify({ events });
+const sig = "sha256=" + crypto.createHmac("sha256", process.env.OPS_WEBHOOK_SECRET).update(`${ts}.${body}`).digest("base64");
 ```
 
-- 1 to 100 events per request. Batch `quote.activity` events freely; send `quote.paid` promptly on its own.
-- Sign the **exact bytes** you send. Node: `crypto.createHmac("sha256", secret).update(rawBody).digest("base64")`.
-- Requests older than 5 minutes by `X-Ops-Timestamp` are rejected (replay protection), so sign immediately before sending.
-- The Sales Engine answers `200 {"ok":true,"accepted":n,"duplicates":m}` when it has stored the batch. Treat any 2xx as acknowledged. Duplicate `event_id`s are silently ignored, so retrying a whole batch is always safe.
-- Error responses: `401` bad signature or stale timestamp, `400` malformed body with `{"ok":false,"error":"…","event_id":"…"}` naming the first bad event, `429` back off, `5xx` retry.
-- **Retry policy:** on network failure, timeout (use 10 s), 429 or 5xx, retry with exponential backoff: 1 min, 5 min, 30 min, 2 h, 12 h, then give up and leave the event for the pull endpoint. Do not retry 400 or 401; log them.
-- Preserve per-quote order where you can (send activity for one quote in chronological order), but the Sales Engine orders by `occurred_at` and tolerates out-of-order delivery.
-
-**Dry run:** `POST …/api/webhooks/ops?dry=1` validates signature and schema and returns what it would have done, without writing anything. Use it to test the signing code.
+- `200 {"ok":true,"accepted":n,"duplicates":m,…}` = stored. Duplicate `event_id`s are ignored, so retrying a batch is always safe.
+- `401` bad signature or stale timestamp; `400` malformed (names the first bad `event_id`); `5xx` retry.
+- `?dry=1` validates and reports without writing. Use it to test signing.
+- Retries per Ops' scheduler (reply 2.8) are fine. Production only; previews never send.
 
 ## 5. Event envelope
 
-Every event is an object with these fields:
+| Field | Required | Notes |
+|---|---|---|
+| `event_id` | yes | ≤ 64 chars, stable across retries. |
+| `type` | yes | §6. Unknown types are stored and ignored. |
+| `occurred_at` | yes | ISO-8601 UTC, when it happened. |
+| `quote_id` | yes | The Ops reference, `LPQ-0201`. |
+| `quote_number` | optional | Same value as `quote_id`. |
+| `crm_deal_id` | yes (may be null) | From the deep link. One deal can have several quotes. |
+| `customer` | recommended | `{name, first_name, last_name, email, phone}`; email may be null (§1, 1.4a). |
+| `backfill` | only on replayed history | `true` on every synthesized historical event. |
+| `data` | yes | Per type. Extra fields are always fine. |
 
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `event_id` | string ≤ 64 | yes | Globally unique, stable across retries. A UUID per event, or `<quote_id>:<type>:<n>`. |
-| `type` | string | yes | One of the types in §6. |
-| `occurred_at` | ISO-8601 UTC | yes | When it happened, not when it was sent. |
-| `quote_id` | string ≤ 64 | yes | Ops' stable internal id for the quote. |
-| `quote_number` | string | no | Human-readable, e.g. `LPQ-0176`. Send on every event if cheap. |
-| `crm_deal_id` | string \| null | yes | From the deep link, else `null`. |
-| `customer` | object | yes on `quote.created`, recommended elsewhere | `{ "name", "first_name", "last_name", "email", "phone" }`, any may be null except `email` on `quote.created`. |
-| `data` | object | yes | Type-specific payload (§6). |
-
-Unknown extra fields are ignored, so Ops may add fields without a contract change. New event `type`s are stored but not acted on until this document lists them.
+**Matching when `crm_deal_id` is null:** `data.website_submission_id` → email → phone → else a new deal through the Sales Engine's "Quote Created" intake engine (never for backfill).
 
 ## 6. Event types
 
-### `quote.created`
-
-```json
-{
-  "event_id": "9d7c…",
-  "type": "quote.created",
-  "occurred_at": "2026-10-07T17:02:11Z",
-  "quote_id": "q_01HX…",
-  "quote_number": "LPQ-0201",
-  "crm_deal_id": "a1bca4ed-e0f5-41c8-b0b2-15dd6bedc37c",
-  "customer": { "name": "Jordan Lee", "first_name": "Jordan", "last_name": "Lee", "email": "jordan@example.com", "phone": "+15095550142" },
-  "data": {
-    "link": "https://lone-peak-ops.vercel.app/q/LPQ-0201?t=…",
-    "total_cents": 4875000,
-    "deposit_cents": 50000,
-    "currency": "USD",
-    "status": "sent",
-    "origin": "rep",
-    "created_by": "jackson@lonepeakoverland.com",
-    "truck": "2023 Toyota Tacoma",
-    "summary": "Lone Peak Camper V2, Expedition package, …"
-  }
-}
-```
-
-- `link` is the customer-facing quote URL (whatever the customer receives by email). Must stay valid for the life of the quote.
-- `origin`: `"rep"` or `"builder"` (website 3D builder self-serve).
-- **`originator`** (added 11/5 — Ops is opening up to ambassadors and installers as their sales tool): who made the quote, so the LPO rep can see another team is working the deal and not interfere.
-
-  ```json
-  "originator": { "name": "Jane Doe", "email": "jane@overlandinstalls.com", "organization": "Overland Installs", "role": "installer" }
-  ```
-
-  Send it on `quote.created` and `quote.updated`. `organization` is the display name of the company/team (`"Lone Peak Overland"` for in-house reps); `role` is free text (`rep`, `ambassador`, `installer`, …). `created_by` can stay for backwards compatibility but `originator` wins when both are present. For builder quotes send `"origin": "builder"` and omit `originator`. The Sales Engine shows "Quote by Jane Doe · Overland Installs — another team is working this deal" on the deal, writes it on the timeline, and notifies the deal owner whenever the organization isn't Lone Peak.
-- `status`: `"draft" | "sent" | "viewed" | "accepted" | "paid" | "expired" | "void"`. Send `quote.created` when the quote exists; it's fine if the status is still `draft`.
-- `truck` and `summary` are free text shown to the rep.
-
-### `quote.updated`
-
-Same `data` shape as `quote.created`, sent whenever total, status, link or summary changes (new version, expiry, void). Include the full current values, not a diff. Add `"version": 2` if Ops versions quotes.
+### `quote.created` / `quote.updated`
+`data`:
+- `link`: staff quote page `https://ops.lonepeakoverland.com/builds/quotes/LPQ-0201`.
+- `status` (`draft|sent|paid|expired|void`) and `ops_stage` (`started|sent|invoice_out|deposit_paid|paid|additions_owed|expired|deleted|cancelled`) as in the reply's table 2.2. **The first `ops_stage: "sent"` is the signal that Ops owns follow-up.**
+- `subtotal_cents` (always), `total_cents` (null until tax is known), `deposit_cents`, `paid_cents`, `balance_cents`.
+- `origin` (`rep|builder`), `source` (for builder quotes, e.g. `build-survey`), `originator {name, email, organization, role}`.
+- `rep {name, email}` or null: the Lone Peak rep Ops credits.
+- `build {truck, handover{name, kind}, options[{sku, name, qty}], revision}`.
+- `change {by, summary}` on `quote.updated` when items changed (batched per editing session).
+- `expires_at` (date, null once money is on the quote), `balance_due_on` (date or null).
+- `website_submission_id` on quotes opened from a website form or the Build Survey.
 
 ### `quote.activity`
-
-One event per customer action on the quote page.
-
-```json
-{
-  "type": "quote.activity",
-  "data": {
-    "action": "viewed",
-    "session_id": "s_8f3…",
-    "duration_s": 94,
-    "detail": null,
-    "user_agent": "Mozilla/5.0 …",
-    "ip": "73.11.22.33",
-    "referrer": "https://mail.google.com/"
-  }
-}
-```
-
-`action` values and when to send them:
-
-| action | when | `detail` |
-|---|---|---|
-| `viewed` | page load (one per load) | null |
-| `dwell` | on page hide/unload, with `duration_s` since load | null |
-| `section_opened` | customer expands/opens a section or tab | section name |
-| `pdf_downloaded` | download/print clicked | null |
-| `pay_clicked` | customer clicked Pay deposit / Pay in full | `"deposit"` or `"full"` |
-| `accepted` | customer accepted/signed without paying yet | null |
-| `declined` | customer declined, if the page offers it | reason text |
-| `shared` | copy-link/forward clicked | null |
-
-Send `ip` when available; the Sales Engine uses it only to infer approximate location. `session_id` groups actions from one visit (random id in `sessionStorage`).
-
-See §9 if the quote page does not record this today.
+`data.action`: `viewed`, `dwell` (`duration_s`), `pay_clicked` (`detail`: `deposit|full|additions`). Plus `session_id`, `user_agent`, `referrer`, `geo {city, region, country}`; no raw IP. Staff and dealer views excluded. The Sales Engine records these on the timeline only; they are not engagement signals.
 
 ### `quote.paid`
+`data`: `amount_cents`, `kind` (`deposit|full|balance|additions|split`), `processor: "shopify"`, `processor_ref` (Shopify order name), `total_cents`, `balance_cents`, `paid_at`. Only the **first** `deposit` or `full` payment moves the deal to Deposit Placed and opens the credit review; later payments are timeline only and never move a won deal backwards.
 
-```json
-{
-  "type": "quote.paid",
-  "data": {
-    "amount_cents": 50000,
-    "kind": "deposit",
-    "method": "card",
-    "processor": "stripe",
-    "processor_ref": "pi_3Q…",
-    "total_cents": 4875000,
-    "balance_cents": 4825000,
-    "paid_at": "2026-10-07T17:40:02Z"
-  }
-}
-```
+### `quote.refunded`
+`data`: `amount_cents`, `reason` (`line_removed|cancellation`), `processor`, `processor_ref`, `refunded_at`.
 
-- `kind`: `"deposit"` or `"full"`. Send one event per payment; a later balance payment is another `quote.paid` with `kind: "balance"`.
-- Sales Engine behavior (for Ops' awareness, nothing to implement): on **any** `quote.paid` the deal is marked **Deposit Placed** for rep review, the amount goes on the timeline, the owner is notified. Full payments are not auto-won; a rep confirms.
+### `quote.cancelled`
+`data`: `cancelled_at`, `refunded_cents`, `retained_cents`. The deal owner is notified; the deal itself is left for the rep.
 
-### `email.sent`, `email.opened`, `email.clicked`
+### `quote.attention`
+`data`: `kind` (`truck_answer_needed|refund_requested|…`), `open` (bool), `detail`. Owner notified while `open`; cleared when Ops sends `open: false`.
 
-```json
-{
-  "type": "email.sent",
-  "data": {
-    "message_id": "msg_01…",
-    "template": "quote_sent",
-    "subject": "Your Lone Peak Overland build — Quote #LPQ-0201",
-    "to": "jordan@example.com",
-    "from": "team@lonepeakoverland.com",
-    "url": null
-  }
-}
-```
-
-`email.opened` / `email.clicked` reuse `message_id` and, for clicks, put the target in `url`. Send these only if your email provider gives you opens/clicks; `email.sent` alone is already useful because it stops reps from double-sending.
-
-### `demo.completed`
-
-Sent when a user in Ops marks that a demo was done for this quote's customer — in particular when another organization (ambassador, installer) did it, so the LPO rep knows not to schedule their own.
-
-```json
-{
-  "type": "demo.completed",
-  "quote_id": "q_01HX…",
-  "crm_deal_id": "…or null",
-  "customer": { "name": "Jordan Lee", "email": "jordan@example.com", "phone": "+15095550142" },
-  "data": {
-    "originator": { "name": "Jane Doe", "email": "jane@overlandinstalls.com", "organization": "Overland Installs", "role": "installer" },
-    "demo_at": "2026-11-04T22:00:00Z",
-    "location": "Boise showroom",
-    "note": "Showed the V2 on their Tundra; interested in the Expedition package."
-  }
-}
-```
-
-`demo_at` is when the demo happened (defaults to `occurred_at`); `location` and `note` are optional free text. The Sales Engine records a meeting on the timeline ("🚙 Demo done by Overland Installs (Jane Doe)"), shows it on the Quote card, and notifies the deal owner.
+### `email.sent` / `email.delivered` / `email.bounced`
+`data`: `message_id`, `template`, `subject`, `to`, `from`. `sent` goes on the timeline. `bounced` marks the address bad on the contact and notifies the owner. `delivered` is stored only. (No opens/clicks; agreed.)
 
 ### `production.status`
+`data`: `status` (`scheduled|in_production|on_hold|ready|delivered|cancelled`), `label`, `area` (in production), `reason` (on hold), `eta_label` (always), `eta` (pinned builds only), `balance_due_on`.
 
-```json
-{
-  "type": "production.status",
-  "data": {
-    "order_id": "ord_01…",
-    "status": "in_production",
-    "label": "In production — frame",
-    "eta": "2026-12-15",
-    "note": null
-  }
-}
-```
+### `install.booked`
+`data`: `day`, `time`, `booked_by` (`customer|staff`), `moved` (bool).
 
-`status` is a stable snake_case key from a fixed set Ops owns (suggested: `queued`, `materials_ordered`, `in_production`, `qa`, `ready_for_pickup`, `shipped`, `delivered`, `on_hold`, `cancelled`); `label` is the human text to show. Send one event per status change.
+### `demo.completed` (future)
+`data`: `originator {name, email, organization, role}`, `demo_at`, `location`, `note`. Not needed until Ops records demos.
 
-## 7. Pull endpoint (Ops side)
+## 7. Pull endpoint (nightly reconcile + backfill)
 
 ```
-GET https://lone-peak-ops.vercel.app/api/crm/events?since=<cursor>&limit=500
-Authorization: Bearer <OPS_WEBHOOK_SECRET>
+GET https://ops.lonepeakoverland.com/api/crm/events?since=<cursor>&limit=500
+Authorization: Bearer <OPS_PULL_TOKEN>
+→ { "events": [ …oldest first… ], "next": "<cursor>", "has_more": bool }
 ```
 
-Response:
+Separate secret from the webhook secret (reply 1.6). Every event ever emitted must be reachable; keep at least 13 months. The Sales Engine calls it nightly, and once with no cursor at launch to backfill (`backfill: true` events, LPQ quotes from August 2026 on).
 
-```json
-{ "events": [ …same event objects as §5/§6, oldest first… ], "next": "<cursor>", "has_more": false }
-```
+## 8. Secrets (set by the LPO admin in both Vercel projects; never in chat or a repo)
 
-- `cursor` is opaque to the caller. A monotonically increasing integer sequence assigned when the event is recorded is the easiest correct choice; `since` omitted means from the beginning.
-- Every event ever sent (or that should have been sent) over the webhook must be reachable here. Keep at least 13 months.
-- The Sales Engine calls this nightly with the last cursor it saw, and once at launch with no cursor to backfill existing quotes. For backfill, synthesize a `quote.created` (and `quote.paid`, `production.status` where applicable) for every historical quote with `occurred_at` set to the original timestamps.
+- `OPS_WEBHOOK_SECRET`: already set. Signs webhooks and the prefill call.
+- `OPS_PULL_TOKEN`: **new**. Bearer token for the pull endpoint only.
 
-Practical implementation: write every outgoing event to an `outbound_events` table (sequence, event_id unique, payload jsonb, delivered_at, attempts) and have both the webhook sender and this endpoint read from it. That gives retries, ordering and the pull endpoint from one table.
+## 9. Test plan
 
-## 8. What the Sales Engine does with the events (for context)
+1. **Signing:** post one `quote.created` to `…/api/webhooks/ops?dry=1` → `200 {"dry":true,"accepted":1}`.
+2. **Prefill + deep link:** click Create quote on a test deal; confirm Ops receives the prefill and the form opens prefilled with no PII in the URL.
+3. **Live quote:** save it; the Quotes card appears on the deal. Email it (`ops_stage: sent`); the person leaves any Sales Engine drip.
+4. **Activity:** open the build as the customer; a view appears on the timeline.
+5. **Deposit (Shopify test order):** deal moves to Deposit Placed; the owner gets the approve/flag credit prompt.
+6. **Pull:** call §7 with no cursor; events come back in order with `next`.
+7. **Backfill dry run:** send one `backfill: true` event with `?dry=1`; the response says "backfill, silent".
 
-- Deal page gets a **Quote card**: number, status chip, amount, Open quote button, last viewed, view count, production status, recent activity.
-- Timeline entries: quote created/sent, each view session, pay clicked, paid, emails sent/opened, production changes. Quote activity is **recorded as timeline notes only** — it does not count as an engagement signal for the hot list or sprint lists (decided 11/5).
-- Owner notifications: first view, pay clicked, paid, and a view after 24+ quiet hours. Other views are recorded silently.
-- `quote.paid` → stage **Deposit Placed in the Confirmation pipeline** (decided 11/5), note with amount and kind, rep reviews; the person is also **exited from any active Sales Engine campaign** (no drip continues after money is down).
-- Matching when `crm_deal_id` is null: open deal by customer email → by phone → else a new deal via the Quote Created intake engine (pool/stage/source configurable in Settings).
-- Nothing flows back to Ops except the deep link.
-
-### 8a. Why webhooks and not polling
-
-Both apps run on serverless compute and Ops' database (Neon) auto-suspends when idle. A poller would wake it every few minutes around the clock whether or not anything happened; webhooks cost nothing at idle and one small request per batch. The nightly pull (§7) is a single call a day, used only to reconcile. Keep it that way.
-
-### 8b. Minimal Ops sender (so the webhook side stays small)
-
-Write every event into one table and let one job deliver it. Nothing else is needed on the Ops side for delivery, retries and the pull endpoint.
-
-```sql
-create table outbound_events (
-  seq         bigserial primary key,
-  event_id    text unique not null,
-  payload     jsonb not null,          -- the §5 event object
-  created_at  timestamptz not null default now(),
-  delivered_at timestamptz,
-  attempts    int not null default 0,
-  next_attempt_at timestamptz not null default now()
-);
-```
-
-```js
-// deliver.js — run on a short schedule (e.g. every minute) or right after inserting events
-const crypto = require("crypto");
-const BACKOFF_MIN = [1, 5, 30, 120, 720];            // §4 retry policy
-
-async function deliverPending(db) {
-  const rows = await db.query(
-    `select seq, event_id, payload, attempts from outbound_events
-      where delivered_at is null and next_attempt_at <= now() and attempts < 6
-      order by seq limit 100`);
-  if (!rows.length) return;
-  const body = JSON.stringify({ events: rows.map((r) => r.payload) });
-  const ts = Math.floor(Date.now() / 1000).toString();
-  const sig = "sha256=" + crypto.createHmac("sha256", process.env.OPS_WEBHOOK_SECRET).update(body).digest("base64");
-  let ok = false, status = 0;
-  try {
-    const res = await fetch("https://lpo-sales-engine.vercel.app/api/webhooks/ops", {
-      method: "POST", headers: { "content-type": "application/json", "x-ops-signature": sig, "x-ops-timestamp": ts }, body,
-      signal: AbortSignal.timeout(10_000),
-    });
-    status = res.status; ok = res.ok;
-    if (status === 400 || status === 401) { console.error("ops webhook rejected", status, await res.text()); }
-  } catch (e) { console.error("ops webhook failed", e); }
-  const seqs = rows.map((r) => r.seq);
-  if (ok) {
-    await db.query(`update outbound_events set delivered_at = now() where seq = any($1)`, [seqs]);
-  } else if (status !== 400 && status !== 401) {
-    await db.query(
-      `update outbound_events set attempts = attempts + 1,
-         next_attempt_at = now() + make_interval(mins => $2) where seq = any($1)`,
-      [seqs, BACKOFF_MIN[Math.min(rows[0].attempts, BACKOFF_MIN.length - 1)]]);
-  }
-}
-```
-
-The pull endpoint (§7) is then `select payload from outbound_events where seq > $since order by seq limit $limit` with `next = max(seq)`.
-
-## 9. If the Ops quote page does not track customer activity yet
-
-Add a small client script to the customer-facing quote page. It needs no third-party service.
-
-1. On load: create or read `sessionStorage.lpo_qs` (random id). `POST /api/q/<quote_id>/activity` with `{ action: "viewed", session_id, referrer: document.referrer }`.
-2. Wire buttons: pay deposit/full → `pay_clicked` with `detail`; PDF/print → `pdf_downloaded`; accordion/tab opens → `section_opened` with the section name; accept → `accepted`.
-3. On `visibilitychange` to hidden and on `pagehide`: `navigator.sendBeacon("/api/q/<quote_id>/activity", JSON.stringify({ action: "dwell", session_id, duration_s }))`.
-4. The server route records `user_agent` and `ip` from the request, writes a row, and enqueues a `quote.activity` event (§6) into the outbound table. Rate-limit per session to something like 60 events per 10 minutes.
-
-The quote page URL must contain a token that identifies the quote without authentication (it's what the customer gets by email), and the activity route must accept only that token, never a bare sequential id.
-
-## 10. Test plan
-
-Run in this order; the Sales Engine side confirms each step.
-
-1. **Signing:** post one `quote.created` with a made-up quote to `…/api/webhooks/ops?dry=1`. Expect `200 {"ok":true,"dry":true,"accepted":1,…}`. A `401` means the signature or timestamp is wrong.
-2. **Deep link:** open the §3 URL by hand with sample values; confirm the form prefills and the saved quote stores `crm_deal_id`.
-3. **Live create:** create a quote from the deep link for a test contact (`<yourname>+opstest@lonepeakoverland.com`). Confirm the Quote card appears on that deal.
-4. **Activity:** open the quote page as the customer, click around, close the tab. Confirm views and dwell appear on the deal timeline.
-5. **Paid:** complete a deposit in test mode. Confirm the deal moves to Deposit Placed and the owner gets a notification.
-6. **Pull:** call the §7 endpoint with no cursor and confirm the test events come back in order with a `next` cursor.
-7. **Retry:** temporarily point the webhook at a wrong path, create an event, restore, and confirm the retry lands and the event is not duplicated.
-
-Delete test quotes and deals afterward (the Sales Engine admin removes the deal side).
-
-Signature helper for tests (Node):
-
-```js
-const crypto = require("crypto");
-const body = JSON.stringify({ events: [evt] });
-const ts = Math.floor(Date.now() / 1000).toString();
-const sig = "sha256=" + crypto.createHmac("sha256", process.env.OPS_WEBHOOK_SECRET).update(body).digest("base64");
-await fetch("https://lpo-sales-engine.vercel.app/api/webhooks/ops?dry=1", {
-  method: "POST",
-  headers: { "content-type": "application/json", "x-ops-signature": sig, "x-ops-timestamp": ts },
-  body,
-});
-```
-
-## 11. Questions for the Ops session to answer back
-
-(Still open as of 11/5. The Sales Engine side is built against the sample payloads in §6 — the webhook, the nightly pull, the Quote card and the Quote Created engine are live and waiting — so answers can arrive with the first real events.)
-
-7. **What else could Ops tell the sales team?** You see things the CRM can't: which options the customer configured, how many revisions a quote went through, whether financing was started, delivery/install preferences, when a customer re-opened an old quote. Propose additions that are cheap for you to emit and useful for a rep deciding what to do next — ideally as new fields inside existing events (unknown fields are already stored; §5) or as new event types with the same envelope. Don't add anything that needs a new endpoint, a new auth scheme, or synchronous calls between the apps.
-
-   For each suggestion, tell us what the Sales Engine would need to do to receive and show it, in this form so we can build it without a second round-trip:
-
-   - **Event / field:** name and where it lives (which event's `data`, or a new `type`).
-   - **Shape:** the JSON, with types and which fields are optional.
-   - **When sent:** the trigger in Ops and expected volume.
-   - **Meaning for a rep:** one sentence on why they'd care, and whether it should notify the deal owner or just sit on the timeline / Quote card.
-   - **Identity:** how it maps to a quote (`quote_id`) or customer (`crm_deal_id` / email) — same rules as §2.
-
-   Anything you emit before we've built for it is harmless: it's kept in `ops_events` and can be back-filled onto deals later.
-
-1. Does the customer quote page already record views/clicks? If not, is §9 acceptable as specified?
-2. Which email provider sends Ops' customer emails, and does it provide open/click webhooks?
-3. Confirm the production status keys you will use (§6 `production.status`).
-4. Confirm `quote_id` and `quote_number` formats, and that the customer `link` is stable for the quote's lifetime.
-5. Anything in the deep link (§3) that conflicts with the current `/builds/sales?tab=quote` page.
-6. Expected timeline for emitting each event type, so the Sales Engine side can enable features in step with it.
-
-Changes to this contract are made in this file; both sides work from the latest version.
+Test quotes use `<name>+opstest@lonepeakoverland.com`; the Sales Engine admin deletes the deal side afterwards.
