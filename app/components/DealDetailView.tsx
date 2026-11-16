@@ -19,6 +19,22 @@ import { ScriptsCard } from "./ScriptsCard";
 import { CallReviewInline } from "./CallReviewCard";
 import { CloseLikelihood } from "./CloseLikelihood";
 
+interface OpsQuote {
+  quote_id: string; quote_number: string | null; link: string | null; currency: string | null;
+  subtotal_cents: number | null; total_cents: number | null; deposit_cents: number | null; paid_cents: number; balance_cents: number | null; refunded_cents: number | null;
+  status: string | null; ops_stage: string | null; origin: string | null; created_by: string | null;
+  originator?: { name?: string | null; email?: string | null; organization?: string | null } | null;
+  rep?: { name?: string | null; email?: string | null } | null;
+  owner_mismatch?: { ops_rep?: string; deal_owner?: string } | null;
+  credit_review?: { status: "pending" | "approved" | "flagged"; ops_rep?: string | null; ops_rep_name?: string | null; by?: string; note?: string | null } | null;
+  attention?: Record<string, { open: boolean; detail?: string | null }> | null;
+  build?: { truck?: string; handover?: { name?: string; kind?: string }; options?: { name: string; qty?: number }[]; revision?: number } | null;
+  install?: { day?: string; time?: string } | null;
+  truck: string | null; expires_at: string | null; balance_due_on: string | null; eta_label: string | null;
+  view_count: number; last_viewed_at: string | null; production_label: string | null; production_eta: string | null;
+  quote_created_at: string | null; cancelled_at: string | null;
+  demos?: { organization?: string | null; by?: string | null; at?: string | null }[] | null;
+}
 interface DealData {
   deal: any;
   timeline: { id?: string; kind: string; at: string | null; title: string; body: string | null; media?: string[] | null; audio?: string | null; actor: string | null; done: boolean; due: string | null; callId?: string | null; reviewable?: boolean; reviewed?: boolean; emailDirection?: string | null; callbackPhone?: string | null; track?: { opens: number; clicks: number; lastOpenAt: string | null } | null }[];
@@ -26,14 +42,7 @@ interface DealData {
   adInfo?: { source: string | null; campaign: string | null; channel: string | null; leadCostCents: number | null } | null;
   webActivity?: import("@/lib/web-activity").WebActivity | null;
   surveyRunId?: string | null;
-  opsQuotes?: {
-    quote_id: string; quote_number: string | null; link: string | null; total_cents: number | null; deposit_cents: number | null; currency: string | null;
-    status: string | null; origin: string | null; created_by: string | null; originator?: { name?: string | null; email?: string | null; organization?: string | null } | null;
-    truck: string | null; summary: string | null; version: number | null;
-    paid_cents: number; last_paid_at: string | null; view_count: number; first_viewed_at: string | null; last_viewed_at: string | null;
-    production_status: string | null; production_label: string | null; production_eta: string | null; quote_created_at: string | null; updated_at: string;
-    demos?: { organization?: string | null; by?: string | null; at?: string | null }[] | null;
-  }[];
+  opsQuotes?: OpsQuote[];
   adJourney?: {
     interactions: {
       at: string | null; source: string; channel: string | null; campaign: string | null; adId: string | null; origin: string; costCents: number | null;
@@ -647,7 +656,7 @@ export function DealDetailView({
   const webActivityEl = data.webActivity ? <WebActivitySection activity={data.webActivity} /> : null;
   const quotesEl = (
     <>
-      {data.opsQuotes && data.opsQuotes.length > 0 ? <OpsQuotesSection quotes={data.opsQuotes} /> : null}
+      {data.opsQuotes && data.opsQuotes.length > 0 ? <OpsQuotesSection quotes={data.opsQuotes} onChanged={load} /> : null}
       {data.surveyRunId ? (
         <div style={{ marginBottom: 10, fontSize: 13 }}>
           <a href={`/analytics/survey?run=${encodeURIComponent(data.surveyRunId)}`} style={{ color: "var(--accent)" }}>🛻 View their Build Survey run</a>
@@ -893,15 +902,20 @@ export function DealDetailView({
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               <button className="btn" onClick={() => setModal("note")}>📝 Add note</button>
               <button className="btn" onClick={() => setModal("schedule")}>📅 Schedule activity</button>
-              <a
+              <button
                 className="btn"
-                href={opsQuoteLink(d, contact)}
-                target="_blank"
-                rel="noopener noreferrer"
                 title="Open Ops with this customer prefilled — the quote links back to this deal"
+                onClick={async () => {
+                  // Open the tab synchronously (popup blockers), then point it at
+                  // Ops once our server has handed Ops the customer's details.
+                  const w = window.open("about:blank", "_blank");
+                  const r = await fetch("/api/ops", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "prefill", dealId: d.id }) }).then((x) => x.json()).catch(() => null);
+                  const url = r?.url ?? `https://ops.lonepeakoverland.com/builds/sales?tab=quote&source=sales-engine&crm_deal_id=${d.id}`;
+                  if (w) w.location.href = url; else window.open(url, "_blank");
+                }}
               >
                 🧾 Create quote
-              </a>
+              </button>
               <button className="btn" onClick={() => setModal("sprint")}>
                 ⚡ Add to sprint{data.dealSprintIds.length > 0 ? ` (in ${data.dealSprintIds.length})` : ""}
               </button>
@@ -2401,57 +2415,75 @@ function DealProfileSection({
 
 const IX_ICON: Record<string, string> = { click: "👆", link: "↗", expand: "▸", tab: "▸", video: "▶", form_start: "✎", form_submit: "✅", outbound: "⇗", tel: "📞", mail: "✉" };
 
-/** Deep link into Ops (docs/ops-integration.md §3): customer prefilled, crm_deal_id carried onto the quote. */
-function opsQuoteLink(d: any, contact: any): string {
-  const p = new URLSearchParams({ tab: "quote", source: "sales-engine", crm_deal_id: d.id, crm_deal_url: `https://lpo-sales-engine.vercel.app/crm/deal/${d.id}` });
-  const name = contact?.name ?? "";
-  if (name) p.set("name", name);
-  if (contact?.first_name) p.set("first_name", contact.first_name);
-  if (contact?.last_name) p.set("last_name", contact.last_name);
-  const emails = (contact?.emails as any[]) ?? [];
-  const email = emails.find((e) => e.primary && e.value)?.value ?? emails[0]?.value ?? "";
-  if (email) p.set("email", String(email).toLowerCase());
-  const phones = (contact?.phones as any[]) ?? [];
-  const phone = phones.find((x) => x.primary)?.e164 ?? phones[0]?.e164 ?? phones[0]?.value ?? "";
-  if (phone) p.set("phone", phone);
-  return `https://lone-peak-ops.vercel.app/builds/sales?${p.toString()}`;
-}
-
-/** Ops quotes on this deal: status, money, views, production, who originated it (another org = don't step on their toes). */
-function OpsQuotesSection({ quotes }: { quotes: NonNullable<DealData["opsQuotes"]> }) {
+/** Ops quotes on this deal: stage, money, rep credit, blockers, production, who originated it. */
+function OpsQuotesSection({ quotes, onChanged }: { quotes: OpsQuote[]; onChanged: () => void }) {
   const usd = (c: number | null | undefined) => (c == null ? "—" : `$${Math.round(c / 100).toLocaleString()}`);
   const when = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : null);
-  const chip = (s: string | null) => {
-    const c = s === "paid" ? "var(--good)" : s === "accepted" ? "var(--accent)" : s === "void" || s === "expired" || s === "declined" ? "var(--crit)" : "var(--text-2)";
-    return <span className="chip" style={{ fontSize: 11.5, color: c, borderColor: c }}>{s ?? "draft"}</span>;
+  const [busy, setBusy] = useState<string | null>(null);
+  const STAGE: Record<string, string> = { started: "started", sent: "sent", invoice_out: "invoice out", deposit_paid: "deposit paid", paid: "paid in full", additions_owed: "additions owed", expired: "expired", deleted: "deleted", cancelled: "cancelled" };
+  const review = async (q: OpsQuote, decision: "approve" | "flag") => {
+    let note: string | null = null;
+    if (decision === "flag") { note = prompt("Who should get the credit, or what's wrong? (sent to admins)") ?? null; if (note === null) return; }
+    setBusy(q.quote_id);
+    const r = await fetch("/api/ops", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "credit", quoteId: q.quote_id, decision, note }) }).then((x) => x.json()).catch(() => null);
+    setBusy(null);
+    if (r?.error) alert(r.error); else onChanged();
   };
   return (
     <div className="card" style={{ marginBottom: 14 }}>
       <h4 style={{ margin: "0 0 8px" }}>🧾 Quotes</h4>
       <div style={{ display: "grid", gap: 10 }}>
         {quotes.map((q) => {
+          const stage = q.ops_stage ?? q.status;
+          const c = ["paid", "deposit_paid"].includes(stage ?? "") ? "var(--good)" : ["expired", "deleted", "cancelled", "void"].includes(stage ?? "") ? "var(--crit)" : "var(--text-2)";
           const org = q.originator?.organization?.trim();
           const external = !!org && !/lone ?peak/i.test(org);
           const who = q.originator?.name || (q.created_by && q.created_by !== "builder" ? q.created_by.split("@")[0] : null);
+          const openAttn = Object.entries(q.attention ?? {}).filter(([, v]) => v?.open);
+          const cr = q.credit_review;
           return (
             <div key={q.quote_id} style={{ border: "1px solid var(--border-soft)", borderRadius: 8, padding: "10px 12px", display: "grid", gap: 6 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <b style={{ fontSize: 14.5 }}>{q.quote_number ?? q.quote_id}</b>
-                {chip(q.status)}
-                <span style={{ fontSize: 13.5 }}>{usd(q.total_cents)}{q.deposit_cents ? <span style={{ color: "var(--text-3)" }}> · deposit {usd(q.deposit_cents)}</span> : null}</span>
-                {q.paid_cents > 0 && <span style={{ fontSize: 13, color: "var(--good)", fontWeight: 700 }}>💰 {usd(q.paid_cents)} paid</span>}
-                {q.link && <a className="btn ghost" href={q.link} target="_blank" rel="noopener noreferrer" style={{ marginLeft: "auto", padding: "4px 10px", fontSize: 12.5 }}>Open quote ↗</a>}
+                <span className="chip" style={{ fontSize: 11.5, color: c, borderColor: c }}>{STAGE[stage ?? ""] ?? stage ?? "draft"}</span>
+                <span style={{ fontSize: 13.5 }}>{q.total_cents != null ? usd(q.total_cents) : <>{usd(q.subtotal_cents)} <span style={{ color: "var(--text-3)", fontSize: 12 }}>before tax</span></>}</span>
+                {q.paid_cents > 0 && <span style={{ fontSize: 13, color: "var(--good)", fontWeight: 700 }}>💰 {usd(q.paid_cents)} paid{q.balance_cents ? <span style={{ color: "var(--text-3)", fontWeight: 400 }}> · {usd(q.balance_cents)} due{q.balance_due_on ? ` by ${q.balance_due_on}` : ""}</span> : null}</span>}
+                {q.link && <a className="btn ghost" href={q.link} target="_blank" rel="noopener noreferrer" style={{ marginLeft: "auto", padding: "4px 10px", fontSize: 12.5 }}>Open in Ops ↗</a>}
               </div>
-              {(who || q.origin === "builder") && (
-                <div style={{ fontSize: 12.5, color: external ? "#d99a2b" : "var(--text-3)", fontWeight: external ? 700 : 400 }}>
-                  {q.origin === "builder" && !who ? "Built by the customer on the website" : <>Quote by {who}{org ? ` · ${org}` : ""}{external ? " — another team is working this deal; coordinate before reaching out" : ""}</>}
+              {cr?.status === "pending" && (
+                <div style={{ background: "var(--accent-soft)", borderRadius: 6, padding: "8px 10px", fontSize: 13, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <span>💰 First payment in. Ops credits the sale to <b>{cr.ops_rep_name ?? cr.ops_rep ?? "no rep"}</b>. Is that right?</span>
+                  <button className="btn primary" style={{ padding: "3px 10px", fontSize: 12.5 }} disabled={busy === q.quote_id} onClick={() => review(q, "approve")}>✓ Approve</button>
+                  <button className="btn ghost" style={{ padding: "3px 10px", fontSize: 12.5, color: "var(--crit)" }} disabled={busy === q.quote_id} onClick={() => review(q, "flag")}>🚩 Flag</button>
                 </div>
               )}
-              {q.truck || q.summary ? <div style={{ fontSize: 12.5, color: "var(--text-2)" }}>{[q.truck, q.summary].filter(Boolean).join(" — ")}</div> : null}
+              {cr && cr.status !== "pending" && (
+                <div style={{ fontSize: 12.5, color: cr.status === "flagged" ? "var(--crit)" : "var(--text-3)" }}>
+                  {cr.status === "approved" ? "✅ Credit approved" : "🚩 Credit flagged"} for {cr.ops_rep_name ?? cr.ops_rep ?? "no rep"}{cr.by ? ` by ${cr.by.split("@")[0]}` : ""}{cr.note ? ` — ${cr.note}` : ""}
+                </div>
+              )}
+              {q.owner_mismatch && !cr && (
+                <div style={{ fontSize: 12.5, color: "#d99a2b", fontWeight: 600 }}>⚠️ Ops credits {q.rep?.name ?? q.owner_mismatch.ops_rep} on this quote; this deal is owned by {q.owner_mismatch.deal_owner?.split("@")[0]}</div>
+              )}
+              {openAttn.map(([k, v]) => (
+                <div key={k} style={{ fontSize: 12.5, color: "var(--crit)", fontWeight: 600 }}>🚧 {k === "truck_answer_needed" ? "Truck question holding production" : k === "refund_requested" ? "Customer asked for a refund" : k.replace(/_/g, " ")}{v.detail ? `: ${v.detail}` : ""}</div>
+              ))}
+              {(who || q.origin === "builder") && (
+                <div style={{ fontSize: 12.5, color: external ? "#d99a2b" : "var(--text-3)", fontWeight: external ? 700 : 400 }}>
+                  {q.origin === "builder" && !who ? "Started by the customer on the website" : <>Quote by {who}{org ? ` · ${org}` : ""}{external ? " — another team is working this deal; coordinate before reaching out" : ""}</>}
+                  {q.rep?.name && !external ? <span style={{ color: "var(--text-3)", fontWeight: 400 }}> · Ops rep: {q.rep.name}</span> : null}
+                </div>
+              )}
+              {q.build?.truck || q.truck ? <div style={{ fontSize: 12.5, color: "var(--text-2)" }}>🛻 {q.build?.truck ?? q.truck}{q.build?.handover?.name ? ` · handover: ${q.build.handover.name}` : ""}</div> : null}
+              {q.build?.options && q.build.options.length > 0 && (
+                <div style={{ fontSize: 12, color: "var(--text-3)" }}>{q.build.options.slice(0, 12).map((o) => `${o.name}${o.qty && o.qty > 1 ? ` ×${o.qty}` : ""}`).join(" · ")}{q.build.options.length > 12 ? ` · +${q.build.options.length - 12} more` : ""}</div>
+              )}
               <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: "var(--text-3)" }}>
                 <span>👀 {q.view_count} view{q.view_count === 1 ? "" : "s"}{q.last_viewed_at ? ` · last ${when(q.last_viewed_at)}` : ""}</span>
-                {q.production_label && <span>🏭 {q.production_label}{q.production_eta ? ` · ETA ${q.production_eta}` : ""}</span>}
-                {q.demos && q.demos.length > 0 && <span>🚙 Demo done{q.demos[0]?.organization ? ` by ${q.demos[0].organization}` : ""}{q.demos[0]?.at ? ` · ${when(q.demos[0].at)}` : ""}</span>}
+                {q.expires_at && !(q.paid_cents > 0) && <span style={{ color: Date.parse(q.expires_at) - Date.now() < 5 * 86_400_000 ? "var(--crit)" : undefined }}>⏳ expires {q.expires_at}</span>}
+                {q.production_label && <span>🏭 {q.production_label}{q.eta_label ? ` · ${q.eta_label}` : q.production_eta ? ` · ${q.production_eta}` : ""}</span>}
+                {q.install?.day && <span>📅 install {q.install.day}{q.install.time ? ` ${q.install.time}` : ""}</span>}
+                {q.demos && q.demos.length > 0 && <span>🚙 Demo done{q.demos[0]?.organization ? ` by ${q.demos[0].organization}` : ""}</span>}
                 {q.quote_created_at && <span>created {when(q.quote_created_at)}</span>}
               </div>
             </div>

@@ -543,9 +543,9 @@ export function IntakeAdmin() {
             )}
             {s.adapter === "ops_quote" && (
               <div style={{ fontSize: 12.5, color: "var(--text-3)", marginTop: 6 }}>
-                Quotes from Ops (lone-peak-ops.vercel.app). A quote that doesn&apos;t match an open deal by <code>crm_deal_id</code>, email or phone becomes a new deal
+                Quotes from Ops (ops.lonepeakoverland.com). A quote that doesn&apos;t match an open deal by <code>crm_deal_id</code>, email or phone becomes a new deal
                 through this engine (website-builder self-serve quotes included). Any payment on a quote moves its deal to the <b>paid stage</b> below for the
-                rep to review — never auto-won — and ends any campaign the person is in. Quote views are recorded on the timeline only.
+                rep to review — never auto-won — and asks the deal owner to approve or flag Ops&apos; sale credit. Once a quote is emailed, Ops owns follow-up: the person leaves Sales Engine drips. Quote views are recorded on the timeline only.
                 <label style={{ display: "block", marginTop: 6 }}>
                   Paid stage
                   <select className="vmsel" style={{ display: "block", marginTop: 3, maxWidth: 300 }} value={cfg.paid_stage_id ?? ""} onChange={(e) => setCfg("paid_stage_id", e.target.value || undefined)}>

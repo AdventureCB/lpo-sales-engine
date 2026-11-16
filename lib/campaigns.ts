@@ -108,6 +108,20 @@ function contactAddress(contact: any, channel: "email" | "sms"): string | null {
 export interface EnrollResult { dealId: string; ok: boolean; reason?: string }
 
 /** Enroll deals into a campaign, applying every eligibility rule. */
+/**
+ * Deals whose customer has been emailed an Ops quote (still live) or has paid:
+ * Ops owns follow-up from there, so Sales Engine drips never enroll them —
+ * only manual rep emails (Kyle 11/16). Expired / deleted quotes release them.
+ */
+export async function dealsWithOpsQuoteSent(db: SupabaseClient, dealIds: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (let i = 0; i < dealIds.length; i += 300) {
+    const { data } = await db.from("ops_quotes").select("crm_deal_id, ops_stage, paid_cents").in("crm_deal_id", dealIds.slice(i, i + 300)).not("sent_at", "is", null);
+    for (const q of (data ?? []) as any[]) if (q.paid_cents > 0 || !["expired", "deleted"].includes(q.ops_stage)) out.add(q.crm_deal_id);
+  }
+  return out;
+}
+
 export async function enrollDeals(db: SupabaseClient, campaign: Campaign, dealIds: string[], by: string): Promise<EnrollResult[]> {
   if (!dealIds.length) return [];
   const { data: steps } = await db.from("campaign_steps").select("id, delay_hours, content_kind").eq("campaign_id", campaign.id).order("position");
@@ -127,9 +141,11 @@ export async function enrollDeals(db: SupabaseClient, campaign: Campaign, dealId
     .in("id", dealIds);
   const reenrollDays = campaign.settings.reenroll_after_days ?? 60;
   const out: EnrollResult[] = [];
+  const opsOwned = await dealsWithOpsQuoteSent(db, dealIds);
   for (const d of (deals ?? []) as any[]) {
     const c = d.crm_contacts;
     if (d.status !== "open") { out.push({ dealId: d.id, ok: false, reason: "deal not open" }); continue; }
+    if (opsOwned.has(d.id)) { out.push({ dealId: d.id, ok: false, reason: "Ops quote sent — Ops handles follow-up" }); continue; }
     if (!c) { out.push({ dealId: d.id, ok: false, reason: "no contact" }); continue; }
     if (c.dnc) { out.push({ dealId: d.id, ok: false, reason: "contact is DNC" }); continue; }
     if (campaign.channel === "email" && c.email_unsub) { out.push({ dealId: d.id, ok: false, reason: "opted out of email" }); continue; }
@@ -278,6 +294,10 @@ export async function stateTriggerCandidates(db: SupabaseClient, c: Pick<Campaig
       for (const a of acts ?? []) if (!(a as any).meta?.campaign_send_id && !["inbound", "internal"].includes((a as any).meta?.direction) && a.contact_id) touchedContacts.add(a.contact_id);
     }
     rows = rows.filter((d) => !touchedDeals.has(d.id) && !touchedContacts.has(contactOf.get(d.id) ?? ""));
+  }
+  if (rows.length) {
+    const opsOwned = await dealsWithOpsQuoteSent(db, rows.map((d) => d.id));
+    rows = rows.filter((d) => !opsOwned.has(d.id));
   }
   // Skip deals CURRENTLY active in this campaign; the re-entry gate is enforced in enrollDeals.
   const { data: activeRows } = await db.from("campaign_enrollments").select("deal_id").eq("campaign_id", c.id).eq("status", "active");
